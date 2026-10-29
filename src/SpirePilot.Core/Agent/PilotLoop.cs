@@ -178,7 +178,8 @@ public sealed class PilotLoop : IDisposable
         }
         if (Paused)
         {
-            SetStatus(PilotState.Paused, L10n.T("status.paused"));
+            // Keep showing why we stopped (error / stuck) until the user resumes.
+            if (Status.State != PilotState.Error) SetStatus(PilotState.Paused, L10n.T("status.paused"));
             await SafeDelay(IdleDelay, ct).ConfigureAwait(false);
             return;
         }
