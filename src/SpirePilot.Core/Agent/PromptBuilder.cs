@@ -27,10 +27,14 @@ public static class PromptBuilder
             sb.Append("- Characters the owner allows: ").AppendLine(string.Join(", ", settings.Characters.Allowed));
         if (!settings.Team.AllowGivingPotions)
             sb.AppendLine("- Never use your potions on teammates.");
-        if (!settings.Team.ProactiveRequests)
-            sb.AppendLine("- Do not start requests to teammates; only answer them.");
-        if (!settings.Team.AutoReply)
+        if (!settings.Team.AutoReply && !settings.Team.ProactiveRequests)
             sb.AppendLine("- Do not send team messages (messages: []).");
+        else if (!settings.Team.ProactiveRequests)
+            sb.AppendLine("- Do not start requests to teammates; only answer them.");
+        else if (!settings.Team.AutoReply)
+            sb.AppendLine("- Do not answer teammates' requests; you may make your own requests when they matter.");
+        if (!settings.Team.AllowGivingPotions)
+            sb.AppendLine("- Do not offer potions to teammates.");
         if (!string.IsNullOrWhiteSpace(characterGuide))
         {
             sb.AppendLine();
@@ -124,7 +128,7 @@ public static class PromptBuilder
         if (m.ReplyTo != null)
         {
             sb.Append(" reply_to=").Append(Safe(m.ReplyTo));
-            if (ctx.OutgoingRequests.FirstOrDefault(o => o.Id == m.ReplyTo) is { } mine)
+            if (ctx.OutgoingRequests.Concat(ctx.AnsweredOutgoing).FirstOrDefault(o => o.Id == m.ReplyTo) is { } mine)
                 sb.Append(" (answers your ").Append(DecisionParser.KindToWire(mine.Kind)).Append(')');
         }
         if (needsAnswer && m.Kind == TeamMessageKind.Accept) sb.Append(" (yes to your offer — act on it)");
@@ -229,7 +233,8 @@ public static class PromptBuilder
       Answer every request addressed to you with accept or decline (reply_to set) and then act on what you accepted.
       Do not reply to accept/decline messages or to other AIs' chat. Do not repeat a request listed in YOUR OPEN REQUESTS.
       A request to everyone that a teammate already accepted (see the inbox) is taken care of; do not also fulfil it.
-      Teammates marked [no SpirePilot] cannot read messages: don't message them (the mod shows them a simple emote).
+      Teammates marked [no SpirePilot] cannot read text: they only see a vanilla emote (request → "!", ask or offer →
+      "?", accept / decline → thumbs up / down). Address them only for a real need, once.
       Never claim something happened that STATE does not show; describe plans as plans.
       If the input says NO ACTION NEEDED, "actions" may be [] (only answer); "undo end turn" is only for helping a
       teammate (e.g. to give a potion after all).

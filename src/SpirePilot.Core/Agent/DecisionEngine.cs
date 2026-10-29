@@ -90,30 +90,87 @@ public sealed class DecisionEngine
         m.Kind == TeamMessageKind.Accept && Memory.FindOutgoing(m.ReplyTo) is { Kind: TeamMessageKind.OfferPotion or TeamMessageKind.AskNeedPotion };
 
     /// <summary>Unread team messages split into those that need a reaction and context-only ones.</summary>
-    private (List<TeamMessage> all, List<TeamMessage> actionable, List<TeamMessage> info) ReadInbox(GameSnapshot snapshot, PilotSettings settings)
+    private sealed record Inbox(List<TeamMessage> All, List<TeamMessage> Actionable, List<TeamMessage> Info, List<TeamMessage> Answered);
+
+    /// <summary>Answers (accept / decline) to one of our own requests or questions.</summary>
+    private bool AnswersOurs(TeamMessage m) =>
+        m.Kind is TeamMessageKind.Accept or TeamMessageKind.Decline && Memory.FindOutgoing(m.ReplyTo) != null;
+
+    /// <summary>
+    /// What the AI reads from the team inbox under the owner's switches: everything with auto-reply on; with it off,
+    /// only answers to the AI's own requests (when it may make requests). Everything else is marked read.
+    /// </summary>
+    private bool Readable(TeamMessage m, PilotSettings settings) =>
+        settings.Team.AutoReply || settings.Team.ProactiveRequests && AnswersOurs(m);
+
+    private Inbox ReadInbox(GameSnapshot snapshot, PilotSettings settings)
     {
         _team.ExpireInbox(TimeSpan.FromMinutes(3));
         Memory.ExpireRequests(TimeSpan.FromMinutes(5));
-        Memory.NoteCombat(snapshot.Combat == null ? null : $"{snapshot.Run?.Floor}:{snapshot.Combat.EncounterName}", snapshot.Combat?.Round ?? 0);
+        // Only real decision points say where we are; a half-built capture while waiting must not end a fight.
+        if (snapshot.CanAct)
+            Memory.NoteCombat(snapshot.Combat == null ? null : $"{snapshot.Run?.Floor}:{snapshot.Combat.EncounterName}", snapshot.Combat?.Round ?? 0);
         var unread = _team.PeekAiInbox();
-        if (!settings.Team.AutoReply || !snapshot.IsMultiplayer)
+        if (!snapshot.IsMultiplayer)
         {
             if (unread.Count > 0) _team.MarkRead(unread.Select(m => m.Id));
-            return (new(), new(), new());
+            return new(new(), new(), new(), new());
         }
-        // Answers to our requests close them (they stay in the prompt as context once).
-        foreach (var m in unread.Where(m => m.Kind is TeamMessageKind.Accept or TeamMessageKind.Decline)) Memory.CloseOutgoing(m.ReplyTo);
+        var ignored = unread.Where(m => !Readable(m, settings)).Select(m => m.Id).ToList();
+        if (ignored.Count > 0)
+        {
+            _team.MarkRead(ignored);
+            unread = unread.Where(m => Readable(m, settings)).ToList();
+        }
+        // Sort first: whether a "yes" needs us to act depends on the question it answers, which closing removes.
         var actionable = unread.Where(NeedsAttention).ToList();
         var info = unread.Where(m => !NeedsAttention(m)).ToList();
-        return (unread, actionable, info);
+        var answered = new List<TeamMessage>();
+        foreach (var m in unread.Where(m => m.Kind is TeamMessageKind.Accept or TeamMessageKind.Decline))
+        {
+            if (Memory.FindOutgoing(m.ReplyTo) is not { } mine) continue;
+            answered.Add(mine);
+            // "Yes" to our potion offer / question is now a promise to keep, even across the enemy turn.
+            if (m.Kind == TeamMessageKind.Accept && mine.Kind is TeamMessageKind.OfferPotion or TeamMessageKind.AskNeedPotion)
+                Memory.TrackAccepted(new TeamMessage
+                {
+                    Id = m.Id, From = m.From, FromName = m.FromName, FromAi = m.FromAi, Kind = TeamMessageKind.RequestPotion,
+                    Potion = mine.Potion, Text = m.Text, Time = m.Time,
+                }, whileWaiting: !snapshot.CanAct);
+            Memory.CloseOutgoing(m.ReplyTo);
+        }
+        return new(unread, actionable, info, answered);
     }
 
     /// <summary>True when unread team messages ask this AI for a reaction (used to wake it while it cannot act).</summary>
     public bool HasActionableInbox(GameSnapshot snapshot)
     {
         var settings = _settings();
-        if (!settings.Team.AutoReply || !snapshot.IsMultiplayer) return false;
-        return _team.PeekAiInbox().Any(NeedsAttention);
+        if (!snapshot.IsMultiplayer) return false;
+        return _team.PeekAiInbox().Any(m => Readable(m, settings) && NeedsAttention(m));
+    }
+
+    /// <summary>
+    /// The owner's team switches applied to what the model wants to say: replies need auto-reply, the AI's own
+    /// requests need "proactive requests", and no potion offers when giving potions is off. At most two messages.
+    /// </summary>
+    private static void FilterMessages(AgentDecision decision, GameSnapshot snapshot, PilotSettings settings)
+    {
+        if (!snapshot.IsMultiplayer)
+        {
+            decision.Messages.Clear();
+            return;
+        }
+        decision.Messages.RemoveAll(m =>
+        {
+            bool reply = m.ReplyTo != null || m.Kind is TeamMessageKind.Accept or TeamMessageKind.Decline;
+            if (reply) return !settings.Team.AutoReply;
+            if (m.Kind == TeamMessageKind.Chat) return !settings.Team.AutoReply && !settings.Team.ProactiveRequests;
+            if (!settings.Team.ProactiveRequests) return true;
+            return !settings.Team.AllowGivingPotions && m.Kind is TeamMessageKind.OfferPotion or TeamMessageKind.AskNeedPotion;
+        });
+        if (decision.Messages.Count > MaxMessagesPerDecision)
+            decision.Messages.RemoveRange(MaxMessagesPerDecision, decision.Messages.Count - MaxMessagesPerDecision);
     }
 
     /// <summary>
@@ -125,9 +182,10 @@ public sealed class DecisionEngine
     {
         var settings = _settings();
         Memory.MaxHistory = settings.Strategy.HistoryLength;
-        var (unread, actionable, info) = ReadInbox(snapshot, settings);
-        if (actionable.Count == 0 || _clock() < _llmCooldownUntil) return null;
-        var context = BuildContext(snapshot, settings, actionable, info, null);
+        var inbox = ReadInbox(snapshot, settings);
+        if (inbox.Actionable.Count == 0 || _clock() < _llmCooldownUntil) return null;
+        var context = BuildContext(snapshot, settings, inbox.Actionable, inbox.Info, null);
+        context.AnsweredOutgoing = inbox.Answered;
         context.ReplyOnlyReason = reason;
         try
         {
@@ -137,9 +195,8 @@ public sealed class DecisionEngine
             Memory.SetMemo(decision.Memo);
             decision.ActionIds.Clear();
             decision.PlanKeys.Clear();
-            decision.HandledInboxIds = unread.Select(m => m.Id).ToList();
-            if (decision.Messages.Count > MaxMessagesPerDecision)
-                decision.Messages.RemoveRange(MaxMessagesPerDecision, decision.Messages.Count - MaxMessagesPerDecision);
+            decision.HandledInboxIds = inbox.All.Select(m => m.Id).ToList();
+            FilterMessages(decision, snapshot, settings);
             return decision;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
@@ -172,7 +229,8 @@ public sealed class DecisionEngine
         if (snapshot.Actions.Count == 0) return null;
         var settings = _settings();
         Memory.MaxHistory = settings.Strategy.HistoryLength;
-        var (unread, actionable, info) = ReadInbox(snapshot, settings);
+        var inbox = ReadInbox(snapshot, settings);
+        var (unread, actionable, info) = (inbox.All, inbox.Actionable, inbox.Info);
         bool hasInstruction = !string.IsNullOrWhiteSpace(liveInstruction);
 
         // 1) Continue a plan from the previous LLM answer (unless something needs fresh attention).
@@ -209,6 +267,7 @@ public sealed class DecisionEngine
 
         // 4) Ask the LLM (unless it keeps failing and is cooling down).
         var context = BuildContext(snapshot, settings, actionable, info, liveInstruction);
+        context.AnsweredOutgoing = inbox.Answered;
         context.ReplyOnlyReason = replyOnlyReason;
         if (_clock() < _llmCooldownUntil && settings.Control.FallbackOnLlmFailure)
             return Fallback(snapshot, settings, "AI temporarily unavailable: " + LastLlmError);
@@ -448,12 +507,7 @@ public sealed class DecisionEngine
         decision.HandledInboxIds = inbox.Select(m => m.Id).ToList();
 
         // Accepted requests are tracked by the loop once the reply was actually delivered (never in advisor mode).
-        // Team messages are only meaningful with teammates; respect the team settings.
-        if (!snapshot.IsMultiplayer || !settings.Team.AutoReply) decision.Messages.Clear();
-        else if (!settings.Team.ProactiveRequests)
-            decision.Messages.RemoveAll(m => m.ReplyTo == null && m.Kind != TeamMessageKind.Chat);
-        if (decision.Messages.Count > MaxMessagesPerDecision)
-            decision.Messages.RemoveRange(MaxMessagesPerDecision, decision.Messages.Count - MaxMessagesPerDecision);
+        FilterMessages(decision, snapshot, settings);
 
         if (snapshot.Screen == ScreenKind.Combat && settings.Control.AllowTurnPlans && decision.PlanKeys.Count > 0)
             Memory.SetPlan(decision.PlanKeys, scope, PlanGuard.From(snapshot));

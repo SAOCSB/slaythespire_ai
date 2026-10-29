@@ -146,6 +146,20 @@ public sealed class TeamChatHub
     public void AddSystemNote(string text) =>
         Append(new ChatEntry { Message = new TeamMessage { Kind = TeamMessageKind.Chat, Text = text, FromName = "SpirePilot" }, Incoming = true, Delivered = false });
 
+    /// <summary>
+    /// Budget for AI actions that are not chat messages (vanilla emotes for teammates without the mod): the same
+    /// per-minute limit and a 3-minute dedupe on <paramref name="key"/>. Returns false when it must not happen.
+    /// </summary>
+    public bool TryUseAiBudget(string key)
+    {
+        lock (_lock)
+        {
+            if (IsRecentAiDuplicate(key) || !TryConsumeAiBudget()) return false;
+            _recentAiTexts.Enqueue((_clock(), key));
+            return true;
+        }
+    }
+
     /// <summary>Same kind, text, recipient and answered message: "OK" to Bob and "OK" to Alice are different replies.</summary>
     private static string DedupeKey(TeamMessage m) => $"{m.Kind}|{m.To}|{m.ReplyTo}|{m.Text.Trim()}";
 

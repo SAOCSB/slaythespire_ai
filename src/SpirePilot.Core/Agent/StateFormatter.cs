@@ -62,7 +62,7 @@ public sealed class StateFormatter
             sb.Append("Characters: ").AppendLine(string.Join(", ", cs.Characters.Select(ch => $"{ch.Name} [{ch.Id}]{(ch.Locked ? " (locked)" : "")}{(ch.Selected ? " (selected)" : "")}")));
             sb.Append("Ascension: ").Append(cs.Ascension).Append(" (max ").Append(cs.MaxAscension).AppendLine(")");
             if (cs.LobbyPicks.Count > 0)
-                sb.Append("Lobby picks: ").AppendLine(string.Join(", ", cs.LobbyPicks.Select(kv => $"{kv.Key}={kv.Value}")));
+                sb.Append("Lobby picks: ").AppendLine(string.Join(", ", cs.LobbyPicks.Select(kv => $"{PromptBuilder.Safe(kv.Key)}={kv.Value}")));
         }
         if (s.GameOver is { } go)
             sb.Append("Run over: ").Append(go.Victory ? "VICTORY" : "defeat").Append(go.FloorReached is { } f ? $" at floor {f}" : "").AppendLine();
@@ -78,7 +78,8 @@ public sealed class StateFormatter
 
     private void AppendPlayer(StringBuilder sb, PlayerInfo p, bool detailed)
     {
-        sb.Append(p.Name);
+        // Platform names are chosen by other people: same treatment as teammate text in the inbox.
+        sb.Append(PromptBuilder.Safe(p.Name));
         if (!string.IsNullOrEmpty(p.CharacterName)) sb.Append(" (").Append(p.CharacterName).Append(')');
         if (p.IsAiControlled) sb.Append(" [AI]");
         if (!p.IsLocal && !p.HasTeamLink) sb.Append(" [no SpirePilot: cannot read team messages]");
@@ -229,7 +230,7 @@ public sealed class StateFormatter
         sb.Append("  Next options: ");
         sb.AppendLine(string.Join(", ", map.Reachable.Select(k => map.Find(k) is { } n ? $"{k}={n.Type}" : k)));
         if (map.TeammateVotes.Count > 0)
-            sb.Append("  Teammate votes: ").AppendLine(string.Join(", ", map.TeammateVotes.Select(kv => $"{kv.Key}→{kv.Value}")));
+            sb.Append("  Teammate votes: ").AppendLine(string.Join(", ", map.TeammateVotes.Select(kv => $"{PromptBuilder.Safe(kv.Key)}→{kv.Value}")));
         // Upcoming rows (compact): row -> node types, so the model sees what lies ahead.
         int fromRow = map.Current != null && map.Find(map.Current) is { } cur ? cur.Row + 1 : 0;
         foreach (var row in map.Nodes.Where(n => n.Row >= fromRow).GroupBy(n => n.Row).OrderBy(g => g.Key).Take(16))

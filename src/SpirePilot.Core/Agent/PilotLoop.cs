@@ -260,13 +260,13 @@ public sealed class PilotLoop : IDisposable
         string? replyOnly = null;
         if (snap.Actions.All(a => a.Kind == ActionKind.UndoEndTurn))
         {
-            if (mode == PilotMode.Advisor || !_engine.HasActionableInbox(snap))
+            if (mode == PilotMode.Advisor || LiveInstruction == null && !_engine.HasActionableInbox(snap))
             {
                 SetStatus(PilotState.Waiting, L10n.T("status.waiting", snap.WaitReason ?? "teammates"));
                 await SafeDelay(IdleDelay, ct).ConfigureAwait(false);
                 return;
             }
-            replyOnly = "you already ended your turn; teammates are still playing";
+            replyOnly = "you already ended your turn; teammates are still playing (undo only to act on the instruction or a teammate's need)";
         }
         DetectNewRun(snap);
         if (!ModeAllows(mode, snap) || !MenuAllowed(snap, settings))
@@ -420,11 +420,21 @@ public sealed class PilotLoop : IDisposable
         SetStatus(PilotState.Acting, L10n.T("status.acting", target.Label));
         var result = await _bridge.ExecuteAsync(target, ct).ConfigureAwait(false);
         _engine.Memory.AddHistory(HistoryLine(fresh, target, result, decision.Source));
-        _team.MarkRead(decision.HandledInboxIds);
-        if (instruction != null && decision.Source == DecisionSource.Llm && result.Success)
+        // Taking the turn back is only the first step of helping: the request stays unread so the next decision,
+        // with the full menu, acts on it.
+        bool undid = target.Kind == ActionKind.UndoEndTurn && result.Success;
+        if (!undid) _team.MarkRead(decision.HandledInboxIds);
+        if (instruction != null && decision.Source == DecisionSource.Llm && result.Success && !undid)
         {
             // The model saw the instruction and its decision got executed: consume it.
             lock (_lock) if (_liveInstruction == instruction) _liveInstruction = null;
+        }
+        if (result.Success)
+        {
+            // Bookkeeping first, so observers of the events below see a consistent memory.
+            if (target.Kind == ActionKind.UsePotion && DecisionEngine.TargetsTeammate(target, fresh) &&
+                TargetPlayer(target) is { } helpedPlayer)
+                _engine.Memory.FulfilledPotionFor(helpedPlayer);
         }
         Emit(PilotEventKind.Action, (result.Success ? "✔ " : "✘ ") + target.Label + (result.Message.Length > 0 ? " — " + result.Message : ""), decision);
         Trace(fresh, target, decision, result, sentMessages);
@@ -442,9 +452,6 @@ public sealed class PilotLoop : IDisposable
         else
         {
             _consecutiveFailures = 0;
-            if (target.Kind == ActionKind.UsePotion && DecisionEngine.TargetsTeammate(target, fresh) &&
-                TargetPlayer(target) is { } helped)
-                _engine.Memory.FulfilledPotionFor(helped);
             if (target.Kind == ActionKind.Embark)
             {
                 RunsStarted++;
@@ -464,7 +471,8 @@ public sealed class PilotLoop : IDisposable
     private async Task<bool> TryReplyOnlyAsync(GameSnapshot snap, PilotMode mode, PilotSettings settings, CancellationToken ct)
     {
         if (mode is PilotMode.Off or PilotMode.Advisor || Paused || !snap.IsMultiplayer || !settings.Team.AutoReply) return false;
-        if (!ModeAllows(mode, snap) || DateTime.UtcNow < _nextReplyCheck) return false;
+        // Short waits (animations, settling) end in a real decision that will see the message anyway.
+        if (!ModeAllows(mode, snap) || IsTransient(snap.WaitReason) || DateTime.UtcNow < _nextReplyCheck) return false;
         _nextReplyCheck = DateTime.UtcNow + TimeSpan.FromSeconds(2);
         if (!_engine.HasActionableInbox(snap)) return false;
 
@@ -657,13 +665,22 @@ public sealed class PilotLoop : IDisposable
                 continue;
             }
 
-            // Who can read it? Teammates without SpirePilot only get the closest vanilla emote.
-            var readers = snap.Teammates.Where(p => p.HasTeamLink && (to == 0 || p.NetId == to)).ToList();
-            if (readers.Count == 0)
+            // Who can read it? Teammates without SpirePilot only get the closest vanilla emote — also when the
+            // message goes to everyone and only some teammates have the mod.
+            var addressed = snap.Teammates.Where(p => to == 0 || p.NetId == to).ToList();
+            var readers = addressed.Where(p => p.HasTeamLink).ToList();
+            bool waiting = !snap.CanAct || snap.Actions.All(a => a.Kind == ActionKind.UndoEndTurn);
+            if (addressed.Count > readers.Count && _team.TryUseAiBudget($"emote|{intent.Kind}|{to}"))
             {
                 bool signalled = false;
                 try { signalled = _bridge.TrySignal(intent.Kind); } catch (Exception ex) { _log.Warn("signal failed: " + ex.Message); }
-                _engine.Memory.AddHistory((signalled ? "(teammate cannot read messages; showed an emote) " : "(teammate cannot read messages; not sent) ") + intent.Text);
+                if (signalled && readers.Count == 0 && isRequest)
+                    _engine.Memory.TrackOutgoing(new TeamMessage { Kind = intent.Kind, To = to, Text = intent.Text, Time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() }, waiting);
+                if (readers.Count == 0)
+                    _engine.Memory.AddHistory((signalled ? "(teammate cannot read messages; showed an emote) " : "(teammate cannot read messages; not sent) ") + intent.Text);
+            }
+            if (readers.Count == 0)
+            {
                 Emit(PilotEventKind.TeamMessage, "💬✘ " + intent.Text);
                 continue;
             }
@@ -691,8 +708,8 @@ public sealed class PilotLoop : IDisposable
             }
             else
             {
-                if (intent.Kind == TeamMessageKind.Accept && answered != null) _engine.Memory.TrackAccepted(answered);
-                if (isRequest) _engine.Memory.TrackOutgoing(entry.Message);
+                if (intent.Kind == TeamMessageKind.Accept && answered != null) _engine.Memory.TrackAccepted(answered, waiting);
+                if (isRequest) _engine.Memory.TrackOutgoing(entry.Message, waiting);
             }
             Emit(PilotEventKind.TeamMessage, (entry.Delivered ? "💬 " : "💬✘ ") + intent.Text);
             if (settings.Team.SpeechBubbles)

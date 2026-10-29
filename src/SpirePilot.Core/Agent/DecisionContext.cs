@@ -19,6 +19,8 @@ public sealed class DecisionContext
     public List<TeamMessage> InboxInfo { get; set; } = new();
     /// <summary>Requests / offers / questions this AI sent that are still unanswered or unfulfilled.</summary>
     public List<TeamMessage> OutgoingRequests { get; set; } = new();
+    /// <summary>Our own requests that the current inbox answers (closed now; shown so answers have their question).</summary>
+    public List<TeamMessage> AnsweredOutgoing { get; set; } = new();
     /// <summary>The menu is empty (turn already ended, enemy turn ...): the model may only answer teammates.</summary>
     public string? ReplyOnlyReason { get; set; }
 }
@@ -67,7 +69,11 @@ public sealed class AgentMemory
     private readonly List<string> _history = new();
     private readonly List<Team.TeamMessage> _openRequests = new();
     private readonly List<Team.TeamMessage> _outgoing = new();
+    /// <summary>Where each tracked request was made: fight (null = no fight running), round, made while waiting.</summary>
+    private readonly Dictionary<string, (string? fight, int round, bool waiting)> _scopes = new();
     private string? _requestsCombat;
+    private string? _fight;
+    private int _round;
     private readonly List<string> _plan = new();
     private string? _planScope;
     private PlanGuard? _planGuard;
@@ -98,14 +104,23 @@ public sealed class AgentMemory
 
     public string? Memo { get { lock (_lock) return _memo; } }
 
-    public void TrackAccepted(Team.TeamMessage request)
+    /// <param name="whileWaiting">Accepted while the AI could not act (enemy turn, turn ended): a per-round request
+    /// then still holds for the next round.</param>
+    public void TrackAccepted(Team.TeamMessage request, bool whileWaiting = false)
     {
         lock (_lock)
         {
             if (_openRequests.Any(r => r.Id == request.Id)) return;
             _openRequests.Add(request);
-            while (_openRequests.Count > 6) _openRequests.RemoveAt(0);
+            _scopes[request.Id] = (_fight, _round, whileWaiting);
+            while (_openRequests.Count > 6) Forget(_openRequests, 0);
         }
+    }
+
+    private void Forget(List<Team.TeamMessage> list, int index)
+    {
+        _scopes.Remove(list[index].Id);
+        list.RemoveAt(index);
     }
 
     /// <summary>Drops accepted requests and our own requests older than <paramref name="maxAge"/>.</summary>
@@ -120,8 +135,9 @@ public sealed class AgentMemory
     }
 
     /// <summary>
-    /// Combat-bound requests end with their turn or fight: debuff / focus / block requests are per round, and
-    /// nothing accepted in one fight still applies in the next (enemy keys mean other monsters there).
+    /// Combat-bound requests end with their turn or fight: debuff / focus / block requests hold for the round they were
+    /// accepted in (or the next one, when accepted while waiting); anything accepted in a fight ends with that fight.
+    /// Requests accepted outside a fight (a potion on the map) carry over into the next fight, where they can be done.
     /// </summary>
     public void NoteCombat(string? fight, int round)
     {
@@ -129,20 +145,23 @@ public sealed class AgentMemory
         lock (_lock)
         {
             if (scope == _requestsCombat) return;
-            bool newFight = fight == null || _requestsCombat == null || !_requestsCombat.StartsWith(fight + ":", StringComparison.Ordinal);
-            if (newFight)
-            {
-                _openRequests.Clear();
-                _outgoing.RemoveAll(m => m.Kind is not (Team.TeamMessageKind.SuggestRoute or Team.TeamMessageKind.Chat));
-            }
-            else
-            {
-                static bool PerRound(Team.TeamMessage m) =>
-                    m.Kind is Team.TeamMessageKind.RequestDebuff or Team.TeamMessageKind.RequestFocus or Team.TeamMessageKind.RequestBlock;
-                _openRequests.RemoveAll(PerRound);
-                _outgoing.RemoveAll(PerRound);
-            }
+            _fight = fight;
+            _round = round;
             _requestsCombat = scope;
+            static bool PerRound(Team.TeamMessage m) =>
+                m.Kind is Team.TeamMessageKind.RequestDebuff or Team.TeamMessageKind.RequestFocus or Team.TeamMessageKind.RequestBlock;
+            bool Ended(Team.TeamMessage m)
+            {
+                if (!_scopes.TryGetValue(m.Id, out var at)) return false;
+                if (at.fight == null) return false;                   // made outside a fight: valid until it expires
+                if (at.fight != fight) return true;                   // that fight is over
+                return PerRound(m) && round > at.round + (at.waiting ? 1 : 0);
+            }
+            for (int i = _openRequests.Count - 1; i >= 0; i--)
+                if (Ended(_openRequests[i])) Forget(_openRequests, i);
+            for (int i = _outgoing.Count - 1; i >= 0; i--)
+                if (_outgoing[i].Kind is not (Team.TeamMessageKind.SuggestRoute or Team.TeamMessageKind.Chat) && Ended(_outgoing[i]))
+                    Forget(_outgoing, i);
         }
     }
 
@@ -157,12 +176,13 @@ public sealed class AgentMemory
     }
 
     /// <summary>Remembers a request / offer / question we sent (delivered), so answers to it can be matched.</summary>
-    public void TrackOutgoing(Team.TeamMessage sent)
+    public void TrackOutgoing(Team.TeamMessage sent, bool whileWaiting = false)
     {
         lock (_lock)
         {
             _outgoing.Add(sent);
-            while (_outgoing.Count > 8) _outgoing.RemoveAt(0);
+            _scopes[sent.Id] = (_fight, _round, whileWaiting);
+            while (_outgoing.Count > 8) Forget(_outgoing, 0);
         }
     }
 
@@ -247,7 +267,10 @@ public sealed class AgentMemory
             _memo = null;
             _openRequests.Clear();
             _outgoing.Clear();
+            _scopes.Clear();
             _requestsCombat = null;
+            _fight = null;
+            _round = 0;
             _plan.Clear();
             _planScope = null;
             _planGuard = null;
