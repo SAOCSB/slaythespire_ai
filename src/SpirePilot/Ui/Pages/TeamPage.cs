@@ -4,6 +4,7 @@ using SpirePilot.Core.Config;
 using SpirePilot.Core.Model;
 using SpirePilot.Core.Team;
 using SpirePilot.Core.Text;
+using SpirePilot.Team;
 
 namespace SpirePilot.Ui.Pages;
 
@@ -21,6 +22,12 @@ internal sealed class TeamPage : Page
     private LineEdit _input = null!;
     private Label _toHint = null!;
     private Control _emotes = null!;
+    /// <summary>
+    /// What the last send or emote did, shown under the input instead of the reach hint while the input and the
+    /// recipient stay as they were (a few seconds at most).
+    /// </summary>
+    private (string Text, Color Color, string Input, ulong To, ulong Until)? _note;
+    private const ulong NoteMs = 6000;
 
     private OptionButton _potion = null!;
     private readonly List<PotionInfo> _potions = new();
@@ -136,9 +143,13 @@ internal sealed class TeamPage : Page
         bool sent = false;
         try { sent = PilotRuntime.Bridge.TrySignal(kind); }
         catch (Exception) { /* reported below */ }
-        UiKit.SetText(_toHint, sent ? L10n.T("ui.team.emote_sent") : L10n.T("ui.team.emote_failed"));
-        UiKit.SetColor(_toHint, sent ? UiTheme.Muted : UiTheme.Warn);
-        _toHint.Visible = true;
+        Note(sent ? L10n.T("ui.team.emote_sent") : L10n.T("ui.team.emote_failed"), sent ? UiTheme.Muted : UiTheme.Warn);
+    }
+
+    private void Note(string text, Color color)
+    {
+        _note = (text, color, _input.Text.Trim(), SelectedRecipient(), Time.GetTicksMsec() + NoteMs);
+        RefreshReach();
     }
 
     // ---------------------------------------------------------------- settings
@@ -195,25 +206,31 @@ internal sealed class TeamPage : Page
 
     /// <summary>
     /// Who can read a message to the selected recipient: teammates with SpirePilot only. Shows the "link unavailable"
-    /// hint and the emote buttons when nobody addressed can (co-op only).
+    /// hint and the emote buttons when nobody addressed can (co-op only), or the note about the last send.
     /// </summary>
     private void RefreshReach()
     {
         if (_toHint == null || _emotes == null) return;
-        var snap = Snap;
-        bool unreachable = snap is { IsMultiplayer: true } && Readers(snap, SelectedRecipient()).Count == 0 && snap.Teammates.Any();
+        var to = SelectedRecipient();
+        bool unreachable = Unreachable(Snap, to);
         _emotes.Visible = unreachable;
-        if (unreachable)
+        if (_note is { } n && (n.Input != _input.Text.Trim() || n.To != to || Time.GetTicksMsec() > n.Until)) _note = null;
+        if (_note is { } note)
+        {
+            UiKit.SetText(_toHint, note.Text);
+            UiKit.SetColor(_toHint, note.Color);
+        }
+        else if (unreachable)
         {
             UiKit.SetText(_toHint, L10n.T("team.link_unavailable"));
             UiKit.SetColor(_toHint, UiTheme.Warn);
         }
-        _toHint.Visible = unreachable;
+        _toHint.Visible = _note != null || unreachable;
     }
 
-    /// <summary>Teammates who would read a message to <paramref name="to"/> (0 = everyone).</summary>
-    private static List<PlayerInfo> Readers(GameSnapshot snap, ulong to) =>
-        snap.Teammates.Where(p => p.HasTeamLink && (to == 0 || p.NetId == to)).ToList();
+    /// <summary>Co-op, and no teammate who runs SpirePilot would read a message to <paramref name="to"/> (0 = everyone).</summary>
+    private static bool Unreachable(GameSnapshot? snap, ulong to) =>
+        snap is { IsMultiplayer: true } && snap.Teammates.Any() && !TeamLink.HasReader(to);
 
     private void RenderAllChat()
     {
@@ -405,9 +422,7 @@ internal sealed class TeamPage : Page
         if (!Send(new TeamMessage { Kind = TeamMessageKind.Chat, Text = text }))
         {
             // Kept in the box: another recipient or an emote is the user's call.
-            UiKit.SetText(_toHint, L10n.T("ui.team.not_sent"));
-            UiKit.SetColor(_toHint, UiTheme.Warn);
-            _toHint.Visible = true;
+            Note(L10n.T("ui.team.not_sent"), UiTheme.Warn);
             return;
         }
         _input.Text = "";
@@ -496,7 +511,7 @@ internal sealed class TeamPage : Page
         bool emoted = false;
         try { emoted = PilotRuntime.Bridge.TrySignal(kind); }
         catch (Exception) { /* hint below */ }
-        Hint(emoted ? L10n.T("ui.team.sent_emote") : L10n.T("team.link_unavailable"), UiTheme.Warn);
+        Hint(emoted ? L10n.T("ui.team.sent_emote") : L10n.T("ui.team.not_sent"), UiTheme.Warn);
     }
 
     /// <summary>
@@ -515,7 +530,7 @@ internal sealed class TeamPage : Page
         msg.To = SelectedRecipient();
         var snap = Snap;
         RefreshReach();
-        if (snap is { IsMultiplayer: true } && Readers(snap, msg.To).Count == 0) return false;
+        if (Unreachable(snap, msg.To)) return false;
         var entry = PilotRuntime.Team.Send(msg, fromAi: false);
         if (entry != null && Draft.Team.SpeechBubbles && snap is { IsMultiplayer: true })
             PilotRuntime.Bridge.ShowSpeech(snap.LocalPlayerId, msg.Text);

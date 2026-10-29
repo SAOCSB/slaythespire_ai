@@ -89,7 +89,7 @@ internal static class SettingsDraft
             Report(ex);
             ok = false;
         }
-        // Our own save raised SettingsChanged synchronously (a failed one raised nothing); one reload covers both.
+        // Our own save raised SettingsChanged synchronously (a failed one too); one reload covers both.
         _reloadRequested = false;
         Reload();
         return ok;
@@ -110,8 +110,6 @@ internal static class SettingsDraft
         }
         SaveError = error.Message;
         ModLog.Warn("UI: saving settings failed: " + error.Message);
-        // A failed save raises no SettingsChanged, but the live settings did change: pick them up.
-        _reloadRequested = true;
     }
 
     public static void Tick()

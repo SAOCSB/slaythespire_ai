@@ -140,10 +140,11 @@ public class TeamApiTests
     }
 
     [Theory]
-    [InlineData("Exclamation", "!")]
-    [InlineData("QuestionMark", "?")]
-    [InlineData("SadSlime", "SadSlime")]
-    public void Other_emotes_are_short_human_chat(string reaction, string shown)
+    [InlineData("Exclamation", "!", true)]
+    [InlineData("QuestionMark", "?", true)]
+    [InlineData("Heart", "❤", false)]
+    [InlineData("SadSlime", "SadSlime", false)]
+    public void Other_emotes_are_short_human_chat_and_only_bang_and_question_ask_for_a_reaction(string reaction, string shown, bool actionable)
     {
         var m = TeamEmotes.ToMessage(reaction, 2, "Bob", 1, new List<TeamMessage> { Open("q", TeamMessageKind.AskNeedPotion, 2) });
         Assert.Equal(TeamMessageKind.Chat, m.Kind);
@@ -151,7 +152,52 @@ public class TeamApiTests
         Assert.Null(m.ReplyTo);
         Assert.Equal(0ul, m.To);
         Assert.EndsWith(shown, m.Text);
-        Assert.True(DecisionEngine.IsActionable(m));
+        Assert.Equal(actionable, DecisionEngine.IsActionable(m));
+    }
+
+    [Fact]
+    public void A_heart_is_context_and_does_not_wake_the_AI_but_an_exclamation_does()
+    {
+        var settings = Settings();
+        var hub = new TeamChatHub { LocalNetId = 1 };
+        var engine = new DecisionEngine(() => settings, hub, new NullLog());
+        var snap = TestData.Combat();
+        snap.IsMultiplayer = true;
+        snap.CanAct = false;
+        snap.Players.Add(new PlayerInfo { NetId = 2, Name = "Bob", Hp = 10, MaxHp = 70 });
+
+        for (int i = 0; i < 3; i++) hub.Receive(TeamEmotes.ToMessage("Heart", 2, "Bob", 1, engine.Memory.OutgoingRequests));
+        Assert.Single(hub.PeekAiInbox());
+        Assert.False(engine.HasActionableInbox(snap));
+        var line = engine.PreviewPrompt(snap, null).User.Split('\n').Single(l => l.Contains('❤'));
+        Assert.Contains("| chat (no reply needed): Bob", line);
+
+        hub.Receive(TeamEmotes.ToMessage("Exclamation", 2, "Bob", 1, engine.Memory.OutgoingRequests));
+        Assert.True(engine.HasActionableInbox(snap));
+    }
+
+    [Fact]
+    public void Repeated_taps_of_one_emote_are_one_message()
+    {
+        var hub = new TeamChatHub { LocalNetId = 1 };
+        var t0 = DateTimeOffset.FromUnixTimeSeconds(1_800_000_000);
+        var first = TeamEmotes.ToMessage("Exclamation", 2, "Bob", 1, new List<TeamMessage>(), t0);
+        Assert.Equal(12, first.Id.Length);
+        Assert.Equal(first.Id, first.Sanitized().Id);
+        Assert.True(hub.Receive(first));
+        // Within the same 10-second window: the same id, dropped by the hub's dedupe (log and inbox).
+        Assert.False(hub.Receive(TeamEmotes.ToMessage("Exclamation", 2, "Bob", 1, new List<TeamMessage>(), t0.AddSeconds(3))));
+        Assert.Single(hub.Log);
+        // Another emote, another teammate: new messages.
+        Assert.True(hub.Receive(TeamEmotes.ToMessage("QuestionMark", 2, "Bob", 1, new List<TeamMessage>(), t0.AddSeconds(3))));
+        Assert.True(hub.Receive(TeamEmotes.ToMessage("Exclamation", 3, "Cid", 1, new List<TeamMessage>(), t0.AddSeconds(3))));
+        // Later, while the first is still unread: it replaces that one instead of piling up.
+        var later = TeamEmotes.ToMessage("Exclamation", 2, "Bob", 1, new List<TeamMessage>(), t0.AddSeconds(30));
+        Assert.True(hub.Receive(later));
+        var inbox = hub.PeekAiInbox();
+        Assert.Equal(3, inbox.Count);
+        Assert.Contains(inbox, m => m.Id == later.Id);
+        Assert.DoesNotContain(inbox, m => m.Id == first.Id);
     }
 
     [Fact]
@@ -173,7 +219,8 @@ public class TeamApiTests
     public void Emote_floods_are_capped_like_any_inbox_traffic()
     {
         var hub = new TeamChatHub { LocalNetId = 1 };
-        for (int i = 0; i < 9; i++) hub.Receive(TeamEmotes.ToMessage("Exclamation", 2, "Bob", 1, new List<TeamMessage>()));
+        foreach (var reaction in new[] { "Exclamation", "Skull", "ThumbDown", "SadSlime", "QuestionMark", "Heart", "ThumbUp", "HappyCultist" })
+            hub.Receive(TeamEmotes.ToMessage(reaction, 2, "Bob", 1, new List<TeamMessage>()));
         Assert.Equal(5, hub.PeekAiInbox().Count);
     }
 

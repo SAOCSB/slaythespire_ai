@@ -208,7 +208,12 @@ internal static class PilotRuntime
         // threads, which Dispose would wait on).
         if (MainThread.IsMainThread) ApplyHttpApi();
         else MainThread.Post(ApplyHttpApi);
-        saveError?.Throw();
+        if (saveError != null)
+        {
+            // The store raises Saved only after writing the file; the panel's draft must follow the live settings anyway.
+            SettingsChanged?.Invoke(saved);
+            saveError.Throw();
+        }
         return saved;
     }
 

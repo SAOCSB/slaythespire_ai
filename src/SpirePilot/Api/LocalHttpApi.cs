@@ -12,6 +12,7 @@ using SpirePilot.Core.Model;
 using SpirePilot.Core.Team;
 using SpirePilot.Game;
 using SpirePilot.Infra;
+using SpirePilot.Team;
 
 namespace SpirePilot.Api;
 
@@ -427,20 +428,16 @@ internal sealed class LocalHttpApi : IDisposable
             }
         }
         var kind = DecisionParser.ParseKind(body?["kind"]?.ToString());
-        if (snap is { IsMultiplayer: true } && !snap.Teammates.Any(p => p.HasTeamLink && (to == 0 || p.NetId == to)))
+        // Who reads it comes from the live roster: a teammate who linked after the last capture can.
+        if (snap is { IsMultiplayer: true } && !TeamLink.HasReader(to))
         {
             // Nobody addressed runs SpirePilot: they would never see the text (and on a client the host drops it).
-            // The kind's vanilla emote is all they can see.
+            // The kind's vanilla emote is all they can see; with the AI's budget spent (or the same emote just shown)
+            // there is none, and the answer stays the same.
             string? emote = null;
-            if (Reactions.Has(kind))
-            {
-                if (fromAi && !PilotRuntime.Team.TryUseAiBudget($"emote|{kind}|{to}"))
-                {
-                    await Send(res, 429, Error("rate limited", "rate_limited"));
-                    return;
-                }
-                if (PilotRuntime.Bridge.TrySignal(kind)) emote = Reactions.Name(kind);
-            }
+            if (Reactions.Has(kind) && (!fromAi || PilotRuntime.Team.TryUseAiBudget($"emote|{kind}|{to}")) &&
+                PilotRuntime.Bridge.TrySignal(kind))
+                emote = Reactions.Name(kind);
             await Send(res, 200, new JsonObject { ["delivered"] = false, ["emote"] = emote, ["reason"] = "no_reader" });
             return;
         }

@@ -123,7 +123,7 @@ public static class L10n
         ["status.version_mismatch"] = ("这个 SpirePilot 是为游戏 {0} 编译的，当前游戏是 {1}：AI 已关闭。请安装 {2} 版本的 SpirePilot。", "This SpirePilot build is for game {0}, but the game is {1}: the AI is off. Install the {2} build of SpirePilot."),
         ["status.stuck"] = ("同一操作重复执行但游戏没有变化，已暂停：{0}", "Same action repeated without effect, paused: {0}"),
         ["ui.run_started"] = ("AI 开始了新的一局。", "The AI started a new run."),
-        ["team.link_unavailable"] = ("队友通信不可用：对方没有安装 SpirePilot，消息只显示在本地。", "Team link unavailable: teammates without SpirePilot can't receive messages (shown locally only)."),
+        ["team.link_unavailable"] = ("队友通信不可用：没有安装 SpirePilot 的队友看不到消息，只能看到表情。", "Team link unavailable: teammates without SpirePilot can't read messages, only emotes."),
         ["team.rate_limited"] = ("AI 消息过于频繁，已暂缓发送。", "AI messages rate-limited; message dropped."),
     };
 }

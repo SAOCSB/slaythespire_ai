@@ -102,14 +102,16 @@ public sealed class DecisionEngine
         s.Screen == ScreenKind.Combat && s.Combat != null ? $"combat:{s.Run?.Floor}:{s.Combat.Round}" : $"{s.Screen}:{s.Sequence}";
 
     /// <summary>
-    /// Team messages that deserve a reaction (requests, questions, human chat). Accept/decline answers and chat
-    /// from other AIs are context only — replying to them is how two AIs end up talking forever.
+    /// Team messages that deserve a reaction (requests, questions, human chat, a teammate's "!" or "?"). Accept/decline
+    /// answers, chat from other AIs and other emotes are context only — replying to AI chat is how two AIs end up
+    /// talking forever.
     /// </summary>
     public static bool IsActionable(TeamMessage m) =>
         m.Kind is not (TeamMessageKind.Accept or TeamMessageKind.Decline or TeamMessageKind.Hello) &&
         !(m.FromAi && m.Kind == TeamMessageKind.Chat) &&
         // An AI answering with a counter-request is how two AIs keep each other busy.
-        !(m.FromAi && m.ReplyTo != null);
+        !(m.FromAi && m.ReplyTo != null) &&
+        !(m.IsEmote && !TeamEmotes.AsksForReaction(m));
 
     /// <summary>
     /// Actionable for this AI: requests and questions, plus a "yes" to our own offer or question ("do you need a
@@ -182,7 +184,9 @@ public sealed class DecisionEngine
         var s = OwnerRules.Filtered(snapshot, settings);
         var unread = s.IsMultiplayer ? _team.PeekAiInbox().Where(m => Readable(m, settings)).ToList() : new List<TeamMessage>();
         var ctx = BuildContext(s, settings, unread.Where(NeedsAttention).ToList(), unread.Where(m => !NeedsAttention(m)).ToList(), liveInstruction);
-        ctx.AnsweredOutgoing = unread.Where(AnswersOurs).Select(m => Memory.FindOutgoing(m.ReplyTo)!).ToList();
+        // The pilot's worker may close a request between two lookups: skip it rather than show a null.
+        ctx.AnsweredOutgoing = unread.Where(m => m.Kind is TeamMessageKind.Accept or TeamMessageKind.Decline)
+            .Select(m => Memory.FindOutgoing(m.ReplyTo)).OfType<TeamMessage>().ToList();
         var formatter = new StateFormatter { VerboseCards = settings.Strategy.VerboseCards, IncludePiles = settings.Strategy.IncludePiles };
         return (PromptBuilder.CoreSystem, PromptBuilder.BuildOwnerBlock(settings, MessageLanguage(), CharacterGuide(s)),
             PromptBuilder.BuildUser(s, ctx, formatter));

@@ -246,7 +246,7 @@ internal static class UiStrings
         ("ui.team.emote.question", "问号", "Question mark"),
         ("ui.team.emote_sent", "已发送表情", "Emote sent"),
         ("ui.team.emote_failed", "表情发送失败（需要在多人对局中）", "Emote not sent (needs a co-op run)"),
-        ("ui.team.not_sent", "没有发送：你选择的队友都没有安装 SpirePilot，看不到文字。可以改为发送下面的表情。", "Not sent: nobody you addressed runs SpirePilot, so they can't read text. Send an emote below instead."),
+        ("ui.team.not_sent", "没有发送：你选择的队友都没有安装 SpirePilot，看不到文字。请改用表情。", "Not sent: nobody you addressed runs SpirePilot, so they can't read text. Use an emote instead."),
         ("ui.team.sent_emote", "队友没有 SpirePilot，看不到文字：已改为发送对应的表情", "Teammate has no SpirePilot and can't read text: sent the matching emote instead"),
         ("ui.team.ai_ctrl", "AI 控制", "AI-controlled"),
         ("ui.team.human_ctrl", "玩家控制", "Human-controlled"),

@@ -188,6 +188,16 @@ internal static class TeamLink
         }
     }
 
+    /// <summary>
+    /// Whether a teammate who runs SpirePilot would read a message to <paramref name="to"/> (0 = everyone), by the
+    /// live roster (<see cref="Annotate"/>'s rule) rather than a possibly older snapshot. Any thread.
+    /// </summary>
+    public static bool HasReader(ulong to)
+    {
+        var linked = _linked;
+        return to == 0 ? linked.Length > 0 : linked.Contains(to);
+    }
+
     /// <summary>Tells linked teammates whether our AI pilot is active (sent on change and when peers join).</summary>
     public static void SetLocalAiActive(bool active)
     {
@@ -756,8 +766,9 @@ internal static class TeamLink
 
     /// <summary>
     /// Emotes are all a teammate without SpirePilot can say to the AI: they go to the inbox as messages (see
-    /// <see cref="TeamEmotes"/>). Our own are skipped, and so are a linked peer's: its SpirePilot sends us the text
-    /// of whatever it signals, so its emotes would only repeat (or fake) a request.
+    /// <see cref="TeamEmotes"/>). Our own are skipped, and so are those of a linked peer whose AI is active: its AI
+    /// signals to players who cannot read it, and taken as an answer to us that would fake one. A linked peer who
+    /// plays by hand chose the emote, so it counts like anyone's.
     /// </summary>
     private static void HandleReaction(INetGameService? service, ulong senderId, string reaction)
     {
@@ -768,7 +779,7 @@ internal static class TeamLink
         catch (Exception ex) { local = Broken("local identity", ex, (0UL, PlatformType.None)); }
         if (senderId == local.id || senderId == _localId || senderId == hub.LocalNetId) return;
         lock (RosterLock)
-            if (Peers.TryGetValue(senderId, out var peer) && peer.Confirmed) return;
+            if (Peers.TryGetValue(senderId, out var peer) && peer.Confirmed && peer.IsAi) return;
         var name = PlayerName(local.platform, senderId);
         hub.Receive(TeamEmotes.ToMessage(reaction, senderId, name, hub.LocalNetId, PilotRuntime.Engine.Memory.OutgoingRequests));
     }

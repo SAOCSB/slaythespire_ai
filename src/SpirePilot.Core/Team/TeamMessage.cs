@@ -59,9 +59,14 @@ public sealed class TeamMessage
     public string? ReplyTo { get; set; }
     /// <summary>Unix time in milliseconds (sender clock).</summary>
     public long Time { get; set; }
-    /// <summary>A teammate's vanilla reaction emote read as a message (local only: never sent or read from the wire).</summary>
+    /// <summary>
+    /// The game's name of a teammate's vanilla reaction emote ("ThumbUp", "Exclamation" ...) read as this message.
+    /// Local only: never sent or read from the wire.
+    /// </summary>
     [JsonIgnore]
-    public bool IsEmote { get; set; }
+    public string? Emote { get; set; }
+    [JsonIgnore]
+    public bool IsEmote => Emote != null;
 
     public static string NewId() => Guid.NewGuid().ToString("N")[..12];
 
@@ -103,7 +108,7 @@ public sealed class TeamMessage
             Target = Cut(Target, 64),
             ReplyTo = IdOf(ReplyTo),
             Time = Time,
-            IsEmote = IsEmote,
+            Emote = Cut(Emote, 32),
         };
     }
 }

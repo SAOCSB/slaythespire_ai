@@ -438,6 +438,8 @@ internal static class Overlay
         if (_unread == _shownUnread) return;
         _shownUnread = _unread;
         UiKit.SetText(_fab, _unread > 0 ? $"AI ({_unread})" : "AI");
+        // Shrink back to the text (outside a container a control keeps its widest size); UpdateLayout re-anchors it.
+        if (SceneUtil.Valid(_fab)) _fab!.Size = Vector2.Zero;
         int team = Pages.FindIndex(p => p is TeamPage);
         if (team >= 0 && team < TabButtons.Count)
             UiKit.SetText(TabButtons[team], L10n.T(Pages[team].TitleKey) + (_unread > 0 ? $" ({_unread})" : ""));
