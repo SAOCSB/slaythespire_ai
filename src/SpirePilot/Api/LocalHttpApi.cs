@@ -26,7 +26,8 @@ namespace SpirePilot.Api;
 ///                             and menu (text/plain); ?include=text → the JSON plus that text as "text", from the same
 ///                             capture. The menu is the built-in pilot's: the owner's rules already removed actions.
 ///   GET  /prompt              exactly what the built-in pilot would send now (owner rules, inbox and open requests
-///                             with the same expiry, routes, pin, live instruction); nothing is marked read
+///                             with the same expiry, routes, pin, live instruction unless it cannot act); nothing is
+///                             marked read
 ///   POST /act    {"semantic_key":"..."} or {"id":"a3","sequence":123}   execute a legal action (pilot must be Off /
 ///                             Advisor / paused). With "sequence" (the snapshot the id was read from) an id whose menu
 ///                             changed since is refused with 409 "stale" instead of running whatever has that id now;
@@ -37,11 +38,14 @@ namespace SpirePilot.Api;
 ///   POST /instruction {"text":"..."}                     one-shot instruction for the built-in pilot
 ///   GET  /chat                recent team chat
 ///   POST /chat   {"text":"...","to":"all","kind":"chat","potion":..,"debuff":..,"target":..,"reply_to":..,"from_ai":true}
-///                             → {"delivered", "id", "emote"}: text to teammates who run SpirePilot, the kind's vanilla
-///                             emote to the others (also for "all" in a mixed team); when nobody addressed runs it, no
-///                             text: {"delivered": false, "emote", "reason": "no_reader"}. A reply_to without a recipient
-///                             goes to the asker, or to everyone when the question was for everyone (a potion offer or
-///                             question: the asker only); 429 "rate_limited" when the AI's budget refused it
+///                             → {"delivered", "id", "emote", "emoteLimited"}: text to teammates who run SpirePilot,
+///                             the kind's vanilla emote to the others (also for "all" in a mixed team); when nobody
+///                             addressed runs it, no text: {"delivered": false, "emote", "emoteLimited", "reason":
+///                             "no_reader"}. "emoteLimited": an emote was due, but an AI sender showed the same kind to
+///                             them lately or spent its budget. A reply_to without a recipient goes to the asker, or to
+///                             everyone when the question was for everyone (a potion offer or question: the asker only);
+///                             a potion offer or question answering a potion request goes out as accept (the "yes");
+///                             429 "rate_limited" when the AI's budget refused it
 ///   GET  /compendium?kind=cards|relics|potions|powers|characters   every game model with localized text
 ///   GET  /diagnostics         writes a diagnostics-*.md report (as the panel's button does) and returns it (markdown;
 ///                             no secrets); header X-Diagnostics-File: its path (non-ASCII percent-encoded as UTF-8)
@@ -433,7 +437,9 @@ internal sealed class LocalHttpApi : IDisposable
         var snap = await PilotRuntime.Bridge.CaptureAsync(CancellationToken.None) ?? PilotRuntime.Bridge.Latest;
         var toText = body?["to"]?.ToString();
         var replyTo = body?["reply_to"]?.ToString();
-        var kind = DecisionParser.ParseKind(body?["kind"]?.ToString());
+        var asked = PilotRuntime.Team.FindReceived(replyTo);
+        // As for the AI's own answers, a potion offer or question in answer to a potion request is the "yes".
+        var kind = TeamDelivery.AnswerKind(asked, DecisionParser.ParseKind(body?["kind"]?.ToString()));
         ulong to = 0;
         if (!IsEveryone(toText))
         {
@@ -445,8 +451,9 @@ internal sealed class LocalHttpApi : IDisposable
                 return;
             }
         }
-        // An answer without a named recipient goes where the question came from, as the AI's own answers do.
-        else if (PilotRuntime.Team.FindReceived(replyTo) is { } asked)
+        // An answer without a named recipient goes to the asker, or to everyone when the question was for everyone
+        // (TeamDelivery.ReplyRecipient), as the AI's own answers do.
+        else if (asked != null)
         {
             to = TeamDelivery.ReplyRecipient(asked, kind);
         }
@@ -464,14 +471,21 @@ internal sealed class LocalHttpApi : IDisposable
         };
         // The same rule as the AI's and the Team tab's messages: text to teammates who run SpirePilot (by the live
         // roster: one who linked after the capture can read it), the kind's vanilla emote to the others. With the AI's
-        // budget spent (or the same emote just shown) there is no emote.
+        // budget spent (or the same emote just shown) there is no emote, and "emoteLimited" says so.
         var sent = PilotRuntime.Loop.SendForPlayer(msg, snap, fromAi, TeamLink.HasReader);
         if (sent.RateLimited)
             await Send(res, 429, Error("rate limited", "rate_limited"));
         else if (sent.NoReader)
-            await Send(res, 200, new JsonObject { ["delivered"] = false, ["emote"] = sent.Emote, ["reason"] = "no_reader" });
+            await Send(res, 200, new JsonObject
+            {
+                ["delivered"] = false, ["emote"] = sent.Emote, ["emoteLimited"] = sent.EmoteLimited, ["reason"] = "no_reader",
+            });
         else
-            await Send(res, 200, new JsonObject { ["delivered"] = sent.Entry?.Delivered ?? false, ["id"] = sent.Message.Id, ["emote"] = sent.Emote });
+            await Send(res, 200, new JsonObject
+            {
+                ["delivered"] = sent.Entry?.Delivered ?? false, ["id"] = sent.Message.Id, ["emote"] = sent.Emote,
+                ["emoteLimited"] = sent.EmoteLimited,
+            });
     }
 
     /// <summary>Recipients that mean everyone (same words as <see cref="PilotLoop.ResolveRecipient"/>).</summary>

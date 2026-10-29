@@ -62,10 +62,10 @@ Claude Desktop / Cursor 里把 `"command"` 设为 `.venv` 里的 `spirepilot-mcp
 | `get_state(format, wait_seconds)` | 紧凑状态文本 + 操作菜单；`format="json"` 返回原始快照；`wait_seconds` 在敌人回合等能操作 |
 | `list_actions` | 只看菜单（含操作类型和 semantic key） |
 | `act(id \| semantic_key)` | 执行一个操作，返回结果 + 新状态和菜单 |
-| `get_prompt(part)` | 内置 AI 此刻会发送的完整提示词（含队友消息、未答复的请求、路线和钉住的路线、一次性指令；和内置 AI 一样不含 3 分钟前的队友消息和 5 分钟前的请求；只读，不会把消息标为已读）；`part="system"` 适合当外部模型的系统提示 / 简报。操作时仍先 `get_state`，再用它菜单里的 id 调 `act` |
+| `get_prompt(part)` | 内置 AI 此刻会发送的完整提示词（含队友消息、未答复的请求、路线和钉住的路线、一次性指令；和内置 AI 一样不含 3 分钟前的队友消息和 5 分钟前的请求，不能操作时不含一次性指令；只读，不会把消息标为已读）；`part="system"` 适合当外部模型的系统提示 / 简报。操作时仍先 `get_state`，再用它菜单里的 id 调 `act` |
 | `compendium(kind, query)` | 查卡牌 / 遗物 / 药水 / 能力 / 角色（支持关键词过滤） |
 | `give_instruction(text)` | 给内置 AI 一次性指令（它在玩或在顾问模式时才有用） |
-| `read_chat` / `send_chat` | 多人模式的队友消息（聊天、要药水、给药水、问要不要药水、要减益、集火、求保护、接受 / 拒绝）。`read_chat` 显示每条消息的 id（`#4f2a9c01d2e3`，回答别的消息时还有 `re #…`）；回答请求用 `send_chat(kind="accept" 或 "decline", reply_to="4f2a9c01d2e3")`，对方的 AI 才会照做。带 `reply_to` 且收件人为默认的 `all` 时，回答发给提问的人（问题是发给所有人的则发给所有人；提议 / 询问药水只发给提问的人）；收件人写错时返回队友名单 |
+| `read_chat` / `send_chat` | 多人模式的队友消息（聊天、要药水、给药水、问要不要药水、要减益、集火、求保护、接受 / 拒绝）。`read_chat` 显示每条消息的 id（`#4f2a9c01d2e3`，回答别的消息时还有 `re #…`）；回答请求用 `send_chat(kind="accept" 或 "decline", reply_to="4f2a9c01d2e3")`，对方的 AI 才会照做。带 `reply_to` 且收件人为默认的 `all` 时，回答发给提问的人（问题是发给所有人的则发给所有人；提议 / 询问药水只发给提问的人）；回答要药水的请求时“给药水”/“问要不要药水”按“接受”发出；没装 Mod 的队友没看到表情时说明原因；收件人写错时返回队友名单 |
 
 使用要点：
 
@@ -145,14 +145,15 @@ For Claude Desktop (`claude_desktop_config.json`) or Cursor (`~/.cursor/mcp.json
 written: the mode applies now, the next start uses the old one), `get_state` (text or raw JSON, optional
 `wait_seconds`), `list_actions`, `act` (by `id` or `semantic_key`; refused while the build is blocked for this game
 version), `get_prompt` (exactly what the built-in pilot would send now, inbox, open requests, routes, pin and live
-instruction included, with the same expiry: no team messages older than 3 minutes, no requests older than 5; read
-without side effects; `part="system"` is a good system prompt for the external model; to act, still call `get_state`
-and `act` with an id from its menu), `compendium(kind, query)`, `give_instruction` (for the built-in pilot), `read_chat`
-(shows each message's id as `#4f2a9c01d2e3` and the id it answers as `re #…`), `send_chat` (chat, request_potion,
-offer_potion, ask_need_potion, request_debuff, request_focus, request_block, and accept / decline with `reply_to` = the
-id of the message answered, e.g. `"4f2a9c01d2e3"`, so a teammate's AI acts on the answer; with `reply_to` and the
-default recipient `"all"` the answer goes to the asker, or to everyone when the question was for everyone, a potion
-offer or question to the asker only; an unknown recipient is refused with the teammates' names).
+instruction included, the instruction not while it cannot act, with the same expiry: no team messages older than 3
+minutes, no requests older than 5; read without side effects; `part="system"` is a good system prompt for the external
+model; to act, still call `get_state` and `act` with an id from its menu), `compendium(kind, query)`, `give_instruction`
+(for the built-in pilot), `read_chat` (shows each message's id as `#4f2a9c01d2e3` and the id it answers as `re #…`),
+`send_chat` (chat, request_potion, offer_potion, ask_need_potion, request_debuff, request_focus, request_block, and
+accept / decline with `reply_to` = the id of the message answered, e.g. `"4f2a9c01d2e3"`, so a teammate's AI acts on the
+answer; with `reply_to` and the default recipient `"all"` the answer goes to the asker, or to everyone when the question
+was for everyone, a potion offer or question to the asker only; an unknown recipient is refused with the teammates'
+names).
 
 **How to play.** Take control first with `set_mode("Off")` (or `"Advisor"`); `act` is refused (HTTP 409) while the
 built-in pilot plays. Then loop `get_state` → pick one menu id → `act(id)`; `act` returns the new state and menu. Ids
@@ -172,12 +173,13 @@ planner's paths and the owner's pinned route: advice for the external model, whi
 own. Teammates without SpirePilot cannot read text and see the kind's game emote instead: in a mixed team, also for
 "all", the text goes to the teammates with the mod and the emote to the others, and `send_chat` names the emote (the
 same kind is not shown to them again within 3 minutes). When nobody addressed runs the mod, no text is sent, and
-`send_chat` says which emote they saw or that they saw nothing (chat has no emote; an emote is also skipped when the
-same kind went to them a few minutes ago, the AI message budget is spent, or the game cannot show one right now). Their
-thumbs up and down show up in `read_chat` as accept and decline of the newest request shown to them as an emote while
-it is still open, "!" and "?" as a short chat line. Requests, offers and answers sent with `send_chat` enter the
-built-in pilot's history (requests also its open requests), and a message answered with `reply_to` is not answered by
-the built-in pilot again.
+`send_chat` says which emote they saw or that they saw nothing, and why (chat has no emote; the mod reports
+`emoteLimited` when the same kind went to them in the last 3 minutes or the AI message budget is spent; otherwise the
+game could not show one right now). An `offer_potion` or `ask_need_potion` answering a `request_potion` goes out as
+`accept`: it is the yes. Their thumbs up and down show up in `read_chat` as accept and decline of the newest request
+shown to them as an emote while it is still open, "!" and "?" as a short chat line. Requests, offers and answers sent
+with `send_chat` enter the built-in pilot's history (requests also its open requests), and a message answered with
+`reply_to` is not answered by the built-in pilot again.
 
 **Tests.** `python -m pytest tools/mcp/tests -q` (after `pip install -e "./tools/mcp[test]"`) runs every tool against a
 fake of the mod's API, including the 403 `owner_rule`, 409, incompatible and untested game versions, mixed-team emotes

@@ -186,14 +186,15 @@ continuing a saved run of a disallowed character, no potions for teammates when 
   raw menu but was filtered out. `/state?format=text` (and `include=text`) also carries the route planner's
   `[ROUTES]` lines and the pinned route, built by the same `PromptBuilder` code as the prompt.
 - `DecisionEngine.PreviewPrompt(snapshot, liveInstruction)` builds exactly the prompt the engine would send now
-  (system, owner block, user with the team inbox, open requests, routes, pin and live instruction) without side
-  effects: nothing is marked read, expired or closed. It reads the inbox and requests through the same `PlanInbox` as a
-  decision (expiry, ended fights, answers) and gives the same `[NO ACTION NEEDED]` reason (`ReplyOnlyReason`).
-  `GET /prompt` returns it.
+  (system, owner block, user with the team inbox, open requests, routes, pin and live instruction; a capture that
+  cannot act gets a reply-only call, which leaves the instruction out) without side effects: nothing is marked read,
+  expired or closed. It reads the inbox and requests through the same `PlanInbox` as a decision (expiry, ended
+  fights, answers) and gives the same `[NO ACTION NEEDED]` reason (`ReplyOnlyReason`). `GET /prompt` returns it.
 - Messages the player sends (Team tab, `POST /chat`) go through `PilotLoop.SendForPlayer`: the AI's delivery rule, and
   the AI remembers them like its own. A request stays open for the fight and round of the capture it was sent in, a
-  "yes" to a teammate's request becomes a promise the AI keeps, the answered message is marked read, and every kind
-  but chat leaves a history line ("(owner → X)", "(sent via the API → X)").
+  "yes" to a teammate's request becomes a promise the AI keeps, the answered message is marked read (a reply the AI's
+  decision in flight makes to it is not sent: one answer per question), and every kind but chat leaves a history line
+  ("(owner → X)", "(sent via the API → X)").
 - The pinned route is a soft rule: the engine follows it without the model unless a live instruction or a teammate's
   request needs the model, which then sees the pinned next node. For an external agent the pin is advice in the text.
 
@@ -235,12 +236,14 @@ Emotes (`Core/Team/TeamEmotes`, `Game/Reactions.cs`), both ways:
   decline thumbs down; chat and route suggestions have none), also for "all" in a mixed team. No text goes out when
   nobody addressed reads it (for the Team tab and `/chat`, a capture that lists none of the addressees leaves that to
   the live roster). A mixed-team message costs an AI sender one budget unit. `/chat` answers
-  `{"delivered", "id", "emote"}`, or `{"delivered": false, "emote", "reason": "no_reader"}` without a reader; `emote`
-  is null when nobody needed one, the kind has none, an AI sender (`from_ai`, the default) has spent its budget or
-  showed the same kind to the same recipient in the last 3 minutes, or the game could not show it (not in a run, no
-  reaction synchronizer, no frame within 2 s). A reply without a recipient goes to the asker
-  (`TeamDelivery.ReplyRecipient`: an answer to a question for everyone goes to everyone, a potion offer or question
-  only to the asker).
+  `{"delivered", "id", "emote", "emoteLimited"}`, or `{"delivered": false, "emote", "emoteLimited", "reason":
+  "no_reader"}` without a reader; `emote` is null when nobody needed one, the kind has none, an AI sender (`from_ai`,
+  the default) has spent its budget or showed the same kind to the same recipient in the last 3 minutes
+  (`emoteLimited` true), or the game could not show it (not in a run, no reaction synchronizer, no frame within 2 s). A
+  reply without a recipient goes to the asker (`TeamDelivery.ReplyRecipient`: an answer to a question for everyone
+  goes to everyone, a potion offer or question only to the asker). A potion offer or question in answer to a potion
+  request goes out as accept (`TeamDelivery.AnswerKind`, for the AI and `/chat`): it is the yes, and the asker's AI
+  would read an offer from an AI as a counter-request needing no answer.
 - In: a guarded Harmony postfix on the game's reaction handler (`ReactionSynchronizer.HandleReactionMessage`) turns a
   teammate's emote into a message through `TeamChatHub.Receive` (dedupe, inbox caps):
   - from a teammate without the mod, thumbs up / down are Accept / Decline of the newest request this player showed
@@ -250,8 +253,10 @@ Emotes (`Core/Team/TeamEmotes`, `Game/Reactions.cs`), both ways:
     question a new answer.
   - from a linked teammate playing by hand: context only while the last capture shows a teammate without the mod (or
     no roster), since the emote is most likely meant for that teammate; with everyone linked, as above, with thumbs
-    answering our newest open request to them (`LastOpenTo`). A linked AI's emotes and the local player's own are
-    ignored.
+    answering our newest open request to them (`LastOpenTo`). A linked AI's emotes and the local player's own never
+    reach the inbox.
+  - a linked teammate's "!" or "?" (its AI's too) asks a teammate without the mod something: it is noted as the newest
+    question shown to everyone (`NoteSignal` with an untracked id), so a thumbs up after it answers none of ours.
 
 ## Co-op end of turn
 
@@ -263,8 +268,11 @@ Conversation rules (Core, `DecisionEngine` / `PilotLoop` / `AgentMemory`):
 - Requests, questions and human chat are actionable; accept/decline answers and AI chat are context only, and an
   AI's counter-request (a request with `reply_to`) is never actionable — two AIs cannot keep each other talking.
 - The AI remembers its own open requests/offers (not repeated; a "yes" to its offer is actionable), and accepted
-  requests until fulfilled (a potion used on that player) or until their round / fight ends.
-- While it cannot act (turn ended, enemy turn) a teammate's request still gets an answer (reply-only call); with
+  requests until fulfilled (a potion used on that player) or until their round / fight ends. A "yes" read by a
+  decision is a promise: still unread (the decision was advice, dropped or a fallback) it is listed once, as
+  "accepted earlier" with its potion.
+- While it cannot act (turn ended, enemy turn) a teammate's request still gets an answer (reply-only call); a "yes" to
+  its offer alone does not wake it then (it can only act on it, at its turn, where the yes asks for that); with
   only "undo end turn" on the menu the model may take the turn back to help, never on its own.
 - Teammates without SpirePilot are marked in the state; messages to them become a vanilla reaction emote, and
   their emotes come back as accept / decline / chat (see "Team link").
@@ -274,7 +282,9 @@ Conversation rules (Core, `DecisionEngine` / `PilotLoop` / `AgentMemory`):
   unpredictable card) waits for the model.
 - A potion question to everyone stays open until every teammate answered; each "yes" is its own promise.
 - In OutOfCombatOnly the fight is the human's: its combat-bound requests (block, debuff, focus, potion requests, "!" /
-  "?") are marked read once it ends (`PilotLoop.NoteHumanFight`), never answered on the rewards screen.
+  "?") are marked read once it ends (`PilotLoop.NoteHumanFight`), never answered on the rewards screen. Requests and
+  promises made in a fight the AI did not play (the owner's, from the Team tab or `/chat`) end at its first decision
+  after it (`AgentMemory.NoteCombat` looks at every decision outside a fight).
 - Inbox is bounded (5 unread per sender, 20 total, newest 8 in a prompt) and expires on the local clock (unread
   messages after 3 min, requests after 5 min or when their fight / round ends); teammate text is one line inside a
   fence it cannot close, and cannot forge section headers.

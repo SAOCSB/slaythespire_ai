@@ -44,6 +44,16 @@ public static class TeamDelivery
     public static ulong ReplyRecipient(TeamMessage asked, TeamMessageKind kind) =>
         asked.To == 0 && kind is not (TeamMessageKind.OfferPotion or TeamMessageKind.AskNeedPotion) ? 0 : asked.From;
 
+    /// <summary>
+    /// The kind an answer to <paramref name="asked"/> goes out as: a potion offer or question in answer to a potion
+    /// request is its "yes" (accept), which closes the request and makes it our promise. Sent as an offer, the asker's
+    /// AI would read it as a counter-request it need not answer while we waited for its yes.
+    /// </summary>
+    public static TeamMessageKind AnswerKind(TeamMessage? asked, TeamMessageKind kind) =>
+        asked is { Kind: TeamMessageKind.RequestPotion } && kind is TeamMessageKind.OfferPotion or TeamMessageKind.AskNeedPotion
+            ? TeamMessageKind.Accept
+            : kind;
+
     /// <param name="snap">A recent capture for the co-op flag and the roster; null or solo: text only.</param>
     /// <param name="signal">Shows the kind's vanilla emote (<c>IGameBridge.TrySignal</c>); false when it could not.</param>
     /// <param name="reads">

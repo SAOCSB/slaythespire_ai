@@ -124,21 +124,25 @@ AI 思考时你点暂停或切换模式，这一步会立即取消，不会在�
 - “给药水”的实际做法是：把可以对玩家使用的药水（治疗、格挡、能量、力量……）**用在队友身上**（游戏不支持直接转交药水）。
 - 敌人按游戏的战斗 id 传递，所以即使两边游戏语言不同、敌人编号不同，“给 X 上易伤”也能对上同一个敌人。
 - AI 结束回合后仍会回复队友；只剩“撤销结束回合”时，只有为了帮队友（例如给药水）才会撤销。
+  队友只是对 AI 的提议说“好”时，敌人回合里不会为此调用模型，轮到 AI 时再照做。
 - 即使队友没装 Mod，AI 也能看到所有队友的状态（联机时每台机器都会模拟所有玩家）和他们的药水、卡组，会据此做决策；状态里会标出谁没装 Mod，
   对这些队友不发文字，改用游戏自带的表情和地图 ping：请求 → “!”，询问 / 提议给药水 → “?”，接受 → 点赞，拒绝 → 点踩（聊天和路线建议没有对应表情）。
   发给“所有人”而队伍里有人装了、有人没装时，文字发给装了的队友，表情发给没装的；AI、队友页和 HTTP 接口 / MCP 都按这个规则发送。
-- 反过来，没装 Mod 的队友可以用表情回答：点赞 / 点踩 = 接受 / 拒绝 AI 最近一次以表情发给他（或所有人）、还没结束的请求（请求已结束时不对应任何请求）；
+- 反过来，没装 Mod 的队友可以用表情回答：点赞 / 点踩 = 接受 / 拒绝 AI 最近一次以表情发给他（或所有人）、还没结束的请求（请求已结束，或之后装了 Mod 的队友
+  或其 AI 又发过“!” / “?”时，不对应任何请求）；
   “!” / “?” 会作为一句简短消息进入 AI 的收件箱。AI 回应过后 45 秒内，同一队友再发同样的表情只当作背景信息，不会再为它调用模型；
   AI 按计划连续出牌时这类表情不会打断出牌，但结束回合、用药水或打出效果难以预料的牌之前会先让模型看到它。
 - 装了 Mod 的队友用文字回答：他们的 AI 发的表情不会进收件箱；他们自己手动发的表情，在队伍里还有没装 Mod 的人时只当作背景信息（多半是发给那位队友的），
   全队都装了 Mod 时，“!” / “?” 同样会让 AI 回应，点赞 / 点踩回答 AI 最近发给他（或所有人）、还没结束的请求。
 - 你在队友页（或通过 HTTP 接口 / MCP）发出的请求、提议和回答会记进 AI 的历史，请求会出现在 AI 的“未答复的请求”里，队友的答复由 AI 照着处理；
-  你已经回答过的队友消息，AI 不会再回答一次。
+  你已经回答过的队友消息，AI 不会再回答一次（AI 正在思考时你回答的也一样）。
 - 队友消息 3 分钟后过期，请求 5 分钟后（或所在的战斗 / 回合结束后）过期。“只管战斗外”模式下战斗由你来打：这场战斗里队友发来的战斗请求
-  （要格挡、减益、集火、要药水以及“!” / “?”）在战斗结束后作废，AI 不会到奖励界面才去回应。
+  （要格挡、减益、集火、要药水以及“!” / “?”）在战斗结束后作废，AI 不会到奖励界面才去回应；
+  你在这场战斗里（队友页或 HTTP 接口）发出的请求和答应的事也随战斗结束。
 - 战斗外收到的队友消息会以屏幕提示显示，“AI”按钮和队友页上显示未读条数（打开队友页后清零）；战斗中显示为角色头顶的气泡
   （关闭了气泡，或发送者不在画面上时，改为屏幕提示）。
-- 为了不刷屏：AI 每分钟消息数有上限、记得自己发过的请求不会重复、不回复“好的/不行”这类回答，两个 AI 队友不会互相无限聊天；
+- 为了不刷屏：AI 每分钟消息数有上限、记得自己发过的请求不会重复、不回复“好的/不行”这类回答，两个 AI 队友不会互相无限聊天
+  （用“给药水”或“问要不要药水”回答要药水的请求时按“接受”发出）；
   对“所有人”的求助，一个队友接下后其他 AI 不会重复帮忙。
 - 你选择“不允许把药水给队友”时，这类操作直接从 AI 的菜单里去掉，而不仅仅是提示（战斗外的药水只会对自己用，本来就没有给队友的选项）。
 
@@ -165,7 +169,7 @@ AI 思考时你点暂停或切换模式，这一步会立即取消，不会在�
 | `GET /state` | 当前完整状态 + 合法操作菜单（JSON，含 `sequence`） |
 | `GET /state?format=text` | 内置 AI 提示词里的状态文本（地图上含路线规划器的 `[ROUTES]` 和钉住的路线）+ `Menu:`（每行 `aN \| 标签`），不能操作时首行为 `WAITING: 原因` |
 | `GET /state?include=text` | 上面的 JSON，外加同一次读取生成的 `text` 字段（编号一致） |
-| `GET /prompt` | 内置 AI 此刻会发送的完整提示词：`system`、`owner`、`user`（含队友消息、未答复的请求、路线和钉住的路线、一次性指令；和内置 AI 一样不含过期的消息和请求，不能操作时带 `[NO ACTION NEEDED]`）。只读，不会把消息标为已读 |
+| `GET /prompt` | 内置 AI 此刻会发送的完整提示词：`system`、`owner`、`user`（含队友消息、未答复的请求、路线和钉住的路线、一次性指令；和内置 AI 一样不含过期的消息和请求，不能操作时带 `[NO ACTION NEEDED]`、不含一次性指令）。只读，不会把消息标为已读 |
 | `POST /act {"semantic_key":"end_turn"}` | 执行菜单中的操作（需把内置 AI 设为关闭或顾问模式）。推荐用 `semantic_key`；用 `{"id":"a3","sequence":123}` 时编号只在那次状态里有效：菜单变了会返回 409 `stale` 和新菜单。你的规则不允许的操作返回 403 `owner_rule`；包与游戏版本不兼容（且没开“仍然运行”）时返回 409 `version_mismatch` |
 | `POST /mode {"mode":"FullAuto"}` | 切换模式（只接受模式名）；包与游戏版本不兼容（且没开“仍然运行”）时只接受 `Off`，其他返回 409 `version_mismatch`；设置文件写不进去时多一个 `saveError`（模式本次有效） |
 | `POST /instruction {"text":"..."}` | 给内置 AI 一次性指令 |
@@ -176,11 +180,12 @@ AI 思考时你点暂停或切换模式，这一步会立即取消，不会在�
 
 `POST /chat`：`kind` 可选 `chat`、`request_potion`、`offer_potion`、`ask_need_potion`、`request_debuff`、`request_focus`、
 `request_block`、`accept`、`decline`，可带 `potion`、`debuff`、`target`；回答某条消息时带 `reply_to`（`GET /chat` 里那条消息的 `id`），
-这时 `to` 不写或写 `all` 就发给提问的人（问题是发给所有人的则发给所有人；提议 / 询问药水只发给提问的人）；
+这时 `to` 不写或写 `all` 就发给提问的人（问题是发给所有人的则发给所有人；提议 / 询问药水只发给提问的人），
+回答要药水的请求时 `offer_potion` / `ask_need_potion` 按 `accept` 发出（这就是答应）；
 `to` 写错会返回 400 和队友名单；`from_ai` 默认 true。和 AI、队友页同一个规则：文字发给装了 SpirePilot 的队友，没装的看到对应的游戏表情。
-有人能收到文字时返回 `{"delivered":true,"id":"...","emote":<表情名或 null>}`（`emote` 是没装 Mod 的队友看到的表情）；
-联机时收件的队友都没装 SpirePilot：不发文字，返回 `{"delivered":false,"emote":<表情名或 null>,"reason":"no_reader"}`。
-`emote` 为 null 表示没有显示表情（收件人都装了 Mod；聊天没有对应表情；AI 几分钟内刚对同一对象发过同类表情或消息额度已用完；或游戏暂时显示不了）。
+有人能收到文字时返回 `{"delivered":true,"id":"...","emote":<表情名或 null>,"emoteLimited":<true/false>}`（`emote` 是没装 Mod 的队友看到的表情）；
+联机时收件的队友都没装 SpirePilot：不发文字，返回 `{"delivered":false,"emote":<表情名或 null>,"emoteLimited":<true/false>,"reason":"no_reader"}`。
+`emote` 为 null 表示没有显示表情（收件人都装了 Mod；聊天没有对应表情；AI 3 分钟内刚对同一对象发过同类表情或消息额度已用完，这时 `emoteLimited` 为 true；或游戏暂时显示不了）。
 `from_ai` 为 true 时，要发的文字因消息额度用完或 3 分钟内发过同样的消息被拒，会返回 429 `rate_limited`（什么都不发）。发出的请求、提议和回答会记进内置 AI 的历史（见“多人模式与队友交流”）。
 
 ```bash
@@ -210,7 +215,8 @@ JSON plus that text as `text`, from the same capture). Every menu is the one the
 (allowed characters, ascension, no continuing a saved run of a disallowed character, no potions for teammates when
 giving is off) are applied first. `GET /prompt` is exactly the prompt the built-in pilot would send now (`system`,
 `owner`, `user` with the team inbox, open requests, routes, pin and live instruction; expired messages and requests
-left out and `[NO ACTION NEEDED]` while it cannot act, as for the pilot), built without side effects.
+left out, and `[NO ACTION NEEDED]` without the live instruction while it cannot act, as for the pilot), built without
+side effects.
 `POST /act` takes `{"semantic_key": ...}` (preferred) or `{"id": "a3", "sequence": <snapshot sequence>}`: ids are
 positions in one snapshot's menu, so when that menu changed since the given sequence the call is refused with 409
 `code: "stale"` and the fresh menu. An action an owner rule removed is refused with 403 `code: "owner_rule"`. Other
@@ -226,15 +232,17 @@ are refused; POST bodies must be `application/json` (else 415), at most 64 KB, e
 `request_focus`, `request_block`, `accept`, `decline`), `potion`, `debuff`, `target`, `reply_to` (the `id` of the
 message answered, from `GET /chat`) and an optional `from_ai` (default true); it rejects an unknown recipient with 400
 and the teammates' names. With `reply_to` and no recipient (or `"all"`) the answer goes to the asker, or to everyone
-when the question was for everyone; a potion offer or question goes to the asker only.
-It follows the pilot's rule: in co-op the text goes to teammates who run SpirePilot and the kind's vanilla emote to the
-others, also for "all" in a mixed team; the answer is `{"delivered": true, "id": ..., "emote": <name or null>}`. When no
-addressed teammate runs SpirePilot no text is sent and the answer is
-`{"delivered": false, "emote": <name or null>, "reason": "no_reader"}`. `emote` is null when nothing was shown (nobody
-needed one, chat has no emote, an AI sender showed the same kind to them in the last 3 minutes or spent its budget, or
-the game could not show one); text an AI sender may not send (budget spent, or a repeat) gets 429 `rate_limited`. Requests,
-offers and answers sent this way enter the built-in pilot's history (requests also its open requests), and the message
-answered is not answered by the pilot again.
+when the question was for everyone; a potion offer or question goes to the asker only. A potion offer or question
+answering a potion request goes out as `accept` (it is the yes). It follows the pilot's rule: in co-op the text goes
+to teammates who run SpirePilot and the kind's vanilla emote to the others, also for "all" in a mixed team; the answer
+is `{"delivered": true, "id": ..., "emote": <name or null>, "emoteLimited": <bool>}`. When no addressed teammate runs
+SpirePilot no text is sent and the answer is
+`{"delivered": false, "emote": <name or null>, "emoteLimited": <bool>, "reason": "no_reader"}`. `emote` is null when
+nothing was shown (nobody needed one, chat has no emote, an AI sender showed the same kind to them in the last 3
+minutes or spent its budget, which sets `emoteLimited`, or the game could not show one); text an AI sender may not
+send (budget spent, or a repeat) gets 429 `rate_limited`. Requests, offers and answers sent this way enter the
+built-in pilot's history (requests also its open requests), and the message answered is not answered by the pilot
+again (also when the pilot was deciding on it).
 
 ## 5. 文件位置
 

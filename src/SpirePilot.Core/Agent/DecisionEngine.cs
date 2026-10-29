@@ -275,10 +275,12 @@ public sealed class DecisionEngine
             ignored, promises, answers, closed, combat);
     }
 
-    /// <summary><see cref="PlanInbox"/>, then makes it so: expiry, the fight noted, ignored mail read, answers applied.</summary>
-    private Inbox ReadInbox(GameSnapshot snapshot, PilotSettings settings)
+    /// <summary><see cref="PlanInbox"/>, then makes it so (<see cref="Read"/>).</summary>
+    private Inbox ReadInbox(GameSnapshot snapshot, PilotSettings settings) => Read(PlanInbox(snapshot, settings), snapshot);
+
+    /// <summary>Makes a <see cref="PlanInbox"/> reading so: expiry, the fight noted, ignored mail read, answers applied.</summary>
+    private Inbox Read(Inbox inbox, GameSnapshot snapshot)
     {
-        var inbox = PlanInbox(snapshot, settings);
         _team.ExpireInbox(InboxMaxAge);
         Memory.ExpireRequests(AgentMemory.RequestMaxAge);
         if (inbox.Combat is { } at) Memory.NoteCombat(at.Fight, at.Round);
@@ -298,15 +300,25 @@ public sealed class DecisionEngine
     {
         var settings = _settings();
         var s = OwnerRules.Filtered(snapshot, settings);
-        var ctx = BuildContext(s, settings, PlanInbox(s, settings), liveInstruction);
+        // A capture that cannot act gets a reply-only call, which never carries the owner's instruction.
+        var instruction = !snapshot.CanAct || snapshot.Actions.Count == 0 ? null : liveInstruction;
+        var ctx = BuildContext(s, settings, PlanInbox(s, settings), instruction);
         ctx.ReplyOnlyReason = ReplyOnlyReason(snapshot);
         var formatter = new StateFormatter { VerboseCards = settings.Strategy.VerboseCards, IncludePiles = settings.Strategy.IncludePiles };
         return (PromptBuilder.CoreSystem, PromptBuilder.BuildOwnerBlock(settings, MessageLanguage(), CharacterGuide(s)),
             PromptBuilder.BuildUser(s, ctx, formatter));
     }
 
-    /// <summary>True when unread team messages ask this AI for a reaction (used to wake it while it cannot act).</summary>
-    public bool HasActionableInbox(GameSnapshot snapshot) => PlanInbox(snapshot, _settings()).Actionable.Count > 0;
+    /// <summary>True when unread team messages ask this AI for a reaction it can give now (used to wake it while it cannot act).</summary>
+    public bool HasActionableInbox(GameSnapshot snapshot) => Wakes(PlanInbox(snapshot, _settings()), snapshot);
+
+    /// <summary>
+    /// Something in <paramref name="inbox"/> is worth a call on <paramref name="s"/>: a "yes" to our offer asks for an
+    /// action, so alone it waits for a capture that has one (taking the end of turn back counts), where it is shown as
+    /// one to act on.
+    /// </summary>
+    private static bool Wakes(Inbox inbox, GameSnapshot s) =>
+        inbox.Actionable.Any(m => m.Kind != TeamMessageKind.Accept || s.CanAct && s.Actions.Count > 0);
 
     /// <summary>
     /// The owner's team switches applied to what the model wants to say: replies need auto-reply, the AI's own
@@ -344,8 +356,11 @@ public sealed class DecisionEngine
     {
         var settings = _settings();
         Memory.MaxHistory = settings.Strategy.HistoryLength;
-        var inbox = ReadInbox(snapshot, settings);
-        if (inbox.Actionable.Count == 0 || CoolingDown(settings)) return null;
+        // Nothing is read unless the call is made: reading closes the offer a "yes" answers and makes it a promise, and
+        // the yes would then never be shown as one to act on.
+        var plan = PlanInbox(snapshot, settings);
+        if (!Wakes(plan, snapshot) || CoolingDown(settings)) return null;
+        var inbox = Read(plan, snapshot);
         // The menu as GET /prompt shows it: owner rules applied, on a copy (the caller's capture stays as it was).
         var s = OwnerRules.Filtered(snapshot, settings);
         var context = BuildContext(s, settings, inbox, null);
@@ -545,19 +560,22 @@ public sealed class DecisionEngine
 
     private DecisionContext BuildContext(GameSnapshot s, PilotSettings settings, Inbox inbox, string? liveInstruction)
     {
+        // Newest first matters; a flood of messages must not blow up the prompt.
+        var actionable = inbox.Actionable.TakeLast(MaxInboxInPrompt).ToList();
+        // A "yes" is shown once: in the inbox while it asks to act, else as the promise it became (still unread when the
+        // decision that read it was not carried out, with its offer closed, it would only be "no reply needed").
+        var open = inbox.Open.Where(r => actionable.All(m => m.Id != r.Id)).ToList();
         var ctx = new DecisionContext
         {
             LiveInstruction = liveInstruction,
-            // Newest first matters; a flood of messages must not blow up the prompt.
-            Inbox = inbox.Actionable.TakeLast(MaxInboxInPrompt).ToList(),
-            InboxInfo = inbox.Info.TakeLast(MaxInfoInPrompt).ToList(),
+            Inbox = actionable,
+            InboxInfo = inbox.Info.Where(m => open.All(r => r.Id != m.Id)).TakeLast(MaxInfoInPrompt).ToList(),
+            OpenRequests = open,
             OutgoingRequests = inbox.Outgoing,
             AnsweredOutgoing = inbox.Answered,
             History = Memory.History,
             Memo = Memory.Memo,
         };
-        // A "yes" shown in the inbox is not listed a second time as accepted earlier.
-        ctx.OpenRequests = inbox.Open.Where(r => !ctx.Inbox.Concat(ctx.InboxInfo).Any(m => m.Id == r.Id)).ToList();
         (ctx.RouteSuggestions, ctx.PinnedNext) = Routes(s, settings);
         return ctx;
     }

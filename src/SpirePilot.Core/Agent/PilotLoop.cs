@@ -95,6 +95,8 @@ public sealed class PilotLoop : IDisposable
     private DateTime _nextReplyCheck = DateTime.MinValue;
     /// <summary>A fight the mode leaves to the human, and when it was last seen running (local unix ms).</summary>
     private (string Key, long SeenMs)? _humanFight;
+    /// <summary>Messages the player answered (Team tab, POST /chat), newest last, at most 64: the AI does not answer them again.</summary>
+    private readonly Queue<string> _answeredByPlayer = new();
 
     public PilotStatus Status { get; private set; } = new(PilotState.Off, "");
     public AgentDecision? Advice { get; private set; }
@@ -714,15 +716,23 @@ public sealed class PilotLoop : IDisposable
         foreach (var intent in decision.Messages)
         {
             var answered = intent.ReplyTo == null ? null : inbox.FirstOrDefault(m => m.Id == intent.ReplyTo);
-            ulong to = answered != null ? TeamDelivery.ReplyRecipient(answered, intent.Kind) : ResolveRecipient(intent.To, snap);
-            if (IsRequestKind(intent.Kind) && intent.ReplyTo == null && _engine.Memory.HasOpenOutgoing(intent.Kind, to))
+            // The player answered it while the model was thinking: a second answer could contradict theirs.
+            if (answered == null && AnsweredByPlayer(intent.ReplyTo))
+            {
+                _log.Info("AI reply not sent (the player already answered): " + intent.Text);
+                _engine.Memory.AddHistory("(reply not sent: that message was already answered for you) " + intent.Text);
+                continue;
+            }
+            var kind = TeamDelivery.AnswerKind(answered, intent.Kind);
+            ulong to = answered != null ? TeamDelivery.ReplyRecipient(answered, kind) : ResolveRecipient(intent.To, snap);
+            if (IsRequestKind(kind) && intent.ReplyTo == null && _engine.Memory.HasOpenOutgoing(kind, to))
             {
                 _log.Info("AI request not repeated (still open): " + intent.Text);
                 continue;
             }
             var msg = new TeamMessage
             {
-                Kind = intent.Kind,
+                Kind = kind,
                 Text = intent.Text,
                 Potion = intent.Potion,
                 Debuff = intent.Debuff,
@@ -760,7 +770,17 @@ public sealed class PilotLoop : IDisposable
         var m = sent.Message;
         if (m.Kind == TeamMessageKind.Accept && answered != null)
         {
-            if (IsPromiseForUs(answered)) _engine.Memory.TrackAccepted(answered, waiting, at);
+            if (IsPromiseForUs(answered))
+            {
+                var promise = answered;
+                // A yes that names a potion (an offer sent as the yes does) promised that one.
+                if (answered.Potion == null && m.Potion != null)
+                {
+                    promise = answered.Sanitized();
+                    promise.Potion = m.Potion;
+                }
+                _engine.Memory.TrackAccepted(promise, waiting, at);
+            }
             else if (answered.Kind is TeamMessageKind.OfferPotion or TeamMessageKind.AskNeedPotion)
                 _engine.Memory.AddHistory($"(you said yes to {PromptBuilder.Safe(answered.FromName)}'s potion offer: they use it on you, not you on them)");
         }
@@ -786,13 +806,27 @@ public sealed class PilotLoop : IDisposable
         if (!sent.Reached) return sent;
         var m = sent.Message;
         Remember(sent, answered, snap != null && Waiting(snap), DecisionEngine.FightAndRound(snap));
-        if (m.ReplyTo != null) _team.MarkRead(new[] { m.ReplyTo });
+        if (m.ReplyTo != null)
+        {
+            _team.MarkRead(new[] { m.ReplyTo });
+            lock (_lock)
+            {
+                _answeredByPlayer.Enqueue(m.ReplyTo);
+                while (_answeredByPlayer.Count > 64) _answeredByPlayer.Dequeue();
+            }
+        }
         if (m.Kind == TeamMessageKind.Chat) return sent;
         var to = m.To == 0 ? "everyone"
             : snap?.Players.FirstOrDefault(p => p.NetId == m.To) is { } mate ? (mate.Name.Length > 0 ? mate.Name : mate.CharacterName)
             : m.To.ToString();
         _engine.Memory.AddHistory($"({(fromAi ? "sent via the API" : "owner")} → {PromptBuilder.Safe(to)}) {DecisionParser.KindToWire(m.Kind)}: {m.Text}");
         return sent;
+    }
+
+    private bool AnsweredByPlayer(string? id)
+    {
+        if (id == null) return false;
+        lock (_lock) return _answeredByPlayer.Contains(id);
     }
 
     /// <summary>

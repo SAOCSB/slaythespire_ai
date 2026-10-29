@@ -157,13 +157,15 @@ public sealed class AgentMemory
     /// Combat-bound requests end with their turn or fight: debuff / focus / block requests hold for the round they were
     /// accepted in (or the next one, when accepted while waiting); anything accepted in a fight ends with that fight.
     /// Requests accepted outside a fight (a potion on the map) carry over into the next fight, where they can be done.
+    /// Outside a fight it always looks: a fight the AI did not play (the owner's, who talked from the Team tab) was
+    /// never noted, and its requests end at the first decision after it.
     /// </summary>
     public void NoteCombat(string? fight, int round)
     {
         var scope = CombatScope(fight, round);
         lock (_lock)
         {
-            if (scope == _requestsCombat) return;
+            if (scope == _requestsCombat && fight != null) return;
             _fight = fight;
             _round = round;
             _requestsCombat = scope;
@@ -197,7 +199,7 @@ public sealed class AgentMemory
         var cutoff = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - (long)maxAge.TotalMilliseconds;
         lock (_lock)
         {
-            bool noted = combat is { } c && CombatScope(c.Fight, c.Round) != _requestsCombat;
+            bool noted = combat is { } c && (c.Fight == null || CombatScope(c.Fight, c.Round) != _requestsCombat);
             bool Gone(Team.TeamMessage m, bool fightBound) =>
                 m.Time != 0 && m.Time < cutoff || noted && fightBound && Ended(m, combat!.Value.Fight, combat.Value.Round);
             return (_openRequests.Where(m => !Gone(m, true)).ToList(), _outgoing.Where(m => !Gone(m, EndsWithFight(m))).ToList());
