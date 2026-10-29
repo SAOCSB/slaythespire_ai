@@ -2,8 +2,9 @@
 
 SpirePilot 是在没有游戏的环境里、按游戏真实程序集编译出来的，**还没有在真实游戏里跑过**。
 下面这份清单按风险从低到高排列，照着走一遍就能快速定位问题。每一步出问题时：
-打开面板 → “日志”页 → 点 **生成诊断报告**（或访问 `http://localhost:17654/diagnostics`），
-把生成的 `diagnostics-*.md` 和 `spirepilot.log` 一起反馈。
+打开面板 → “日志”页 → 点 **生成诊断报告**，把生成的 `diagnostics-*.md` 和 `spirepilot.log` 一起反馈。
+也可以用 `curl.exe http://localhost:17654/diagnostics`：同样会写一份 `diagnostics-*.md`（响应头 `X-Diagnostics-File` 是它的路径），
+但要先在“日志”页开启本地 HTTP 接口；设置了 Token 时要加 `-H "Authorization: Bearer <token>"`，直接在浏览器里打开会得到 401。
 
 本地接口请一律用 `localhost`（Windows 上非管理员运行的游戏只注册了 `localhost`，用 `127.0.0.1` 会报 Invalid Hostname）。
 Windows 上请用 `curl.exe`（PowerShell 里的 `curl` 是别名）；POST 的 JSON 写进文件再用 `-d "@body.json"`，最不容易出引号问题。
@@ -88,6 +89,7 @@ Windows 上请用 `curl.exe`（PowerShell 里的 `curl` 是别名）；POST 的 
 | 6.3 | 按 tools/mcp/README.md 接入 Claude Desktop / Claude Code | MCP 工具可读取状态、执行操作 |
 | 6.4 | 浏览器里打开任意网页 | 网页无法通过本地接口操控游戏（带 Origin 的请求一律拒绝） |
 | 6.5 | `dotnet run --project tools/SpirePilot.Bench -- --settings 你的配置.json` | 离线跑 28 个决策题，看模型得分（见 docs/BENCHMARK.md） |
+| 6.6 | `curl.exe -i http://localhost:17654/diagnostics` | 返回诊断报告；响应头 `X-Diagnostics-File` 给出路径，`mod_configs/SpirePilot/` 里多了这个 `diagnostics-*.md`。用户目录含中文等非 ASCII 字符时，路径按 UTF-8 百分号编码，解码后应和实际路径一致 |
 
 ## 7. 本轮新增（只能在实机确认）
 先开 HTTP 接口，用顾问模式停在要测的界面，`curl "http://localhost:17654/state?format=text"` 能看到 AI 收到的状态文本和菜单；
@@ -98,18 +100,20 @@ Windows 上请用 `curl.exe`（PowerShell 里的 `curl` 是别名）；POST 的 
 | --- | --- | --- | --- |
 | 7.1 | 带一瓶能在战斗外用的药水（例如 Blood Potion）走到地图、商店、篝火或事件，先顾问模式看菜单，再切“只管战斗外” | 菜单里有“使用药水”（攻击类等只能战斗中用的药水没有）；AI 只在有需要时用（例如低血）；用完药水从药水栏消失，界面不卡住 | `Menu:` 里没有这一项 → 读取问题，看日志警告和诊断报告的 “Missing game members”；用了没反应 → trace 里这一步的 `result`（例如 `no effect (timed out)`） |
 | 7.2 | 药水栏满时打完一场会掉药水的战斗 | 奖励界面同时有“丢弃药水 X（药水栏已满，可为奖励「…」腾出位置）”和“饮用药水 X（药水栏已满，可为奖励「…」腾出位置）”（后者只给能在战斗外用的药水）；AI 可以先喝掉一瓶能用的再拿新药水；AI 接口不可用、由规则兜底时（trace 里 `source` 为 `Fallback`）不会在战斗外喝药 | `Menu:`；trace 里该步的 `chosen` 和 `result`；拿药水失败时看游戏里药水栏是否真的空出一格 |
-| 7.3 | 联机，带一瓶能对玩家用的药水（例如格挡药水）：先在地图上看菜单；再进战斗，分别打开、关闭“允许 AI 对队友使用药水”看菜单 | 战斗外不管开关如何都只有对自己用的选项（战斗外本来就不提供对队友用药水）；战斗中打开时有“使用药水 X → 队友名”，关闭后这些选项消失，对自己和敌人用的还在 | `GET /state` 的 `actions` 里的 `potion:…@P:<队友 netId>`：战斗外出现说明读取方式变了，请反馈；战斗中关闭后仍有说明过滤没生效 |
+| 7.3 | 联机，带一瓶战斗内外都能用、可以对玩家使用的药水（例如鲜血药水 Blood Potion 或果汁 Fruit Juice）：先在地图上看菜单；再进战斗，分别打开、关闭“允许 AI 对队友使用药水”看菜单 | 战斗外不管开关如何都只有对自己用的选项，写成“使用药水 X → 自己”（战斗外本来就不提供对队友用药水；只能战斗中用的药水，如格挡药水，战斗外本来就不出现，不算读取问题）；战斗中打开时有“使用药水 X → 队友名”，关闭后这些选项消失，对自己和敌人用的还在 | `GET /state` 的 `actions` 里的 `potion:…@P:<队友 netId>`：战斗外出现说明读取方式变了，请反馈；战斗中关闭后仍有说明过滤没生效 |
 | 7.4 | 篝火选“锻造”（升级），以及战斗中“升级一张手牌”的效果 | 状态里每张候选牌后有 `→ upgraded: …`，数字和游戏里的升级预览一致；取消或选完后牌组里**只有**选中的那张被升级 | `/state?format=text` 的 `Selection:` 段；有别的牌被升级是严重问题，请附上前后的牌组截图 |
 | 7.5 | 卡牌奖励、商店或选牌界面出现带关键词的牌（尤其是 2 代新关键词） | `Glossary:` 行解释了这些关键词，画面里出现的关键词排在前面 | `/state?format=text` 的 `Glossary:` 行；`GET /state` 的 `glossary` 字段为空说明没读到 |
-| 7.6 | 进入新的一幕，在地图上看状态；联机时看队友 | 状态里有 `Boss notes:`（Boss 的能力 / 招式摘要，换幕后更新）；每个队友有一行卡组摘要 | `/state?format=text` 开头几行；没有时看日志警告和 “Missing game members” |
-| 7.7 | 和没装 Mod 的队友联机，等 AI 向他请求（会显示“!”或“?”表情），让对方点赞或点踩；再让对方发“!”/“?” | 点赞 / 点踩变成对 AI 那条请求的“接受 / 拒绝”：队友页能看到，AI 不再重复这条请求，接受后 AI 照着做；“!”/“?”在 AI 收件箱里是一行简短消息；你自己点的表情不会进收件箱 | `GET /chat`：应有 `kind` 为 `accept` / `decline`、`replyTo` 为 AI 那条请求 id 的消息；什么都没有时看诊断报告 “Harmony patches (ours)” 是否有 `HandleReactionMessage`，日志里有没有表情（reaction）钩子的警告 |
-| 7.8 | 双方都装 Mod，你在地图或商店时让队友发一条消息；再打开队友页 | 屏幕上出现简短提示；“AI”按钮和队友页显示未读条数，打开队友页后清零；战斗中仍是角色头顶的气泡 | `GET /chat` 里有这条消息（`incoming: true`）说明收到了、只是没显示；没有时看两边日志的 `team link:` 行 |
+| 7.6 | 进入新的一幕，在地图上看状态；联机时看队友 | 状态里有 `Boss notes:`（Boss 的怪物名、血量和招式名，换幕后更新）；每个队友有一行卡组摘要 | `/state?format=text` 开头几行；`GET /state` 或诊断报告 Snapshot 里的 `run.bossName` / `run.bossDescription`：有 bossName 但没有 bossDescription 说明怪物或招式没读到，看日志里的 `boss notes:` 警告 |
+| 7.7 | 和没装 Mod 的队友联机，等 AI 向他请求（会显示“!”或“?”表情），让对方点赞或点踩；再让对方发“!”/“?” | 点赞 / 点踩变成对 AI 那条请求的“接受 / 拒绝”：队友页能看到，AI 不再重复这条请求，接受后 AI 照着做；“!”/“?”在 AI 收件箱里是一行简短消息；你自己点的表情不会进收件箱 | `GET /chat`：应有 `kind` 为 `accept` / `decline` 且 `replyTo` 不为空的消息（为空说明没对上 AI 的请求）。AI 发给没装 Mod 队友的请求只以表情发出，不会出现在 `GET /chat` 里：对方回答前可在 `GET /prompt` 的 `[YOUR OPEN REQUESTS]` 里看到它的 id；回答后、AI 处理前（例如模式设为关闭），`/prompt` 收件箱里这条点赞显示 `reply_to=<id> (answers your …)`。什么都没有时看诊断报告 “Harmony patches (ours)” 是否有 `HandleReactionMessage`，日志里有没有表情（reaction）钩子的警告 |
+| 7.8 | 双方都装 Mod，你在地图或商店时让队友发一条消息；再打开队友页；最后在战斗中关闭气泡再让队友发一条 | 屏幕上出现简短提示；“AI”按钮和队友页显示未读条数，打开队友页后清零；战斗中是角色头顶的气泡，关闭气泡后改为屏幕提示（表情在战斗中不弹提示） | `GET /chat` 里有这条消息（`incoming: true`）说明收到了、只是没显示；没有时看两边日志的 `team link:` 行 |
 | 7.9 | 局内（不是大厅）只有一个没装 Mod 的队友时：`curl -X POST http://localhost:17654/chat -H "Content-Type: application/json" -d '{"text":"need a potion","kind":"request_potion","to":"all"}'`；再把 `kind` 换成 `chat`；再用队友页的快捷按钮 | 返回 `{"delivered":false,"emote":…,"reason":"no_reader"}`，游戏里出现“!”表情，不发文字；`chat` 时 `emote` 为 null，什么也不显示；队友页提示改发了表情。3 分钟内用同一 `kind` 再发一次时 `emote` 为 null 属正常（AI 防刷屏；加 `"from_ai":false` 就不受限） | 没有表情时看日志里的 `reactions:` 警告（找不到游戏的表情同步器） |
 | 7.10 | 角色页只勾选一个角色，模式设为关闭，进入角色选择：`GET /state`；再对未勾选但已解锁的角色 `POST /act {"semantic_key":"char:<角色 id>"}`（id 用 `GET /compendium?kind=characters` 查） | 菜单里只有允许的角色；POST 返回 403 `{"code":"owner_rule"}`，游戏里什么都没发生。联机战斗中关闭“允许 AI 对队友使用药水”后，对队友用药水的 key（先在允许时从 `GET /state` 抄下来）同样返回 403；MCP 的 `act` 对这两种操作回答 “The owner's rules forbid this action” | 返回 404 `no_action` 说明这个操作本来就不在游戏菜单里（换一个当前确实能选的）；返回 200 是严重问题 |
-| 7.11 | 联机，停在地图上，模式设为关闭，让装了 Mod 的队友发一条请求；打开“日志”页的“把完整提示词写入日志”，`curl http://localhost:17654/prompt`，再切到“只管战斗外”（或全自动） | `/prompt` 的 `user` 里有 `[TEAM INBOX]` 和这条请求，还有 `[ROUTES]`（钉住过路线时也有钉住的路线）；切换后 AI 仍会回应这条请求，队友收到接受或拒绝（`/prompt` 没把它标为已读）；局面没变时，日志里的第一条 `PROMPT >>>` 与刚才 `user` 的内容一致。注意顾问模式下 AI 从不替你发消息，只在状态里的建议后面附上 `💬` 建议的回复 | 日志里的 `PROMPT >>>`：没有 `[TEAM INBOX]` 说明 `/prompt` 把消息标成了已读；`/state?format=text` 也应有同样的路线行 |
-| 7.12 | 在 0.111 的游戏上装 game0.107 的包，启动游戏，切到全自动；再 `POST /mode {"mode":"FullAuto"}`，`GET /status` | 游戏正常进主菜单；面板 / 状态提示这个包对应哪个游戏版本、应安装哪个包；模式保持关闭，AI 不启动；`/mode` 和 `POST /act` 返回 409 `version_mismatch`，`/status` 里有 `versionMismatch`。反过来（0.107 的游戏装 game0.111 的包）时游戏多半不加载这个 Mod，或在 Mod 列表里标出版本不符：没有面板、没有 `spirepilot.log` 都属正常，请记下游戏显示了什么 | 日志里的版本不匹配错误；诊断报告开头的 `SpirePilot: … (compiled for game API …)` 和 `game: …`。如果 Mod 加载了但日志里有 `failed to initialize`，也请反馈 |
+| 7.11 | 联机，停在地图上，模式设为关闭，让装了 Mod 的队友发一条请求；打开“日志”页的“把完整提示词写入日志”，`curl http://localhost:17654/prompt`，再切到“只管战斗外”（或全自动）。队友发出请求后 3 分钟内做完（收件箱消息 3 分钟后过期） | `/prompt` 的 `user` 里有 `[TEAM INBOX]` 和这条请求，还有 `[ROUTES]`（钉住过路线时也有钉住的路线）；切换后 AI 仍会回应这条请求，队友收到接受或拒绝（`/prompt` 没把它标为已读）；局面没变时，日志里的第一条 `PROMPT >>>` 与刚才 `user` 的内容一致。注意顾问模式下 AI 从不替你发消息，只在状态里的建议后面附上 `💬` 建议的回复 | 日志里的 `PROMPT >>>`：没有 `[TEAM INBOX]` 说明 `/prompt` 把消息标成了已读，或者已经过了 3 分钟（消息过期，属正常）；`/state?format=text` 也应有同样的路线行 |
+| 7.12 | 先用对的包把模式设成全自动并退出游戏；在 0.111 的游戏上换成 game0.107 的包，启动游戏，打开“控制”页；`POST /mode {"mode":"FullAuto"}`，`GET /status`；再打开“仍然运行（风险自负）”，选全自动；再关掉这个开关；最后打开开关、重启游戏 | 游戏正常进主菜单；出现红色的简短屏幕提示；“控制”页红字说明这个包是为哪个游戏版本编译的、应安装 game0.111 包，下面有“仍然运行”开关；模式显示关闭，除“关闭”外的模式按钮都不能点，AI 不启动；`/mode` 和 `POST /act` 返回 409 `version_mismatch`，`/status` 里有 `versionMismatch`、`mode` 为 `Off`；`settings.json` 里 `control.mode` 仍是 `FullAuto`。打开开关后模式变成关闭，出现黄色提示，`/status` 有 `versionWarning`；选全自动后 AI 开始玩；关掉开关后 AI 回到关闭。重启后开关仍是打开的，AI 按保存的模式运行（全自动会在主菜单直接开局）。反过来（0.107 的游戏装 game0.111 的包）时游戏多半不加载这个 Mod，或在 Mod 列表里标出版本不符：没有面板、没有 `spirepilot.log` 都属正常，请记下游戏显示了什么 | 日志里的版本错误 / 警告；诊断报告开头的 `SpirePilot: … (compiled for game API …)` 和 `game: …`，Pilot 段的 `mode: Off (saved: FullAuto)` 和 `game version: … (run anyway: …)`。如果 Mod 加载了但日志里有 `failed to initialize`，也请反馈 |
 | 7.13 | 全自动打战斗或走地图时，把游戏最小化或切到别的窗口 30 秒以上，再切回来 | 切回后 AI 继续正常操作；不会出现一串“超时”失败，也不会因“连续失败 3 次”暂停 | trace 里 `success: false` 且 `result` 含 `timed out` 的步骤，以及当时窗口是否在后台 |
 | 7.14 | 三人局（房主和两个客户端都装 Mod），一个客户端退出后重新加入 | 重新加入后，两个客户端的队友页都显示对方“已安装 SpirePilot”，能互相直接发消息 | 两边日志都应有 `team link: linked with <名字>`；出现 `lists SpirePilot but never answered our Hello` 说明房主转发的 Hello 没被回答 |
+| 7.15 | 三人局：队友 A 装了 Mod（手动玩，AI 关闭），队友 B 没装。等 AI 向所有人发请求（例如低血时要药水），让 B 点赞；再在队友页对“所有人”点要药水的快捷按钮；再 `POST /chat {"text":"need a potion","kind":"request_potion","to":"all","from_ai":false}`（`from_ai` 为 true 时，3 分钟内刚显示过同类表情就不再显示）；最后让 A 在他的队友页发一个“!”表情 | A 收到文字，B 看到“!”表情；B 的点赞成为对 AI 那条请求的“接受”；队友页提示“已发送（没有 SpirePilot 的队友看到了对应的表情）”；`/chat` 返回 `{"delivered":true,…,"emote":"Exclamation"}`。A 的表情只当作背景信息：AI 不回应，`/prompt` 里这条标着 `(no reply needed)` | `GET /chat`；没有表情时看日志里的 `reactions:` 警告；A 的表情让 AI 回应了：看诊断报告 Snapshot 的 `players` 里有没有 B（`hasTeamLink` 为 false） |
+| 7.16 | 联机，模式设为“只管战斗外”；战斗中让装了 Mod 的队友发“要格挡”请求，你自己打完这场战斗 | 到奖励界面 AI 不回应这条请求（战斗由你来打，战斗请求随战斗作废；聊天、路线建议、问要不要药水和对 AI 请求的答复照常保留） | trace 和队友页里 AI 有没有回 `accept` / `decline`；`/prompt` 的 `[TEAM INBOX]` 里不应再有这条 |
 
 ## 反馈时请附上
 - 游戏版本（主菜单角落）、下载的是 game0.107 还是 game0.111 包

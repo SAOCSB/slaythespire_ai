@@ -35,9 +35,18 @@
 | Steam 默认（正式分支） | 0.107.x | `SpirePilot-<版本>-game0.107.zip` |
 | Steam 测试分支（public-beta） | 0.111.x | `SpirePilot-<版本>-game0.111.zip` |
 
-不确定自己的版本？游戏主菜单角落会显示版本号。
-装错了包（例如在 0.111 的游戏上装了 game0.107 的包）时，AI 不会启动，面板会提示应该安装哪个包。
-反过来在 0.107 的游戏上装 game0.111 的包时，游戏多半不会加载这个 Mod（包里写明了最低游戏版本 0.111），也就没有面板提示。
+不确定自己的版本？游戏主菜单角落会显示版本号。Mod 读到游戏版本后会和包对应的版本比较：
+
+| 情况 | 例子 | 结果 |
+| --- | --- | --- |
+| 一致 | game0.111 包 + 游戏 0.111.x | 正常运行 |
+| 游戏比最新的包还新 | game0.111 包 + 游戏 0.112 | AI 照常运行；“控制”页和屏幕提示显示黄色警告（未经测试，部分功能可能失效），请留意 SpirePilot 更新 |
+| 不兼容 | game0.107 包 + 游戏 0.108 或更新；包比游戏新 | AI 不启动；“控制”页和屏幕提示显示红色提示：该装哪个包，或者还没有对应的包、请检查更新 |
+
+不兼容时你保存的模式不会被改掉（换对包后照旧），只是 AI 按“关闭”运行，HTTP 接口也拒绝操作。“控制”页的
+**仍然运行（风险自负）** 开关可以强行运行：打开时模式先切到“关闭”，再自己选模式；它只对当前这个游戏版本 + 这个包有效
+（保存为 `settings.json` 里的 `control.ignoreGameVersionFor`，例如 `"game 0.111, build 0.107"`），换了游戏版本或包会重新拦截。
+在 0.107 的游戏上装 game0.111 的包时，游戏多半不会加载这个 Mod（包里写明了最低游戏版本 0.111），也就没有面板提示。
 
 ## 2. 安装
 
@@ -74,7 +83,7 @@
 
 其他选项：单步模式（每一步都等你点“单步”）、操作间隔（方便观看）、打完自动开下一局及局数上限、
 一次性指令（例如“这回合先用火焰药水”，优先级最高）。
-药水不只在战斗中用：在地图、奖励、商店、篝火、事件等界面，游戏允许使用的药水也会出现在菜单里（战斗外只对自己使用）；
+药水不只在战斗中用：在地图、奖励、商店、篝火、事件等界面，游戏允许使用的药水也会出现在菜单里（战斗外只对自己使用，联机时写成“使用药水 X → 自己”）；
 奖励界面药水栏满时，AI 可以先喝掉一瓶再拿新药水，而不只是丢弃。
 AI 失败时的保护：同一操作在同一局面反复无效（包括来回循环）/ 连续失败 / API 配置错误会**自动暂停**并提示原因。
 配置错误包括密钥无效、地址不对、模型名写错、账户余额不足（含 HTTP 402，以及 DeepSeek、智谱 GLM、OpenRouter、Gemini、
@@ -115,10 +124,19 @@ AI 思考时你点暂停或切换模式，这一步会立即取消，不会在�
 - 敌人按游戏的战斗 id 传递，所以即使两边游戏语言不同、敌人编号不同，“给 X 上易伤”也能对上同一个敌人。
 - AI 结束回合后仍会回复队友；只剩“撤销结束回合”时，只有为了帮队友（例如给药水）才会撤销。
 - 即使队友没装 Mod，AI 也能看到所有队友的状态（联机时每台机器都会模拟所有玩家）和他们的药水、卡组，会据此做决策；状态里会标出谁没装 Mod，
-  对这些队友不发文字，改用游戏自带的表情和地图 ping：请求 → “!”，询问 / 提议给药水 → “?”，接受 → 点赞，拒绝 → 点踩。
-  你在队友页（或通过 HTTP 接口）给没装 Mod 的队友发消息也一样：不发文字，改为显示对应的表情（聊天没有对应表情）。
-- 反过来，没装 Mod 的队友可以用表情回答：点赞 / 点踩 = 接受 / 拒绝 AI 最近向他（或向所有人）发出、还没得到答复的请求；“!” / “?” 会作为一句简短消息进入 AI 的收件箱。
-- 战斗外收到的队友消息会以屏幕提示显示，“AI”按钮和队友页上显示未读条数（打开队友页后清零）；战斗中显示为角色头顶的气泡。
+  对这些队友不发文字，改用游戏自带的表情和地图 ping：请求 → “!”，询问 / 提议给药水 → “?”，接受 → 点赞，拒绝 → 点踩（聊天和路线建议没有对应表情）。
+  发给“所有人”而队伍里有人装了、有人没装时，文字发给装了的队友，表情发给没装的；AI、队友页和 HTTP 接口 / MCP 都按这个规则发送。
+- 反过来，没装 Mod 的队友可以用表情回答：点赞 / 点踩 = 接受 / 拒绝 AI 最近一次以表情发给他（或所有人）、还没结束的请求（请求已结束时不对应任何请求）；
+  “!” / “?” 会作为一句简短消息进入 AI 的收件箱。AI 回应过后 45 秒内，同一队友再发同样的表情只当作背景信息，不会再为它调用模型；
+  AI 按计划连续出牌时这类表情不会打断出牌，但结束回合、用药水或打出效果难以预料的牌之前会先让模型看到它。
+- 装了 Mod 的队友用文字回答：他们的 AI 发的表情不会进收件箱；他们自己手动发的表情，在队伍里还有没装 Mod 的人时只当作背景信息（多半是发给那位队友的），
+  全队都装了 Mod 时，“!” / “?” 同样会让 AI 回应，点赞 / 点踩回答 AI 最近发给他（或所有人）、还没结束的请求。
+- 你在队友页（或通过 HTTP 接口 / MCP）发出的请求、提议和回答会记进 AI 的历史，请求会出现在 AI 的“未答复的请求”里，队友的答复由 AI 照着处理；
+  你已经回答过的队友消息，AI 不会再回答一次。
+- 队友消息 3 分钟后过期，请求 5 分钟后（或所在的战斗 / 回合结束后）过期。“只管战斗外”模式下战斗由你来打：这场战斗里队友发来的战斗请求
+  （要格挡、减益、集火、要药水以及“!” / “?”）在战斗结束后作废，AI 不会到奖励界面才去回应。
+- 战斗外收到的队友消息会以屏幕提示显示，“AI”按钮和队友页上显示未读条数（打开队友页后清零）；战斗中显示为角色头顶的气泡
+  （关闭了气泡，或发送者不在画面上时，改为屏幕提示）。
 - 为了不刷屏：AI 每分钟消息数有上限、记得自己发过的请求不会重复、不回复“好的/不行”这类回答，两个 AI 队友不会互相无限聊天；
   对“所有人”的求助，一个队友接下后其他 AI 不会重复帮忙。
 - 你选择“不允许把药水给队友”时，这类操作直接从 AI 的菜单里去掉，而不仅仅是提示（战斗外的药水只会对自己用，本来就没有给队友的选项）。
@@ -146,20 +164,23 @@ AI 思考时你点暂停或切换模式，这一步会立即取消，不会在�
 | `GET /state` | 当前完整状态 + 合法操作菜单（JSON，含 `sequence`） |
 | `GET /state?format=text` | 内置 AI 提示词里的状态文本（地图上含路线规划器的 `[ROUTES]` 和钉住的路线）+ `Menu:`（每行 `aN \| 标签`），不能操作时首行为 `WAITING: 原因` |
 | `GET /state?include=text` | 上面的 JSON，外加同一次读取生成的 `text` 字段（编号一致） |
-| `GET /prompt` | 内置 AI 此刻会发送的完整提示词：`system`、`owner`、`user`（含队友消息、未答复的请求、路线和钉住的路线、一次性指令）。只读，不会把消息标为已读 |
-| `POST /act {"semantic_key":"end_turn"}` | 执行菜单中的操作（需把内置 AI 设为关闭或顾问模式）。推荐用 `semantic_key`；用 `{"id":"a3","sequence":123}` 时编号只在那次状态里有效：菜单变了会返回 409 `stale` 和新菜单。你的规则不允许的操作返回 403 `owner_rule`；Mod 包与游戏版本不匹配时返回 409 `version_mismatch` |
-| `POST /mode {"mode":"FullAuto"}` | 切换模式（只接受模式名）；Mod 包与游戏版本不匹配时拒绝开启 AI（409 `version_mismatch`） |
+| `GET /prompt` | 内置 AI 此刻会发送的完整提示词：`system`、`owner`、`user`（含队友消息、未答复的请求、路线和钉住的路线、一次性指令；和内置 AI 一样不含过期的消息和请求，不能操作时带 `[NO ACTION NEEDED]`）。只读，不会把消息标为已读 |
+| `POST /act {"semantic_key":"end_turn"}` | 执行菜单中的操作（需把内置 AI 设为关闭或顾问模式）。推荐用 `semantic_key`；用 `{"id":"a3","sequence":123}` 时编号只在那次状态里有效：菜单变了会返回 409 `stale` 和新菜单。你的规则不允许的操作返回 403 `owner_rule`；包与游戏版本不兼容（且没开“仍然运行”）时返回 409 `version_mismatch` |
+| `POST /mode {"mode":"FullAuto"}` | 切换模式（只接受模式名）；包与游戏版本不兼容（且没开“仍然运行”）时只接受 `Off`，其他返回 409 `version_mismatch`；设置文件写不进去时多一个 `saveError`（模式本次有效） |
 | `POST /instruction {"text":"..."}` | 给内置 AI 一次性指令 |
 | `GET /chat` / `POST /chat {"text":"...","to":"all"}` | 读取 / 发送队友消息，见下 |
-| `GET /status` | 状态、token 统计、最近错误；装错了游戏版本对应的包时有 `versionMismatch` |
+| `GET /status` | 状态、实际生效的模式、token 统计、最近错误；AI 因版本不兼容被拦截时有 `versionMismatch`（英文说明），在未经测试的游戏版本上或强行运行时有 `versionWarning` |
 | `GET /compendium?kind=cards` | 卡牌 / 遗物 / 药水 / 能力图鉴 |
-| `GET /diagnostics` | 生成诊断报告（版本、补丁、缺失的游戏成员、当前界面、日志尾部；不含 API Key） |
+| `GET /diagnostics` | 写一份诊断报告 `diagnostics-*.md`（和“日志”页按钮一样：版本、补丁、缺失的游戏成员、当前界面、日志尾部；不含 API Key）并返回内容，响应头 `X-Diagnostics-File` 是文件路径 |
 
 `POST /chat`：`kind` 可选 `chat`、`request_potion`、`offer_potion`、`ask_need_potion`、`request_debuff`、`request_focus`、
-`request_block`、`accept`、`decline`，可带 `potion`、`debuff`、`target`；回答某条消息时带 `reply_to`（`GET /chat` 里那条消息的 `id`）；
-`to` 写错会返回 400 和队友名单；`from_ai` 默认 true。成功返回 `{"delivered":true,"id":"..."}`。
-联机时收件的队友都没装 SpirePilot：不发文字，改为显示对应的游戏表情，返回 `{"delivered":false,"emote":<表情名或 null>,"reason":"no_reader"}`；
-`emote` 为 null 表示没有显示表情（聊天没有对应表情；AI 几分钟内刚对同一对象发过同类表情或消息额度已用完；或游戏暂时显示不了）。
+`request_block`、`accept`、`decline`，可带 `potion`、`debuff`、`target`；回答某条消息时带 `reply_to`（`GET /chat` 里那条消息的 `id`），
+这时 `to` 不写或写 `all` 就发给提问的人（问题是发给所有人的则发给所有人；提议 / 询问药水只发给提问的人）；
+`to` 写错会返回 400 和队友名单；`from_ai` 默认 true。和 AI、队友页同一个规则：文字发给装了 SpirePilot 的队友，没装的看到对应的游戏表情。
+有人能收到文字时返回 `{"delivered":true,"id":"...","emote":<表情名或 null>}`（`emote` 是没装 Mod 的队友看到的表情）；
+联机时收件的队友都没装 SpirePilot：不发文字，返回 `{"delivered":false,"emote":<表情名或 null>,"reason":"no_reader"}`。
+`emote` 为 null 表示没有显示表情（收件人都装了 Mod；聊天没有对应表情；AI 几分钟内刚对同一对象发过同类表情或消息额度已用完；或游戏暂时显示不了）。
+`from_ai` 为 true 时，要发的文字因消息额度用完或 3 分钟内发过同样的消息被拒，会返回 429 `rate_limited`（什么都不发）。发出的请求、提议和回答会记进内置 AI 的历史（见“多人模式与队友交流”）。
 
 ```bash
 curl "http://localhost:17654/state?format=text"
@@ -168,7 +189,7 @@ curl -X POST http://localhost:17654/act -H "Content-Type: application/json" -d '
 
 安全：带 `Origin` 头（网页发起）的请求一律拒绝；POST 必须带 `Content-Type: application/json`（否则 415），正文不超过 64 KB。
 错误响应为 `{"error":"...","code":"..."}`：403 `owner_rule`（你的规则不允许这个操作）；409 的 `code` 为 `pilot_active`（内置 AI 在操作）、
-`busy`（现在不能操作）、`stale`（编号已过期）或 `version_mismatch`（装错了游戏版本对应的包）。
+`busy`（现在不能操作）、`stale`（编号已过期）或 `version_mismatch`（包与游戏版本不兼容）。
 
 #### MCP
 
@@ -187,22 +208,31 @@ plus a `Menu:` of `aN | label` lines, `WAITING: <reason>` first when it cannot a
 JSON plus that text as `text`, from the same capture). Every menu is the one the built-in pilot gets: the owner's rules
 (allowed characters, ascension, no continuing a saved run of a disallowed character, no potions for teammates when
 giving is off) are applied first. `GET /prompt` is exactly the prompt the built-in pilot would send now (`system`,
-`owner`, `user` with the team inbox, open requests, routes, pin and live instruction), built without side effects.
+`owner`, `user` with the team inbox, open requests, routes, pin and live instruction; expired messages and requests
+left out and `[NO ACTION NEEDED]` while it cannot act, as for the pilot), built without side effects.
 `POST /act` takes `{"semantic_key": ...}` (preferred) or `{"id": "a3", "sequence": <snapshot sequence>}`: ids are
 positions in one snapshot's menu, so when that menu changed since the given sequence the call is refused with 409
 `code: "stale"` and the fresh menu. An action an owner rule removed is refused with 403 `code: "owner_rule"`. Other
-409 codes: `pilot_active`, `busy`; `POST /mode` and `POST /act` answer 409 `version_mismatch` when this build does not
-match the game version (`GET /status` then carries `versionMismatch`). Requests with an `Origin` header are refused; POST bodies
-must be `application/json` (else 415), at most 64 KB, e.g.
+409 codes: `pilot_active`, `busy`. While this build is blocked for the game version (incompatible, "Run anyway" off),
+`POST /act` and `POST /mode` with any mode but `Off` answer 409 `version_mismatch`; `GET /status` then carries
+`versionMismatch` (why, and the fix that exists) and reports the effective mode `Off`, while `versionWarning` is set when
+the pilot runs on an untested newer game or by "Run anyway". `POST /mode` adds `saveError` when settings.json could not
+be written (the mode applies for this session). `GET /diagnostics` writes a `diagnostics-*.md` file, as the Log tab's
+button does, returns its text and names the file in the `X-Diagnostics-File` header. Requests with an `Origin` header
+are refused; POST bodies must be `application/json` (else 415), at most 64 KB, e.g.
 `curl -X POST http://localhost:17654/act -H "Content-Type: application/json" -d '{"semantic_key":"end_turn"}'`.
 `POST /chat` takes `text`, `to`, `kind` (`chat`, `request_potion`, `offer_potion`, `ask_need_potion`, `request_debuff`,
 `request_focus`, `request_block`, `accept`, `decline`), `potion`, `debuff`, `target`, `reply_to` (the `id` of the
 message answered, from `GET /chat`) and an optional `from_ai` (default true); it rejects an unknown recipient with 400
-and the teammates' names and answers `{"delivered": true, "id": ...}`. In co-op, when no addressed teammate runs
-SpirePilot, the text is not sent: the vanilla emote for the kind is shown instead and the answer is
-`{"delivered": false, "emote": <name or null>, "reason": "no_reader"}`; `emote` is null when nothing was shown (chat
-has no emote, an AI sender showed the same kind to them in the last 3 minutes or spent its budget, or the game could
-not show one).
+and the teammates' names. With `reply_to` and no recipient (or `"all"`) the answer goes where the question came from.
+It follows the pilot's rule: in co-op the text goes to teammates who run SpirePilot and the kind's vanilla emote to the
+others, also for "all" in a mixed team; the answer is `{"delivered": true, "id": ..., "emote": <name or null>}`. When no
+addressed teammate runs SpirePilot no text is sent and the answer is
+`{"delivered": false, "emote": <name or null>, "reason": "no_reader"}`. `emote` is null when nothing was shown (nobody
+needed one, chat has no emote, an AI sender showed the same kind to them in the last 3 minutes or spent its budget, or
+the game could not show one); text an AI sender may not send (budget spent, or a repeat) gets 429 `rate_limited`. Requests,
+offers and answers sent this way enter the built-in pilot's history (requests also its open requests), and the message
+answered is not answered by the pilot again.
 
 ## 5. 文件位置
 
@@ -210,7 +240,7 @@ not show one).
 - `settings.json`：所有设置（含 API Key，请勿分享；可用 `env:` 写法避免明文）
 - `spirepilot.log`：日志（上一次的日志为 `spirepilot.log.prev`）
 - `traces/trace-日期.jsonl`：每一步决策记录（给了哪些选项、选了什么、结果），可在设置中关闭
-- `diagnostics-*.md`：诊断报告（“日志”页按钮或 `GET /diagnostics` 生成）
+- `diagnostics-*.md`：诊断报告（“日志”页按钮或 `GET /diagnostics` 生成，后者在响应头 `X-Diagnostics-File` 里给出路径）
 
 Windows 通常是 `%APPDATA%\SlayTheSpire2\mod_configs\SpirePilot\`（以游戏实际的用户目录为准，日志第一行会打印完整路径）。
 
@@ -236,6 +266,9 @@ dotnet run --project tools/SpirePilot.Bench -- --settings 你的配置.json
 ```
 
 找到本地游戏时会直接引用游戏自己的 `sts2.dll`（`-p:Sts2RefSource=nuget` 可强制使用 NuGet 引用程序集）。
+游戏出了还没有对应包的新分支（例如 0.112）时，可以对着本机安装的这个游戏编译：
+`dotnet build src/SpirePilot -c Release -p:Sts2GameVersion=0.112 -p:Sts2Dir="…/Slay the Spire 2"`。它按 0.111 的代码编译，
+版本检查按 0.112 处理；NuGet 引用程序集只有 0.107 和 0.111，其他版本号用 NuGet 编译会直接报错。
 架构说明见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ## 7. 常见问题
@@ -243,7 +276,8 @@ dotnet run --project tools/SpirePilot.Bench -- --settings 你的配置.json
 - **面板打不开**：确认 Mod 已加载（日志里有 `SpirePilot ready`），按 F8 或点右上角 AI 按钮；可在设置里改快捷键。
 - **AI 一直“等待中”**：游戏动画/行动队列未结束、轮到队友、或打开了暂停菜单/图鉴等只给人看的界面时 AI 会等待。
 - **AI 暂停并提示 API 设置有误**：检查密钥、Base URL（OpenAI 兼容接口一般要包含 `/v1`）、模型名和账户余额，然后点“继续”。
-- **面板提示这个包对应的游戏版本不对**：按第 1 节的表格换成与你的游戏分支对应的包（game0.107 或 game0.111）。
+- **面板提示这个包对应的游戏版本不对**：红色提示按第 1 节换成与你的游戏分支对应的包；还没有对应的包时可以等 SpirePilot 更新、从源码编译（第 6 节），
+  或在“控制”页打开“仍然运行（风险自负）”。黄色的“未经测试”提示不影响使用。
 - **队友收不到消息**：对方（以及房主）需要安装同版本的 SpirePilot；队友列表里会显示谁装了 Mod。没装的队友只能看到表情和地图 ping。
 - **外部工具连不上 HTTP 接口**：确认已在“日志”页开启；Windows 上请用 `http://localhost:17654` 而不是 `127.0.0.1`；网页里无法直接调用（为安全起见会拒绝）。
 - **会影响成就/存档吗**：游戏在加载 Mod 时会自动使用单独的 Mod 存档；SpirePilot 本身不修改任何游戏数据，只通过正常操作游玩。
@@ -258,14 +292,17 @@ An in-game panel (F8) controls the mode (full auto / combat only / out-of-combat
 alike, never only as prompt text), co-op teammate communication (request/offer potions, request debuffs on an enemy
 identified by its shared combat id, focus fire, protection — over a mod-to-mod channel on the game's own network, shown
 as speech bubbles in combat and as a toast with an unread count elsewhere; vanilla reaction emotes to and from teammates
-without the mod, whose thumbs up / down answer the AI's open request; answers even after ending its turn, and can undo
-the end of turn to help), and the AI endpoint (any OpenAI-compatible API or Anthropic's native Messages API, multiple
+without the mod — in a mixed team the text goes to the teammates with the mod and the emote to the others — whose
+thumbs up / down answer the newest open request shown to them; answers even after ending its turn, and can undo the end
+of turn to help), and the AI endpoint (any OpenAI-compatible API or Anthropic's native Messages API, multiple
 profiles, proxy, headers, extra body; wrong keys, model names or an empty balance stop the pilot with a "fix your
-settings" message). Potions are also used outside combat (on its own character) where the game allows it. An optional
-localhost HTTP API and an MCP server expose state and actions to external agents, and an offline benchmark scores a
-model on 28 decision fixtures. Builds exist for game 0.107 (main) and 0.111 (beta); the 0.107 build started on game
-0.111 refuses to run the pilot and names the build to install (the 0.111 build declares 0.111 as its minimum game
-version, so an older game is not expected to load it at all). Start with the in-game test plan in
+settings" message). Potions are also used outside combat (on its own character, labelled "→ yourself" in co-op) where
+the game allows it. An optional localhost HTTP API and an MCP server expose state and actions to external agents, and
+an offline benchmark scores a model on 28 decision fixtures. Builds exist for game 0.107 (main) and 0.111 (beta). A build on an incompatible game
+(the 0.107 build on any newer game) keeps the pilot off, without changing the saved mode, and names only fixes that
+exist: the build to install, a SpirePilot update, or a "Run anyway" switch on the Control tab that holds for that one
+game/build pairing. The 0.111 build on a newer, untested game runs with a warning; the 0.111 build declares 0.111 as its
+minimum game version, so an older game is not expected to load it at all. Start with the in-game test plan in
 [docs/TESTING.md](docs/TESTING.md).
 
 ## License & credits

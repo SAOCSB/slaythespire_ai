@@ -7,12 +7,13 @@ code paths, and talks to co-op teammates. One DLL, no `.pck`, `affects_gameplay:
 ```
 src/SpirePilot.Core/   game-independent logic (compiled into the mod DLL and unit-tested without the game)
   Model/               GameSnapshot (plain data), ActionOption/ActionKind, PlanSafety
-  Config/              PilotSettings (+ SettingsStore JSON), LlmProfile, provider presets
+  Config/              PilotSettings (+ SettingsStore JSON), LlmProfile, provider presets, GameVersion
   Llm/                 ILlmClient: OpenAiCompatibleClient, AnthropicClient (raw HTTP), retries, adaptation
   Agent/               PilotLoop (main loop), DecisionEngine, OwnerRules, PromptBuilder, StateFormatter,
                        DecisionParser, FallbackPolicy/CharacterPicker, AgentMemory/PlanGuard, CharacterGuide,
                        IGameBridge
-  Team/                TeamMessage, TeamWire (binary envelope), TeamChatHub (log, inbox, rate limits)
+  Team/                TeamMessage, TeamWire (binary envelope), TeamChatHub (log, inbox, rate limits),
+                       TeamDelivery (text or emote per teammate), TeamEmotes (kind ↔ vanilla reaction)
   Route/               RoutePlanner (k-best paths on the act map with preset/custom weights)
   Text/                L10n (zh/en strings of the mod itself)
 src/SpirePilot/        the mod (references sts2.dll, GodotSharp.dll, 0Harmony.dll)
@@ -45,7 +46,7 @@ PilotLoop (worker thread)
   │     (cancelled when the user pauses or switches mode while the model thinks)
   ├─ re-capture (waits out transient "animating"/"settling"), re-validate the chosen action by SemanticKey,
   │     re-check pause / mode / a freshly pinned route
-  ├─ TeamChatHub.Send (AI messages; emotes for teammates without the mod) / map ping
+  ├─ TeamDelivery.Send (text to teammates with the mod, the kind's emote to the others) / map ping
   └─ IGameBridge.ExecuteAsync ──► main thread: ActionSink executor (presses the game's own buttons /
                                     calls the game's synchronized entry points, then waits until settled)
 ```
@@ -76,12 +77,36 @@ either (`-p:Sts2GameVersion=0.107|0.111`), with `#if STS2_V0107` / `#if STS2_V01
 (reference: `api-diff-0107-to-0111.txt` from the research). Each build ships its own manifest
 (`manifest/mod_manifest.<version>.json`) with the matching `min_game_version`.
 
-Version guard: on the first frame where the game's version can be read, the runtime compares its major.minor with
-the branch the DLL was compiled for (`Diagnostics.CompiledFor`). On a mismatch (e.g. the 0.107 build on game 0.111) it
-logs an error, forces mode Off, never starts the pilot, and the overlay / status names the build to install;
-`POST /mode` and `POST /act` answer 409 `version_mismatch` and `GET /status` carries `versionMismatch` (the MCP server
-checks it before acting too). The other way round (the 0.111 build on game 0.107) the guard is not
-expected to run at all: that manifest's `min_game_version` is 0.111.0, which the game's mod loader checks first.
+Version guard (`Core/Config/GameVersion`, `PilotRuntime`): from the first frame where the game's version can be read,
+the runtime compares its major.minor with the branch the DLL was compiled for (`Diagnostics.CompiledFor`, the build's
+`Sts2GameVersion` assembly metadata). Shipped branches: 0.107 and 0.111.
+
+| Game vs. build | Example | Outcome |
+| --- | --- | --- |
+| Ok: same major.minor | 0.111 build on game 0.111.3 | runs |
+| Untested: a newer game, and no newer shipped build exists | 0.111 build on game 0.112 | runs with a warning |
+| Incompatible: an older game, or a newer one when a newer shipped build exists | 0.107 build on game 0.108+; 0.111 build on game 0.107 | AI blocked |
+
+- Blocked (`VersionBlocked`): the pilot loop runs on a copy of the settings with mode Off (`LoopSettings`); the saved
+  mode is never overwritten, so a matching build starts in it. On the Control tab every mode button but Off is
+  disabled; `GET /status` reports the effective mode Off and `versionMismatch`; `POST /act`, and `POST /mode` with any
+  mode but Off, answer 409 `version_mismatch` (the MCP server checks `/status` before acting too). The notice names
+  only shipped builds (`GameVersion.BuildFor`): the one for this game, else "no build yet, check for an update" (on a
+  game newer than every build also the 0.111 build, untested).
+- "Run anyway" (a Control tab switch, shown only while incompatible) saves the pairing as
+  `control.ignoreGameVersionFor` (`GameVersion.OverrideKey`, e.g. `"game 0.111, build 0.107"`) and sets the mode to
+  Off in the same save, so the AI starts only once the owner picks a mode. It holds for that pairing only: another game
+  branch or build starts blocked again. Switching it off puts the loop back to Off.
+- Untested, or run anyway: the AI runs; `GET /status` carries `versionWarning` and the Control tab an amber notice.
+- The overlay shows a short 30 s toast whenever the notice changes (red blocked, amber warning); the full text is on
+  the Control tab and in the AI button's tooltip. Diagnostics show `mode: Off (saved: <mode>)` while blocked and
+  `game version: <notice> (run anyway: <key>|off)`. A version still unreadable after 600 frames runs unchecked, with a
+  log warning.
+- A newer branch built from source (`-p:Sts2GameVersion=0.112 -p:Sts2Dir=…`) compiles the 0.111 code against that
+  install, reports 0.112 as its branch and ships the 0.111 manifest. NuGet reference builds exist for the shipped
+  branches only (`CheckSts2GameVersion` stops any other).
+- The 0.111 build on game 0.107 is not expected to load at all: its manifest's `min_game_version` is 0.111.0, which the
+  game's mod loader checks first.
 
 ## Snapshot conventions
 
@@ -120,9 +145,10 @@ expected to run at all: that manifest's `min_game_version` is 0.111.0, which the
   there, next to the screen's own actions (never on a choice overlay, and a potion alone never makes a screen
   actionable). They aim at the local player (`potion:<ID>@P:<own netId>`) or at no creature (`potion:<ID>@-`):
   teammates are never offered as targets outside combat, so potions for teammates exist only in combat, where
-  "no potions for teammates" filters them. At rewards with a full belt, "drink potion X (belt is full; frees a slot
-  for the reward …)" sits next to discarding one, so a potion reward can be taken without wasting one. The
-  rule-based fallback never drinks potions outside combat.
+  "no potions for teammates" filters them. In co-op their labels name the target as combat labels do ("Use potion X →
+  yourself"). At rewards with a full belt, "drink potion X (belt is full; frees a slot for the reward …)" sits next to
+  discarding one, so a potion reward can be taken without wasting one. The rule-based fallback never drinks potions
+  outside combat.
 - Executors: re-check `GodotObject.IsInstanceValid` for every node they captured, perform the action through the
   game's own path, then wait for an observable effect (`UiActions.Expect`) and `UiActions.WaitSettled`. Return
   `ActionResult.Fail(reason)` instead of throwing; never report success when nothing happened.
@@ -143,7 +169,8 @@ The overlay is built in code (no scenes, no Node subclasses — Godot only calls
 by its source generators). It hangs a `CanvasLayer` (layer 128) under the scene root, uses signals
 (`Pressed`, `TextSubmitted`, ...) and the per-frame `MainThread.Frame` event, and the game's CJK fonts.
 Incoming team messages show as speech bubbles over the sender during a fight (`SpeechBubbles`) and as a short toast
-on the overlay otherwise, with an unread count on the "AI" button and the Team tab (cleared when the Team tab is seen).
+on the overlay otherwise (also mid-fight when no bubble can show: bubbles off, sender not on screen; emotes never toast
+mid-fight), with an unread count on the "AI" button and the Team tab (cleared when the Team tab is seen).
 
 ## Owner rules and external agents
 
@@ -158,7 +185,13 @@ continuing a saved run of a disallowed character, no potions for teammates when 
   `[ROUTES]` lines and the pinned route, built by the same `PromptBuilder` code as the prompt.
 - `DecisionEngine.PreviewPrompt(snapshot, liveInstruction)` builds exactly the prompt the engine would send now
   (system, owner block, user with the team inbox, open requests, routes, pin and live instruction) without side
-  effects: nothing is marked read, no request is closed. `GET /prompt` returns it.
+  effects: nothing is marked read, expired or closed. It reads the inbox and requests through the same `PlanInbox` as a
+  decision (expiry, ended fights, answers) and gives the same `[NO ACTION NEEDED]` reason (`ReplyOnlyReason`).
+  `GET /prompt` returns it.
+- Messages the player sends (Team tab, `POST /chat`) go through `PilotLoop.SendForPlayer`: the AI's delivery rule, and
+  the AI remembers them like its own. A request stays open for the fight and round of the capture it was sent in, a
+  "yes" to a teammate's request becomes a promise the AI keeps, the answered message is marked read, and every kind
+  but chat leaves a history line ("(owner → X)", "(sent via the API → X)").
 - The pinned route is a soft rule: the engine follows it without the model unless a live instruction or a teammate's
   request needs the model, which then sees the pinned next node. For an external agent the pin is advice in the text.
 
@@ -194,17 +227,29 @@ disables one feature, not the link. Without the mod on the other side, the AI st
 simulates everyone locally) and can use vanilla map pings and reaction emotes (`IGameBridge.TrySignal` →
 `ReactionSynchronizer.SendLocalReaction`).
 
-Emotes (`Game/Reactions.cs`), both ways:
-- Out: requests → "!", ask / offer potion → "?", accept → thumbs up, decline → thumbs down; chat and route
-  suggestions have none. A message none of whose addressees runs SpirePilot is not sent as text (Team tab, AI
-  messages, `POST /chat`): the emote is shown instead, and `/chat` answers
-  `{"delivered": false, "emote": <name>|null, "reason": "no_reader"}`. `emote` is null when the kind has none, when
-  an AI sender (`from_ai`, the default) has spent its budget or signalled the same kind to the same recipient in the
-  last 3 minutes, or when the game could not show it (not in a run, no reaction synchronizer, no frame within 2 s).
-- In: a guarded Harmony postfix on the game's reaction handler (`ReactionSynchronizer.HandleReactionMessage`) turns
-  a teammate's thumbs up / down into Accept / Decline replying to the AI's newest open request to that teammate (or
-  to everyone), and "!" / "?" into a short human chat line. They go through `TeamChatHub.Receive`, so dedupe and
-  inbox caps apply; the local player's own reactions are ignored.
+Emotes (`Core/Team/TeamEmotes`, `Game/Reactions.cs`), both ways:
+- Out (`TeamDelivery.Send`, the one rule for AI messages, the Team tab and `POST /chat`): teammates who run
+  SpirePilot get the text, the others the kind's emote (requests "!", ask / offer potion "?", accept thumbs up,
+  decline thumbs down; chat and route suggestions have none), also for "all" in a mixed team. No text goes out when
+  nobody addressed reads it (for the Team tab and `/chat`, a capture that lists none of the addressees leaves that to
+  the live roster). A mixed-team message costs an AI sender one budget unit. `/chat` answers
+  `{"delivered", "id", "emote"}`, or `{"delivered": false, "emote", "reason": "no_reader"}` without a reader; `emote`
+  is null when nobody needed one, the kind has none, an AI sender (`from_ai`, the default) has spent its budget or
+  showed the same kind to the same recipient in the last 3 minutes, or the game could not show it (not in a run, no
+  reaction synchronizer, no frame within 2 s). A reply without a recipient goes to the asker
+  (`TeamDelivery.ReplyRecipient`: an answer to a question for everyone goes to everyone, a potion offer or question
+  only to the asker).
+- In: a guarded Harmony postfix on the game's reaction handler (`ReactionSynchronizer.HandleReactionMessage`) turns a
+  teammate's emote into a message through `TeamChatHub.Receive` (dedupe, inbox caps):
+  - from a teammate without the mod, thumbs up / down are Accept / Decline of the newest request this player showed
+    them as an emote (`AgentMemory.LastSignalTo`), only while it is open: never an older request they may not have
+    seen. "!" / "?" become a short chat line that asks the AI to react; other emotes are context only. The message id
+    hashes emote, sender, a 10-second window and the request answered: a double tap is one message, a tap after a new
+    question a new answer.
+  - from a linked teammate playing by hand: context only while the last capture shows a teammate without the mod (or
+    no roster), since the emote is most likely meant for that teammate; with everyone linked, as above, with thumbs
+    answering our newest open request to them (`LastOpenTo`). A linked AI's emotes and the local player's own are
+    ignored.
 
 ## Co-op end of turn
 
@@ -221,5 +266,13 @@ Conversation rules (Core, `DecisionEngine` / `PilotLoop` / `AgentMemory`):
   only "undo end turn" on the menu the model may take the turn back to help, never on its own.
 - Teammates without SpirePilot are marked in the state; messages to them become a vanilla reaction emote, and
   their emotes come back as accept / decline / chat (see "Team link").
-- Inbox is bounded (5 unread per sender, 20 total, newest 8 in a prompt) and expires on the local clock; teammate
-  text is one line inside a fence it cannot close, and cannot forge section headers.
+- After the model reacted to a teammate's "!" or "?" (once that decision ran: `MarkHandled`), the same emote from them
+  is context only for 45 s; a second "yes" from a teammate to the same question asks nothing new. A turn plan goes on
+  past an unread "!" / "?" with card plays, but a next step that is a plan boundary (end turn, a potion, an
+  unpredictable card) waits for the model.
+- A potion question to everyone stays open until every teammate answered; each "yes" is its own promise.
+- In OutOfCombatOnly the fight is the human's: its combat-bound requests (block, debuff, focus, potion requests, "!" /
+  "?") are marked read once it ends (`PilotLoop.NoteHumanFight`), never answered on the rewards screen.
+- Inbox is bounded (5 unread per sender, 20 total, newest 8 in a prompt) and expires on the local clock (unread
+  messages after 3 min, requests after 5 min or when their fight / round ends); teammate text is one line inside a
+  fence it cannot close, and cannot forge section headers.

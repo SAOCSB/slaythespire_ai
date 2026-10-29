@@ -25,18 +25,22 @@ namespace SpirePilot.Api;
 ///   GET  /state               fresh snapshot (state + legal actions); ?format=text → the pilot's state text, routes
 ///                             and menu (text/plain); ?include=text → the JSON plus that text as "text", from the same
 ///                             capture. The menu is the built-in pilot's: the owner's rules already removed actions.
-///   GET  /prompt              exactly what the built-in pilot would send now (owner rules, inbox, open requests,
-///                             routes, pin, live instruction); nothing is marked read
+///   GET  /prompt              exactly what the built-in pilot would send now (owner rules, inbox and open requests
+///                             with the same expiry, routes, pin, live instruction); nothing is marked read
 ///   POST /act    {"semantic_key":"..."} or {"id":"a3","sequence":123}   execute a legal action (pilot must be Off /
 ///                             Advisor / paused). With "sequence" (the snapshot the id was read from) an id whose menu
 ///                             changed since is refused with 409 "stale" instead of running whatever has that id now;
 ///                             an action an owner rule removed is refused with 403 "owner_rule".
-///   POST /mode   {"mode":"FullAuto"|"CombatOnly"|"OutOfCombatOnly"|"Advisor"|"Off"}
+///   POST /mode   {"mode":"FullAuto"|"CombatOnly"|"OutOfCombatOnly"|"Advisor"|"Off"}   only "Off" while the game
+///                             version blocks the AI (else 409 "version_mismatch"); "saveError" when the settings file
+///                             was not written (the mode applies all the same)
 ///   POST /instruction {"text":"..."}                     one-shot instruction for the built-in pilot
 ///   GET  /chat                recent team chat
 ///   POST /chat   {"text":"...","to":"all","kind":"chat","potion":..,"debuff":..,"target":..,"reply_to":..,"from_ai":true}
-///                             → {"delivered", "id"}; in co-op, when nobody addressed runs SpirePilot, nothing is sent
-///                             and the kind's vanilla emote is shown instead: {"delivered": false, "emote", "reason"}
+///                             → {"delivered", "id", "emote"}: text to teammates who run SpirePilot, the kind's vanilla
+///                             emote to the others (also for "all" in a mixed team); when nobody addressed runs it, no
+///                             text: {"delivered": false, "emote", "reason": "no_reader"}. A reply_to without a recipient
+///                             goes where the question came from; 429 "rate_limited" when the AI's budget refused it
 ///   GET  /compendium?kind=cards|relics|potions|powers|characters   every game model with localized text
 ///   GET  /diagnostics         writes a diagnostics-*.md report (as the panel's button does) and returns it (markdown;
 ///                             no secrets); header X-Diagnostics-File: its path (non-ASCII percent-encoded as UTF-8)
