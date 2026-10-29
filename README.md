@@ -10,15 +10,17 @@
 - **限定角色**：只允许 AI 选择你勾选的角色，支持随机 / 轮换 / 固定 / 让 AI 自己选，设置进阶等级，打完自动开下一局
 - **多人模式与队友交流**：AI 会根据队友的血量、药水、敌人情况主动沟通，例如向队友要药水、请队友给某个敌人上易伤/虚弱、
   问队友需不需要药水、集火某个敌人、求保护；也会回应队友的请求（接受后真的去做，比如把能对队友使用的药水用在队友身上）。
+  AI 已经结束回合时队友求助也会回复，必要时“撤销结束回合”去帮忙；对没装 Mod 的队友改用游戏自带的表情。
   你自己也可以在面板里打字或用快捷按钮给队友发消息。消息会以气泡形式显示在发送者角色头顶
 - **自定义 AI 接口**：任何 OpenAI 兼容接口（OpenAI、DeepSeek、通义千问、Kimi、智谱 GLM、硅基流动、OpenRouter、
   Gemini、Ollama / LM Studio 本地模型……）以及 Anthropic Claude 原生接口；可改 Base URL、模型、密钥、代理、
   请求头、额外请求体参数、推理强度等，并可保存多套配置随时切换
-- **本地 HTTP 接口（可选）**：让外部 AI 工具 / 脚本读取状态并操作（默认关闭，只监听本机）
+- **本地 HTTP 接口与 MCP（可选）**：让外部 AI 工具 / 脚本（Claude Desktop、Claude Code、Cursor……）读取状态并操作（默认关闭，只监听本机）
+- **离线评测**：不开游戏，用 28 道中英文决策题给你选的模型打分，方便比较不同模型 / 配置（见 [docs/BENCHMARK.md](docs/BENCHMARK.md)）
 
 > ⚠️ 这是一个**实验性** Mod，作者无法在开发环境中实际运行游戏进行联调；所有游戏接口都按游戏的真实程序集签名编译通过，
-> 并参考了多个已在实机运行的开源 Mod，但仍可能在某些界面上卡住。遇到问题请打开面板“日志”页，
-> 附上日志文件反馈。AI 卡住时会自动暂停，不会乱点。
+> 并参考了多个已在实机运行的开源 Mod，但仍可能在某些界面上卡住。遇到问题请打开面板“日志”页生成诊断报告，
+> 连同日志文件一起反馈；建议先按 [docs/TESTING.md](docs/TESTING.md) 的清单逐项试一遍。AI 卡住时会自动暂停，不会乱点。
 
 ---
 
@@ -68,20 +70,26 @@
 
 其他选项：单步模式（每一步都等你点“单步”）、操作间隔（方便观看）、打完自动开下一局及局数上限、
 一次性指令（例如“这回合先用火焰药水”，优先级最高）。
-AI 失败时的保护：同一操作重复无效 / 连续失败 / API 配置错误（密钥、地址、模型名）会**自动暂停**并提示原因；
-接口暂时不可用时会用内置规则兜底（可关闭），避免卡局。
+AI 失败时的保护：同一操作在同一局面反复无效（包括来回循环）/ 连续失败 / API 配置错误（密钥、地址、模型名）会**自动暂停**并提示原因；
+接口暂时不可用时会用内置规则兜底（可关闭；关闭后连续失败 3 次即暂停，不会一直重试计费）。
+AI 思考时你点暂停或切换模式，这一步会立即取消，不会在你接手后还替你出牌或发消息。
+你自己打开的界面（暂停菜单、设置、图鉴、查看队友，以及“放弃本局 / 退出 / 断开连接”的确认框）AI 一律不碰。
 
 ### 路线控制
 - 风格预设会影响路线规划器的打分，并作为 AI 的长期偏好写进提示词。
 - “自定义”可调整 普通怪 / 精英 / 篝火 / 商店 / 宝箱 / 问号 的权重。规划器还会考虑血量（血少时远离精英、看重篝火）和金币（钱多时看重商店）。
-- “固定此路线”：AI 会严格按钉住的路线走（不再调用大模型做选择）；进入下一幕后自动失效。
+- “固定此路线”：AI 会严格按钉住的路线走（不再调用大模型做选择）；只对当前这一局的当前幕有效，进入下一幕或新的一局自动失效。
+  AI 正在思考时你刚钉住的路线也会立即生效。
 - “让 AI 自己选节点”关闭后，AI 会直接走规划器的最优路线。
 - 多人模式下，AI 选择节点前会在地图上 **ping** 一下，让队友看到它想去哪（游戏原生功能，没装 Mod 的队友也能看到）。
 
 ### 角色限定
 - 只能从勾选的、已解锁的角色中选择；不勾选任何角色 = 允许全部已解锁角色。
 - 挑选方式：随机、轮换（多局依次轮换）、固定第一个、让 AI 在允许范围内自己选。
-- 进阶：填 -1 表示使用该角色已解锁的最高进阶。
+- 进阶：填 -1 表示使用该角色已解锁的最高进阶。进阶由你决定，AI 不会自己改。
+- 进入角色选择时即使游戏已默认选中某个角色，也会按你的挑选方式改选。
+- 存档里的角色不在允许列表中时，AI 不会点“继续”（会提示你自行处理存档）；你“保存并退出”或联机断开后，AI 不会自动继续或开新局。
+- 联机当房主时，人数不足 2 人 AI 不会准备出发。
 
 ### 多人模式与队友交流
 - 游戏本身没有文字聊天。SpirePilot 通过游戏自带的联机通道发送自己的消息包，**只发给同样安装了 SpirePilot 的队友**
@@ -89,17 +97,23 @@ AI 失败时的保护：同一操作重复无效 / 连续失败 / API 配置错�
 - 房主也需要安装 SpirePilot，客户端之间的消息由房主转发。
 - 消息类型：聊天、要药水、给药水、问要不要药水、要减益（易伤/虚弱等，可指定敌人）、集火、求保护、路线建议、接受/拒绝。
   每条消息都带有可读文字，人类队友能直接看懂；AI 队友能按结构化字段执行。
-- “给药水”的实际做法是：把可以对玩家使用的药水**用在队友身上**（游戏不支持直接转交药水）。
-- 即使队友没装 Mod，AI 也能看到所有队友的状态（联机时每台机器都会模拟所有玩家），会据此做决策；也会使用地图 ping。
-- 为了不刷屏：AI 每分钟消息数有上限、不重复发送相同内容、不回复“好的/不行”这类回答，两个 AI 队友不会互相无限聊天。
+- “给药水”的实际做法是：把可以对玩家使用的药水（治疗、格挡、能量、力量……）**用在队友身上**（游戏不支持直接转交药水）。
+- 敌人按游戏的战斗 id 传递，所以即使两边游戏语言不同、敌人编号不同，“给 X 上易伤”也能对上同一个敌人。
+- AI 结束回合后仍会回复队友；只剩“撤销结束回合”时，只有为了帮队友（例如给药水）才会撤销。
+- 即使队友没装 Mod，AI 也能看到所有队友的状态（联机时每台机器都会模拟所有玩家），会据此做决策；状态里会标出谁没装 Mod，
+  对这些队友不发文字，改用游戏自带的表情（点赞 / 拒绝 / 感叹号 / 问号）和地图 ping。
+- 为了不刷屏：AI 每分钟消息数有上限、记得自己发过的请求不会重复、不回复“好的/不行”这类回答，两个 AI 队友不会互相无限聊天；
+  对“所有人”的求助，一个队友接下后其他 AI 不会重复帮忙。
+- 你选择“不允许把药水给队友”时，这类操作直接从 AI 的菜单里去掉，而不仅仅是提示。
 
 ### AI 接口
 - 预设：Anthropic Claude（原生 Messages API，默认 `claude-opus-5-5`）、OpenAI、DeepSeek、通义千问、Kimi、智谱 GLM、
   硅基流动、OpenRouter、Gemini（OpenAI 兼容端点）、Ollama、LM Studio、自定义。模型名都可以改。
 - 推理强度可分别设置“一般决策”和“战斗回合”（战斗用低一点更快更省）。Claude 预设默认：一般 medium、战斗 low。
 - Claude：自动开启提示缓存（系统提示词只计费一次）、结构化 JSON 输出、官方地址下启用服务端 fallback。
-- OpenAI 兼容接口：自动适配常见差异（max_tokens / max_completion_tokens、不支持 temperature、不支持 JSON 模式等），
-  会去掉本地推理模型输出里的 `<think>` 内容。
+- OpenAI 兼容接口：自动适配常见差异（max_tokens / max_completion_tokens、输出上限过大、不支持 temperature、不支持 JSON 模式等），
+  会去掉本地推理模型输出里的 `<think>` 内容。局域网内的本地服务器（192.168.x.x 等）不需要填密钥。
+- 自定义请求头 / 额外请求体写错（例如 JSON 格式不对）会直接提示“AI 设置有误”并暂停，而不是悄悄失败。
 - 费用提示：每次决策大约消耗 2k–6k 输入 token（缓存命中后便宜很多），战斗中 AI 会一次规划整回合以减少调用次数。
   面板会显示累计调用次数和 token。
 
@@ -118,6 +132,8 @@ AI 失败时的保护：同一操作重复无效 / 连续失败 / API 配置错�
 | `POST /instruction {"text":"..."}` | 给内置 AI 一次性指令 |
 | `GET /chat` / `POST /chat {"text":"...","to":"all"}` | 读取 / 发送队友消息；`to` 写错会返回 400 和队友名单；`from_ai` 默认 true |
 | `GET /status` | 状态、token 统计、最近错误 |
+| `GET /compendium?kind=cards` | 卡牌 / 遗物 / 药水 / 能力图鉴 |
+| `GET /diagnostics` | 生成诊断报告（版本、补丁、缺失的游戏成员、当前界面、日志尾部；不含 API Key） |
 
 安全：带 `Origin` 头（网页发起）的请求一律拒绝；POST 必须是 `Content-Type: application/json`，正文不超过 64 KB。
 错误响应为 `{"error":"...","code":"..."}`，409 的 `code` 为 `pilot_active`（内置 AI 在操作）、`busy`（现在不能操作）或 `stale`（编号已过期）。
@@ -147,6 +163,7 @@ names, and takes an optional `from_ai` (default true).
 - `settings.json`：所有设置（含 API Key，请勿分享；可用 `env:` 写法避免明文）
 - `spirepilot.log`：日志（上一次的日志为 `spirepilot.log.prev`）
 - `traces/trace-日期.jsonl`：每一步决策记录（给了哪些选项、选了什么、结果），可在设置中关闭
+- `diagnostics-*.md`：诊断报告（“日志”页按钮或 `GET /diagnostics` 生成）
 
 Windows 通常是 `%APPDATA%\SlayTheSpire2\mod_configs\SpirePilot\`（以游戏实际的用户目录为准，日志第一行会打印完整路径）。
 
@@ -164,7 +181,11 @@ dotnet build src/SpirePilot -c Release -p:Sts2GameVersion=0.111 -p:DeployToGame=
 
 # 单元测试 + 打包两个版本的 zip 到 dist/
 dotnet test tests/SpirePilot.Core.Tests
+dotnet test tests/SpirePilot.Bench.Tests
 bash scripts/package.sh            # Windows: powershell -File scripts\package.ps1
+
+# 离线评测：用你的模型配置跑 28 道决策题（详见 docs/BENCHMARK.md）
+dotnet run --project tools/SpirePilot.Bench -- --settings 你的配置.json
 ```
 
 找到本地游戏时会直接引用游戏自己的 `sts2.dll`（`-p:Sts2RefSource=nuget` 可强制使用 NuGet 引用程序集）。
@@ -175,7 +196,8 @@ bash scripts/package.sh            # Windows: powershell -File scripts\package.p
 - **面板打不开**：确认 Mod 已加载（日志里有 `SpirePilot ready`），按 F8 或点右上角 AI 按钮；可在设置里改快捷键。
 - **AI 一直“等待中”**：游戏动画/行动队列未结束、轮到队友、或打开了暂停菜单/图鉴等只给人看的界面时 AI 会等待。
 - **AI 暂停并提示 API 设置有误**：检查密钥、Base URL（OpenAI 兼容接口一般要包含 `/v1`）、模型名，然后点“继续”。
-- **队友收不到消息**：对方（以及房主）需要安装同版本的 SpirePilot；队友列表里会显示谁装了 Mod。
+- **队友收不到消息**：对方（以及房主）需要安装同版本的 SpirePilot；队友列表里会显示谁装了 Mod。没装的队友只能看到表情和地图 ping。
+- **外部工具连不上 HTTP 接口**：确认已在“日志”页开启；Windows 上请用 `http://localhost:17654` 而不是 `127.0.0.1`；网页里无法直接调用（为安全起见会拒绝）。
 - **会影响成就/存档吗**：游戏在加载 Mod 时会自动使用单独的 Mod 存档；SpirePilot 本身不修改任何游戏数据，只通过正常操作游玩。
 
 ## English summary
@@ -183,11 +205,15 @@ bash scripts/package.sh            # Windows: powershell -File scripts\package.p
 SpirePilot is a Slay the Spire 2 mod that lets an LLM play the game. It reads the complete game state, offers the
 model a menu of legal actions, and executes the chosen one through the game's own buttons and synchronized
 multiplayer paths. An in-game panel (F8) controls the mode (full auto / combat only / out-of-combat only / advisor /
-step), routing (presets, custom room weights, pinned routes), character restrictions (allow-list, pick policy,
-ascension, auto-restart), co-op teammate communication (request/offer potions, request debuffs, focus fire, protection —
-over a mod-to-mod channel on the game's own network, with speech bubbles), and the AI endpoint (any OpenAI-compatible
-API or Anthropic's native Messages API, multiple profiles, proxy, headers, extra body). An optional localhost HTTP API
-exposes state and actions to external agents. Builds exist for game 0.107 (main) and 0.111 (beta).
+step), routing (presets, custom room weights, routes pinned to the current run), character restrictions (allow-list,
+pick policy, ascension, auto-restart — enforced as menu filters, never only as prompt text), co-op teammate
+communication (request/offer potions, request debuffs on an enemy identified by its shared combat id, focus fire,
+protection — over a mod-to-mod channel on the game's own network, with speech bubbles; vanilla reaction emotes for
+teammates without the mod; answers even after ending its turn, and can undo the end of turn to help), and the AI
+endpoint (any OpenAI-compatible API or Anthropic's native Messages API, multiple profiles, proxy, headers, extra body).
+An optional localhost HTTP API and an MCP server expose state and actions to external agents, and an offline benchmark
+scores a model on 28 decision fixtures. Builds exist for game 0.107 (main) and 0.111 (beta). Start with the in-game
+test plan in [docs/TESTING.md](docs/TESTING.md).
 
 ## License & credits
 
