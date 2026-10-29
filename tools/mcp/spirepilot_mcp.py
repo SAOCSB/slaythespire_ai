@@ -2,7 +2,7 @@
 
 Run it as a stdio MCP server:  python spirepilot_mcp.py
 Environment:
-  SPIREPILOT_URL    base URL of the mod's HTTP API (default http://127.0.0.1:17654)
+  SPIREPILOT_URL    base URL of the mod's HTTP API (default http://localhost:17654)
   SPIREPILOT_TOKEN  bearer token, if one is set in the mod's Log tab
 """
 
@@ -21,7 +21,7 @@ except ModuleNotFoundError:  # mcp >= 2 renamed FastMCP to MCPServer
     from mcp.server.mcpserver import MCPServer as FastMCP
 from mcp.types import ToolAnnotations
 
-DEFAULT_URL = "http://127.0.0.1:17654"
+DEFAULT_URL = "http://localhost:17654"
 TIMEOUT = 30.0
 ACT_TIMEOUT = 90.0  # executors wait until the game has settled
 POLL_SECONDS = 0.5
@@ -501,7 +501,22 @@ def _menu(snap: dict, details: bool = False) -> str:
     return "\n".join(lines) if lines else "(empty: nothing to do right now)"
 
 
+def _only_undo(snap: dict) -> bool:
+    """Co-op: after ending the turn the only action is "undo end turn" — not something to do unprompted."""
+    acts = _actions(snap)
+    return bool(acts) and all(a.get("semanticKey") == "undo_end_turn" for a in acts)
+
+
+def _must_wait(snap: dict) -> bool:
+    return not snap.get("canAct") or _only_undo(snap)
+
+
 def _waiting(snap: dict) -> str:
+    if snap.get("canAct") and _only_undo(snap):
+        return (
+            "WAITING: you ended your turn; teammates are still playing. The only action is undoing that — use it only "
+            "to help a teammate (e.g. give a potion); otherwise call get_state(wait_seconds=15).\n"
+        )
     if snap.get("canAct"):
         return ""
     return (
@@ -580,7 +595,7 @@ async def get_state(format: Literal["text", "json"] = "text", wait_seconds: floa
     """
     snap = await _fetch_state()
     deadline = time.monotonic() + min(max(wait_seconds, 0), 60)
-    while not snap.get("canAct") and time.monotonic() < deadline:
+    while _must_wait(snap) and time.monotonic() < deadline:
         await asyncio.sleep(POLL_SECONDS)
         snap = await _fetch_state()
     _remember(snap)
@@ -770,7 +785,8 @@ async def send_chat(
             offer_potion (offer to use your potion on them, then really do it with the potion action that targets
             that player) | ask_need_potion | request_debuff (debuff = e.g. "Vulnerable", target = enemy name or key
             like "e0") | request_focus (target = enemy to focus) | request_block (ask for protection this turn).
-        recipient: "all" (default), or a teammate's name, name prefix or character. Unknown names go to everyone.
+        recipient: "all" (default), or a teammate's name, name prefix or character. An unknown name is refused with the
+            list of teammates.
         potion: potion id or name, for potion kinds.
         debuff: debuff / power name, for request_debuff.
         target: enemy name or key ("e0"), for request_debuff / request_focus.

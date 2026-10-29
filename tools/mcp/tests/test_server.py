@@ -608,3 +608,11 @@ def test_get_state_prefers_the_mods_own_text(fake):
     assert "a0 | Play Strike" in out
     raw = json.loads(run(srv.get_state(format="json")))
     assert "text" not in raw
+
+
+def test_get_state_keeps_waiting_while_only_undo_end_turn_is_offered(fake):
+    undo = {"id": "a0", "kind": "UndoEndTurn", "label": "Undo end turn", "semanticKey": "undo_end_turn", "args": {}}
+    fake.state["actions"] = [undo]
+    fake.state["canAct"] = True
+    out = run(srv.get_state(wait_seconds=0.3))
+    assert out.startswith("WAITING: you ended your turn")

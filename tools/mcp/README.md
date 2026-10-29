@@ -13,7 +13,7 @@
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `SPIREPILOT_URL` | `http://127.0.0.1:17654` | Mod 的 HTTP 接口地址（改过端口时设置） |
+| `SPIREPILOT_URL` | `http://localhost:17654` | Mod 的 HTTP 接口地址（改过端口时设置） |
 | `SPIREPILOT_TOKEN` | 空 | 在 Mod 里设置了 Token 时填同样的值 |
 
 ## 安装与配置
@@ -35,7 +35,7 @@ Claude Desktop（`claude_desktop_config.json`，设置 → 开发者 → 编辑�
     "spirepilot": {
       "command": "uv",
       "args": ["run", "--directory", "/path/to/SpirePilot/tools/mcp", "spirepilot-mcp"],
-      "env": { "SPIREPILOT_URL": "http://127.0.0.1:17654", "SPIREPILOT_TOKEN": "" }
+      "env": { "SPIREPILOT_URL": "http://localhost:17654", "SPIREPILOT_TOKEN": "" }
     }
   }
 }
@@ -112,7 +112,7 @@ and executes one action at a time through the game's own code paths.
 
 **Setup.** Start the game with SpirePilot, press **F8** → **Log** tab → enable the **local HTTP API** (port 17654,
 127.0.0.1 only, optional bearer token). Python 3.10+; the only dependency is the official MCP Python SDK
-(`mcp==1.30.0`). Environment: `SPIREPILOT_URL` (default `http://127.0.0.1:17654`), `SPIREPILOT_TOKEN`.
+(`mcp==1.30.0`). Environment: `SPIREPILOT_URL` (default `http://localhost:17654`), `SPIREPILOT_TOKEN`.
 
 ```bash
 # Claude Code (uv)
