@@ -128,7 +128,7 @@ public sealed class DecisionEngine
         // 4) Ask the LLM (unless it keeps failing and is cooling down).
         var context = BuildContext(snapshot, settings, actionable, info, liveInstruction);
         if (_clock() < _llmCooldownUntil && settings.Control.FallbackOnLlmFailure)
-            return Fallback(snapshot, settings, "AI temporarily unavailable: " + LastLlmError, info.Concat(actionable));
+            return Fallback(snapshot, settings, "AI temporarily unavailable: " + LastLlmError, info);
 
         try
         {
@@ -165,7 +165,8 @@ public sealed class DecisionEngine
                 _consecutiveLlmFailures = 0;
             }
             if (!settings.Control.FallbackOnLlmFailure) throw;
-            return Fallback(snapshot, settings, ex.Message, info.Concat(actionable));
+            // Teammate requests stay unread: the rule-based fallback cannot answer them, the LLM can once it is back.
+            return Fallback(snapshot, settings, ex.Message, info);
         }
     }
 
