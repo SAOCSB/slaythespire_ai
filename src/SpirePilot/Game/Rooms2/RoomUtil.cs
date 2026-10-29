@@ -46,6 +46,13 @@ internal static class RoomUtil
         return SceneUtil.Alive(n) ? n : null;
     }
 
+    /// <summary>
+    /// Like <see cref="Node{T}"/> for fields only some subclasses declare (probing many popup / tutorial types): a
+    /// missing field is not reported to the diagnostics' missing-members list.
+    /// </summary>
+    public static T? OptionalNode<T>(object? owner, string member) where T : Node =>
+        Reflect.TryGetQuiet<T>(owner, member, out var n) && SceneUtil.Alive(n) ? n : null;
+
     /// <summary>First usable (visible + enabled) control among the candidates.</summary>
     public static T? FirstUsable<T>(IEnumerable<T?> candidates) where T : NClickableControl =>
         candidates.FirstOrDefault(c => c != null && SceneUtil.Usable(c));

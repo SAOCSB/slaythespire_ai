@@ -18,7 +18,8 @@ namespace SpirePilot.Game.Readers;
 /// ScreenKind.Popup. The popup's text goes into the snapshot notes. Rules: tutorials and info popups are simply
 /// confirmed (multi-page tutorials page by page). Confirmations of destructive actions (abandon run, disconnect,
 /// quit, delete) expose nothing: the AI never opens them, so the human did, and only the human answers them.
-/// Popups that are the human's decision (mod loading, settings, multiplayer invites / warnings) expose nothing either.
+/// Popups that are the human's decision (mod loading, settings, multiplayer invites / warnings), popups over a human
+/// menu / viewer and unknown popups outside a run expose nothing either. Error popups never offer the report-bug button.
 /// </summary>
 internal static class PopupReader
 {
@@ -41,6 +42,12 @@ internal static class PopupReader
         var texts = RoomUtil.Texts(node, 10, skipButtons: true);
         if (texts.Count > 0) snap.Notes.Add(R2Text.T("note.popup", string.Join(" — ", texts)));
         if (isModal && probe.Underlying != null) snap.Notes.Add(R2Text.T("note.popup_over", probe.Underlying.GetType().Name));
+        if (probe.HumanOnlyReason != null)
+        {
+            // A popup over the pause menu / a viewer the human opened: theirs to answer.
+            snap.Notes.Add(R2Text.T("note.popup_human"));
+            return;
+        }
 
         switch (node)
         {
@@ -51,6 +58,9 @@ internal static class PopupReader
                 else snap.Notes.Add(R2Text.T("note.popup_no_button"));
                 return;
             }
+            case NEarlyAccessDisclaimer disclaimer:
+                ReadDisclaimer(disclaimer, snap, sink, isModal);
+                return;
             case NConfirmModLoadingPopup or NSettingsScreenPopup or NGenericPopup or NMultiplayerWarningPopup:
                 // Mod loading / settings / co-op invites and warnings are the human's call.
                 snap.Notes.Add(R2Text.T("note.popup_human"));
@@ -58,21 +68,9 @@ internal static class PopupReader
             case NAbandonRunConfirmPopup or NDisconnectConfirmPopup:
                 AddCancelOnly(snap, sink, node!, isModal);
                 return;
-            case NErrorPopup:
-            {
-                // Informational (e.g. a connection error); both buttons just close it. Never the bug-report button.
-                var popup = VerticalPopup(node!);
-                if (Usable(popup?.YesButton)) AddConfirm(sink, popup!.YesButton, node!, isModal, ftue: false);
-                if (Usable(popup?.NoButton)) AddDismiss(sink, popup!.NoButton, node!, isModal);
-                if (sink.Count == 0)
-                {
-                    var (ok, cancel) = ButtonsByName(node!);
-                    if (ok != null) AddConfirm(sink, ok, node!, isModal, ftue: false);
-                    if (cancel != null) AddDismiss(sink, cancel, node!, isModal);
-                }
-                if (sink.Count == 0) snap.Notes.Add(R2Text.T("note.popup_no_button"));
+            case NErrorPopup error:
+                ReadErrorPopup(error, texts, snap, sink, isModal);
                 return;
-            }
             case NAcceptTutorialsFtue:
             {
                 // "Enable tutorials?": answering No is listed first (tutorials only interrupt an AI-played run).
@@ -105,36 +103,85 @@ internal static class PopupReader
             }
         }
 
-        // Generic yes/no popup (NVerticalPopup based: error popups, confirmations ...), else buttons by name.
-        var vp = VerticalPopup(node!);
-        NClickableControl? yes = Usable(vp?.YesButton) ? vp!.YesButton : null;
-        NClickableControl? no = Usable(vp?.NoButton) ? vp!.NoButton : null;
-        if (yes == null && no == null) (yes, no) = ButtonsByName(node!);
-
-        bool destructive = texts.Any(t => DestructiveWords.Any(w => t.Contains(w, StringComparison.OrdinalIgnoreCase)));
-        if (destructive)
+        // Unknown popup. The keyword lists below only know English and Chinese, so outside a run (profile, save,
+        // multiplayer and settings confirmations) an unknown popup is never answered: it is the human's.
+        if (!ctx.InRun)
         {
             snap.Notes.Add(R2Text.T("note.popup_human"));
             return;
         }
+        if (Destructive(texts))
+        {
+            snap.Notes.Add(R2Text.T("note.popup_human"));
+            return;
+        }
+
+        // Generic yes/no popup (NVerticalPopup based), else buttons by name.
+        var vp = VerticalPopup(node!);
+        NClickableControl? yes = Usable(vp?.YesButton) ? vp!.YesButton : null;
+        NClickableControl? no = Usable(vp?.NoButton) ? vp!.NoButton : null;
+        if (yes == null && no == null) (yes, no) = ButtonsByName(node!);
         if (yes != null) AddConfirm(sink, yes, node!, isModal, ftue: false);
         if (no != null) AddDismiss(sink, no, node!, isModal);
+        if (sink.Count == 0) snap.Notes.Add(R2Text.T("note.popup_no_button"));
+    }
 
-        if (sink.Count == 0 && node is NEarlyAccessDisclaimer disclaimer)
+    private static bool Destructive(List<string> texts) =>
+        texts.Any(t => DestructiveWords.Any(w => t.Contains(w, StringComparison.OrdinalIgnoreCase)));
+
+    /// <summary>
+    /// Error popups (connection errors ...) are informational and closing them is harmless, except: the report-bug
+    /// button (opens the feedback screen) and anything that reads like a destructive confirmation.
+    /// NErrorPopup has three handlers (OnOk / OnCancel / OnReportBug) for the two buttons of its vertical popup: without
+    /// the report button the yes button is OK (the no button is hidden; RitsuLib re-uses that hidden no button for its
+    /// own "details" button); with <c>_showReportBugButton</c> the yes button reports the bug and the no button cancels.
+    /// So with the report button only the no (dismiss) button is offered.
+    /// </summary>
+    private static void ReadErrorPopup(NErrorPopup error, List<string> texts, GameSnapshot snap, ActionSink sink, bool isModal)
+    {
+        if (Destructive(texts))
         {
-            // Shown once at startup; closing it is its own public method.
-            sink.Add(ActionKind.DismissPopup, R2Text.T("act.dismiss", R2Text.T("word.ok")), "popup:confirm", async ct =>
+            snap.Notes.Add(R2Text.T("note.popup_human"));
+            return;
+        }
+        var popup = VerticalPopup(error);
+        bool reportButton = Reflect.Get<bool>(error, "_showReportBugButton");
+        if (reportButton)
+        {
+            if (Usable(popup?.NoButton)) AddDismiss(sink, popup!.NoButton, error, isModal);
+        }
+        else
+        {
+            if (Usable(popup?.YesButton)) AddConfirm(sink, popup!.YesButton, error, isModal, ftue: false);
+            if (Usable(popup?.NoButton)) AddDismiss(sink, popup!.NoButton, error, isModal);
+            if (sink.Count == 0)
             {
-                Task task;
-                try { task = disclaimer.CloseScreen(); }
-                catch (Exception ex) { return ActionResult.Fail("close disclaimer: " + ex.Message); }
-                RoomUtil.Observe(task, "close disclaimer");
-                var r = await UiActions.Expect(() => Closed(disclaimer, isModal), "close disclaimer", RoomUtil.ShortWait, ct);
-                await MainThread.Frames(2);
-                return r;
-            });
+                var (ok, cancel) = ButtonsByName(error);
+                if (ok != null) AddConfirm(sink, ok, error, isModal, ftue: false);
+                if (cancel != null) AddDismiss(sink, cancel, error, isModal);
+            }
         }
         if (sink.Count == 0) snap.Notes.Add(R2Text.T("note.popup_no_button"));
+    }
+
+    /// <summary>The early-access disclaimer shown once at startup: its proceed button, else the screen's own close.</summary>
+    private static void ReadDisclaimer(NEarlyAccessDisclaimer disclaimer, GameSnapshot snap, ActionSink sink, bool isModal)
+    {
+        var proceed = RoomUtil.FirstUsable(SceneUtil.Descendants<NDisclaimerProceedButton>(disclaimer, 12))
+                      ?? ButtonsByName(disclaimer).yes;
+        if (proceed != null) AddConfirm(sink, proceed, disclaimer, isModal, ftue: false);
+        if (sink.Count > 0) return;
+        sink.Add(ActionKind.DismissPopup, R2Text.T("act.dismiss", R2Text.T("word.ok")), "popup:confirm", async ct =>
+        {
+            if (!SceneUtil.Alive(disclaimer)) return ActionResult.Fail("the disclaimer is gone");
+            Task task;
+            try { task = disclaimer.CloseScreen(); }
+            catch (Exception ex) { return ActionResult.Fail("close disclaimer: " + ex.Message); }
+            RoomUtil.Observe(task, "close disclaimer");
+            var r = await UiActions.Expect(() => Closed(disclaimer, isModal), "close disclaimer", RoomUtil.ShortWait, ct);
+            await MainThread.Frames(2);
+            return r;
+        });
     }
 
     /// <summary>Confirm button of an unlock showcase (also used for the unlock screens shown inside the timeline).</summary>
@@ -153,7 +200,7 @@ internal static class PopupReader
     private static NVerticalPopup? VerticalPopup(Node node)
     {
         // Wrappers keep the popup in a private field; error popups both are and contain one.
-        var inner = RoomUtil.Node<NVerticalPopup>(node, "_verticalPopup");
+        var inner = RoomUtil.OptionalNode<NVerticalPopup>(node, "_verticalPopup");
         if (inner != null && SceneUtil.VisibleInTree(inner)) return inner;
         if (node is NVerticalPopup self) return self;
         return SceneUtil.Descendants<NVerticalPopup>(node, 6).FirstOrDefault(p => SceneUtil.VisibleInTree(p));
@@ -161,9 +208,10 @@ internal static class PopupReader
 
     private static NClickableControl? FtueConfirmButton(Node ftue)
     {
+        // Each tutorial type declares at most one of these fields (most use _confirmButton): probe them quietly.
         foreach (var field in ConfirmFields)
         {
-            var b = RoomUtil.Node<NClickableControl>(ftue, field);
+            var b = RoomUtil.OptionalNode<NClickableControl>(ftue, field);
             if (Usable(b)) return b;
         }
         var typed = RoomUtil.FirstUsable(SceneUtil.Descendants<NFtueConfirmButton>(ftue));
@@ -244,14 +292,45 @@ internal static class PopupReader
 
         bool Done() => Closed(popup, isModal) || (multiPage && Reflect.Get<int>(popup, "_currentPage") != page);
         var r = await UiActions.Expect(Done, "popup", RoomUtil.ShortWait, ct);
-        if (!r.Success && ftue && !multiPage && popup is NFtue and not NAcceptTutorialsFtue && SceneUtil.Alive(popup))
+        if (!r.Success && ftue && !multiPage && popup is NFtue tutorial and not NAcceptTutorialsFtue && SceneUtil.Alive(popup))
         {
-            // A tutorial that ignored its button: close it the way the tutorial base class closes itself.
             ModLog.Warn($"tutorial {popup.GetType().Name} ignored its button; closing it");
-            if (Reflect.TryCall(popup, "CloseFtue", out _))
-                r = await UiActions.Expect(Done, "close tutorial", RoomUtil.ShortWait, ct);
+            r = await ForceCloseTutorialAsync(tutorial, button, isModal, Done, ct);
         }
         await MainThread.Frames(3);
+        return r;
+    }
+
+    /// <summary>
+    /// Closes a tutorial that ignored its button. Order matters: each tutorial's own private <c>CloseFtue(NButton)</c>
+    /// (what its button is wired to) also completes the <c>WaitForPlayerToConfirm</c> task the game may be awaiting, so
+    /// skipping it can soft-lock the run; the base <c>NFtue.CloseFtue()</c> only removes the node; clearing the modal
+    /// container is the last resort.
+    /// </summary>
+    private static async Task<ActionResult> ForceCloseTutorialAsync(NFtue tutorial, NClickableControl button, bool isModal, Func<bool> done,
+        CancellationToken ct)
+    {
+        var r = ActionResult.Fail("tutorial did not close");
+        // One argument finds the subclass's CloseFtue(NButton) (FindMethod is quiet when it does not exist).
+        if (Reflect.FindMethod(tutorial.GetType(), "CloseFtue", 1) != null &&
+            Reflect.TryCall(tutorial, "CloseFtue", out _, new object?[] { button as NButton }))
+        {
+            r = await UiActions.Expect(done, "close tutorial", RoomUtil.ShortWait, ct);
+            if (r.Success) return r;
+        }
+        if (SceneUtil.Alive(tutorial) && !done() && Reflect.FindMethod(tutorial.GetType(), "CloseFtue", 0) != null &&
+            Reflect.TryCall(tutorial, "CloseFtue", out _))
+        {
+            r = await UiActions.Expect(done, "close tutorial", RoomUtil.ShortWait, ct);
+            if (r.Success) return r;
+        }
+        if (SceneUtil.Alive(tutorial) && !done() && isModal && ReferenceEquals(RoomUtil.OpenModal(), tutorial))
+        {
+            ModLog.Warn($"tutorial {tutorial.GetType().Name} did not close; clearing the modal container");
+            try { NModalContainer.Instance?.Clear(); }
+            catch (Exception ex) { return ActionResult.Fail("close tutorial: " + ex.Message); }
+            r = await UiActions.Expect(done, "close tutorial", RoomUtil.ShortWait, ct);
+        }
         return r;
     }
 }

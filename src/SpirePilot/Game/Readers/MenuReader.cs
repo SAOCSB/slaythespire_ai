@@ -11,6 +11,7 @@ using MegaCrit.Sts2.Core.Nodes.Screens.Timeline.UnlockScreens;
 using MegaCrit.Sts2.Core.Platform;
 using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.Saves;
+using MegaCrit.Sts2.Core.Saves.Runs;
 using SpirePilot.Core.Model;
 using SpirePilot.Game.Rooms2;
 using SpirePilot.Infra;
@@ -66,6 +67,8 @@ internal static class MenuReader
         catch (Exception) { }
 
         var cont = MenuButton(menu, "_continueButton", "MainMenuTextButtons/ContinueButton");
+        // The menu keeps its last read result; only describe it while a save actually exists.
+        if (hasSave || SceneUtil.Usable(cont)) snap.SavedRun = SavedRun(menu);
         if (SceneUtil.Usable(cont))
         {
             foreach (var line in RoomUtil.Texts(Safe(() => menu.ContinueRunInfo), 4, skipButtons: true))
@@ -81,6 +84,55 @@ internal static class MenuReader
         var single = MenuButton(menu, "_singleplayerButton", "MainMenuTextButtons/SingleplayerButton");
         if (SceneUtil.Usable(single))
             sink.Add(ActionKind.StartNewRun, R2Text.T("act.new_run"), "menu:new_run", ct => NewRunFromMenuAsync(menu, single!, ct), unpredictable: true);
+    }
+
+    /// <summary>
+    /// The local player's character in the saved run, from the save the main menu already read for its "continue"
+    /// panel (no disk access). Null when it cannot be read. Abandoning the save is never offered.
+    /// </summary>
+    private static SavedRunInfo? SavedRun(NMainMenu menu)
+    {
+        try
+        {
+            var result = Reflect.Get<ReadSaveResult<SerializableRun>>(menu, "_readRunSaveResult");
+            if (result == null || !result.Success) return null;
+            var save = result.SaveData;
+            var players = save?.Players;
+            if (save == null || players == null || players.Count == 0) return null;
+
+            SerializablePlayer? local = null;
+            try
+            {
+                ulong me = PlatformUtil.GetLocalPlayerId(save.PlatformType);
+                local = players.FirstOrDefault(p => p != null && p.NetId == me);
+            }
+            catch (Exception) { /* platform not ready: take the first player */ }
+            local ??= players.FirstOrDefault(p => p != null);
+            var id = local?.CharacterId;
+            if (id == null || string.IsNullOrEmpty(id.Entry)) return null;
+
+            var info = new SavedRunInfo { CharacterId = id.Entry };
+            try
+            {
+                var character = ModelDb.GetByIdOrNull<CharacterModel>(id);
+                if (character != null)
+                {
+                    var name = ModelText.Loc(character.Title);
+                    if (name.Length > 0) info.CharacterName = name;
+                }
+            }
+            catch (Exception) { /* name is optional */ }
+            try { info.Ascension = save.Ascension; }
+            catch (Exception) { }
+            try { info.Floor = save.FloorReached; }
+            catch (Exception) { }
+            return info;
+        }
+        catch (Exception ex)
+        {
+            ThrottledLog.Warn("menu:savedrun", "saved run unreadable: " + ex.Message);
+            return null;
+        }
     }
 
     private static void Singleplayer(NSingleplayerSubmenu sp, ActionSink sink)
@@ -305,7 +357,13 @@ internal static class MenuReader
         else if (client) snap.Notes.Add(R2Text.T("note.char_client_asc"));
 
         var embark = EmbarkButton(screen);
-        if (selectedId != null && SceneUtil.Usable(embark))
+        // As co-op host, readying up before friends joined would start the run without them.
+        int lobbyPlayers = 0;
+        try { lobbyPlayers = lobby?.Players?.Count ?? 0; }
+        catch (Exception) { }
+        bool waitingForPlayers = multiplayer && !client && lobbyPlayers < 2;
+        if (waitingForPlayers) snap.Notes.Add(R2Text.T("note.char_wait_players"));
+        else if (selectedId != null && SceneUtil.Usable(embark))
             sink.Add(ActionKind.Embark, R2Text.T("act.embark"), "embark", ct => EmbarkAsync(screen, embark!, multiplayer, ct), unpredictable: true);
     }
 
@@ -412,8 +470,13 @@ internal static class MenuReader
 
     // ================================================================ game over
 
-    /// <summary>Game over screens whose continue button was already pressed (pressing it again restarts the summary).</summary>
+    /// <summary>Game over screens whose continue press had an effect (pressing it again restarts the summary).</summary>
     private static readonly HashSet<ulong> Continued = new();
+
+    /// <summary>When continue was last pressed on a screen without a visible effect yet (a retry waits this out).</summary>
+    private static readonly Dictionary<ulong, DateTime> ContinuePressedAt = new();
+
+    private static readonly TimeSpan ContinueRetryAfter = TimeSpan.FromSeconds(15);
 
     public static void ReadGameOver(GameContext ctx, ScreenProbe probe, GameSnapshot snap, ActionSink sink)
     {
@@ -442,7 +505,12 @@ internal static class MenuReader
         bool animating = Reflect.Get<bool>(screen, "_isAnimatingSummary");
         ulong id = screen.GetInstanceId();
         bool continued;
-        lock (Continued) continued = Continued.Contains(id);
+        lock (Continued)
+        {
+            continued = Continued.Contains(id);
+            // A press without an effect blocks a new press only for a while (the effect may still come late).
+            if (!continued && ContinuePressedAt.TryGetValue(id, out var at) && DateTime.UtcNow - at < ContinueRetryAfter) continued = true;
+        }
 
         // Continue opens the run summary; it must be pressed exactly once (a second press restarts the summary
         // animation and the main-menu button never becomes available).
@@ -465,14 +533,23 @@ internal static class MenuReader
         {
             if (Continued.Contains(id)) return ActionResult.Fail("continue was already pressed");
             if (Continued.Count > 32) Continued.Clear();
+            if (ContinuePressedAt.Count > 32) ContinuePressedAt.Clear();
         }
         var pressed = UiActions.Press(cont, "game over continue");
         if (!pressed.Success) return pressed;
-        lock (Continued) Continued.Add(id); // never again for this screen, whatever happens next
+        lock (Continued) ContinuePressedAt[id] = DateTime.UtcNow;
         var r = await UiActions.Expect(() =>
                 !SceneUtil.Alive(screen) || Reflect.Get<bool>(screen, "_isAnimatingSummary") || SceneUtil.VisibleInTree(menu) ||
                 !SceneUtil.VisibleInTree(cont) || RoomUtil.CurrentScreen() is not NGameOverScreen,
             "game over continue", UiActions.DefaultTimeout, ct);
+        // Only a press that had an effect blocks further presses for good; after a timeout a retry is offered again
+        // (once the retry delay has passed) instead of idling on the game over screen forever.
+        if (r.Success)
+            lock (Continued)
+            {
+                Continued.Add(id);
+                ContinuePressedAt.Remove(id);
+            }
         await MainThread.Frames(2);
         return r;
     }

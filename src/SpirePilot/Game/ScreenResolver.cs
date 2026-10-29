@@ -8,6 +8,7 @@ using MegaCrit.Sts2.Core.Nodes.Events.Custom;
 using MegaCrit.Sts2.Core.Nodes.Events.Custom.CrystalSphere;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Screens;
+using MegaCrit.Sts2.Core.Nodes.Screens.Capstones;
 using MegaCrit.Sts2.Core.Nodes.Screens.CardLibrary;
 using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
@@ -62,29 +63,55 @@ internal static class ScreenResolver
         try { modal = NModalContainer.Instance?.OpenModal; }
         catch (Exception) { }
         if (modal is Node modalNode && SceneUtil.Alive(modalNode))
+        {
+            // GetCurrentScreen() returns the modal itself (only the feedback screen beats it), so the screen under the
+            // popup comes from the capstone container (pause menu, deck / pile viewers, teammate view) and the inspect
+            // screens. A popup over one of those was opened by the human: theirs to answer.
+            bool overHumanMenu = HumanMenuUnderModal(out var under);
+            bool currentIsModal = ReferenceEquals(current, modal);
+            if (!currentIsModal && IsHumanOnly(current))
+            {
+                overHumanMenu = true;
+                under ??= current;
+            }
             return new ScreenProbe
             {
-                Kind = ScreenKind.Popup, Screen = modal, Modal = modalNode, Underlying = current, Name = modalNode.GetType().Name,
-                // A popup over the pause menu / settings / a viewer was opened by the human: theirs to answer.
-                HumanOnlyReason = IsHumanOnly(current) ? "menu open" : null,
+                Kind = ScreenKind.Popup, Screen = modal, Modal = modalNode, Name = modalNode.GetType().Name,
+                Underlying = under ?? (currentIsModal ? null : current),
+                HumanOnlyReason = overHumanMenu ? "menu open" : null,
             };
+        }
 
         if (current == null)
             return new ScreenProbe { Kind = ScreenKind.Loading, Name = "none" };
         var name = current.GetType().Name;
         ScreenProbe Make(ScreenKind kind, string? humanOnly = null) => new() { Kind = kind, Screen = current, Name = name, HumanOnlyReason = humanOnly };
 
-        // 2) Human-only menus pushed on top of a run (pause, settings, compendium...).
+        // 2) Human-only menus and viewers pushed on top of a run (pause, settings, compendium, deck / pile views, the
+        //    teammate view ...). Every capstone screen was opened by the human, also in combat.
         if (current is NCapstoneSubmenuStack) return Make(ScreenKind.Unknown, "menu open");
-        if (IsHumanOnly(current)) return Make(ScreenKind.Unknown, "viewer open");
+        if (current is ICapstoneScreen || IsHumanOnly(current)) return Make(ScreenKind.Unknown, "viewer open");
 
         // 3) Unlock screens after a run behave like popups (one confirm button).
         if (current is NUnlockScreen) return Make(ScreenKind.Popup);
 
-        // 4) In-combat "choose cards from your hand".
+        // 4) Menus and the timeline. Their pages hold card holders too (unlocked cards inside the timeline, run
+        //    history, compendium), so they are routed before the generic card-grid check below.
+        switch (current)
+        {
+            case NCharacterSelectScreen: return Make(ScreenKind.CharacterSelect);
+            case NMultiplayerLoadGameScreen: return Make(ScreenKind.Unknown, "multiplayer load screen");
+            case NTimelineScreen or NEpochInspectScreen or NTimelineTutorial: return Make(ScreenKind.MainMenu);
+            case NEarlyAccessDisclaimer: return Make(ScreenKind.Popup);
+            // A submenu during a run is part of the pause menu: the human's.
+            case NSubmenu when ctx.InRun: return Make(ScreenKind.Unknown, "menu open");
+            case NMainMenu or NSubmenu or NLogoAnimation: return Make(ScreenKind.MainMenu);
+        }
+
+        // 5) In-combat "choose cards from your hand".
         if (ctx.Combat != null && IsHandSelection()) return Make(ScreenKind.HandSelect);
 
-        // 5) Overlays and selection screens (they carry card holders, so test them before the generic grid check).
+        // 6) Overlays and selection screens (they carry card holders, so test them before the generic grid check).
         switch (current)
         {
             case NCardRewardSelectionScreen: return Make(ScreenKind.CardReward);
@@ -94,10 +121,11 @@ internal static class ScreenResolver
             case NGameOverScreen: return Make(ScreenKind.GameOver);
             case NRewardsScreen: return Make(ScreenKind.CombatRewards);
         }
-        if (current is Node n && SceneUtil.Descendants<NGridCardHolder>(n, 12).Any(h => SceneUtil.VisibleInTree(h)))
+        // Card selections only exist in a run.
+        if (ctx.InRun && current is Node n && SceneUtil.Descendants<NGridCardHolder>(n, 12).Any(h => SceneUtil.VisibleInTree(h)))
             return Make(ScreenKind.CardGridSelect);
 
-        // 6) Rooms and full screens.
+        // 7) Rooms and full screens.
         if (FindActiveCombatRoom(current) != null) return Make(ScreenKind.Combat);
         switch (current)
         {
@@ -108,18 +136,52 @@ internal static class ScreenResolver
             case NEventRoom: return Make(ScreenKind.Event);
             case NMapScreen or NMapRoom: return Make(ScreenKind.Map);
             case NCombatRoom: return Make(ScreenKind.Combat);
-            case NCharacterSelectScreen: return Make(ScreenKind.CharacterSelect);
-            case NMultiplayerLoadGameScreen: return Make(ScreenKind.Unknown, "multiplayer load screen");
-            case NTimelineScreen or NEpochInspectScreen or NTimelineTutorial: return Make(ScreenKind.MainMenu);
-            case NEarlyAccessDisclaimer: return Make(ScreenKind.Popup);
-            case NMainMenu or NSubmenu or NLogoAnimation: return Make(ScreenKind.MainMenu);
         }
         return Make(ScreenKind.Unknown);
     }
 
     private static bool IsHumanOnly(IScreenContext? screen) =>
-        screen is NCapstoneSubmenuStack or NCardsViewScreen or NCardLibrary or NCardPileScreen or NInspectCardScreen or
+        screen is NCapstoneSubmenuStack or ICapstoneScreen or NCardsViewScreen or NCardLibrary or NCardPileScreen or NInspectCardScreen or
             NInspectRelicScreen or NSendFeedbackScreen or NPatchNotesScreen;
+
+    /// <summary>
+    /// True when a human menu / viewer is open under the current modal: the capstone container is in use (pause menu,
+    /// deck or pile view, teammate view) or an inspect screen is showing. <paramref name="under"/> is that screen.
+    /// </summary>
+    private static bool HumanMenuUnderModal(out IScreenContext? under)
+    {
+        under = null;
+        try
+        {
+            var capstone = NCapstoneContainer.Instance;
+            if (SceneUtil.Valid(capstone) && capstone.InUse)
+            {
+                under = capstone.CurrentCapstoneScreen;
+                return true;
+            }
+        }
+        catch (Exception) { /* container not ready */ }
+        try
+        {
+            var game = NGame.Instance;
+            if (!SceneUtil.Valid(game)) return false;
+            var card = game.InspectCardScreen;
+            if (SceneUtil.VisibleInTree(card))
+            {
+                under = card;
+                return true;
+            }
+            var relic = game.InspectRelicScreen;
+            if (SceneUtil.VisibleInTree(relic))
+            {
+                under = relic;
+                return true;
+            }
+            // The feedback screen needs no check: GetCurrentScreen() returns it even over a modal (IsHumanOnly).
+        }
+        catch (Exception) { /* screens not created yet */ }
+        return false;
+    }
 
     /// <summary>True while the hand is in a select mode (discard / exhaust / upgrade from hand ...).</summary>
     public static bool IsHandSelection()
