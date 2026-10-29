@@ -71,6 +71,7 @@ public sealed class StateFormatter
         sb.Append(p.Name);
         if (!string.IsNullOrEmpty(p.CharacterName)) sb.Append(" (").Append(p.CharacterName).Append(')');
         if (p.IsAiControlled) sb.Append(" [AI]");
+        if (!p.IsLocal && !p.HasTeamLink) sb.Append(" [no SpirePilot: cannot read team messages]");
         if (!p.IsAlive) sb.Append(" [DEAD]");
         sb.Append(" HP ").Append(p.Hp).Append('/').Append(p.MaxHp);
         if (p.Block > 0) sb.Append(" Block ").Append(p.Block);
@@ -91,7 +92,8 @@ public sealed class StateFormatter
 
         sb.Append("  Potions [").Append(p.Potions.Count).Append('/').Append(p.PotionSlots).Append("]: ");
         sb.AppendLine(p.Potions.Count == 0 ? "none" : string.Join("; ", p.Potions.Select(pt =>
-            detailed && VerboseCards ? $"#{pt.Slot} {pt.Name} [{pt.Target}] {Clean(pt.Description)}" : $"#{pt.Slot} {pt.Name}")));
+            detailed && VerboseCards ? $"#{pt.Slot} {pt.Name} [{pt.Target}] {Clean(pt.Description)}"
+            : !detailed && pt.Target == "AnyPlayer" ? $"#{pt.Slot} {pt.Name} (can be given to a player)" : $"#{pt.Slot} {pt.Name}")));
 
         if (detailed)
         {

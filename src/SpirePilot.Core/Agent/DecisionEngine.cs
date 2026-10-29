@@ -29,6 +29,8 @@ public sealed class PilotConfigException : Exception
 public sealed class DecisionEngine
 {
     private const int MaxMessagesPerDecision = 2;
+    private const int MaxInboxInPrompt = 8;
+    private const int MaxInfoInPrompt = 6;
 
     private readonly Func<PilotSettings> _settings;
     private readonly TeamChatHub _team;
@@ -74,24 +76,102 @@ public sealed class DecisionEngine
     /// </summary>
     public static bool IsActionable(TeamMessage m) =>
         m.Kind is not (TeamMessageKind.Accept or TeamMessageKind.Decline or TeamMessageKind.Hello) &&
-        !(m.FromAi && m.Kind == TeamMessageKind.Chat);
+        !(m.FromAi && m.Kind == TeamMessageKind.Chat) &&
+        // An AI answering with a counter-request is how two AIs keep each other busy.
+        !(m.FromAi && m.ReplyTo != null);
 
-    public async Task<AgentDecision?> DecideAsync(GameSnapshot snapshot, string? liveInstruction, CancellationToken ct)
+    /// <summary>
+    /// Actionable for this AI: requests and questions, plus a "yes" to our own offer or question ("do you need a
+    /// potion?" → "yes") — that one asks us to act.
+    /// </summary>
+    public bool NeedsAttention(TeamMessage m) =>
+        IsActionable(m) ||
+        m.Kind == TeamMessageKind.Accept && Memory.FindOutgoing(m.ReplyTo) is { Kind: TeamMessageKind.OfferPotion or TeamMessageKind.AskNeedPotion };
+
+    /// <summary>Unread team messages split into those that need a reaction and context-only ones.</summary>
+    private (List<TeamMessage> all, List<TeamMessage> actionable, List<TeamMessage> info) ReadInbox(GameSnapshot snapshot, PilotSettings settings)
     {
-        if (snapshot.Actions.Count == 0) return null;
-        var settings = _settings();
-        Memory.MaxHistory = settings.Strategy.HistoryLength;
         _team.ExpireInbox(TimeSpan.FromMinutes(3));
         Memory.ExpireRequests(TimeSpan.FromMinutes(5));
-
+        Memory.NoteCombat(snapshot.Combat == null ? null : $"{snapshot.Run?.Floor}:{snapshot.Combat.EncounterName}", snapshot.Combat?.Round ?? 0);
         var unread = _team.PeekAiInbox();
         if (!settings.Team.AutoReply || !snapshot.IsMultiplayer)
         {
             if (unread.Count > 0) _team.MarkRead(unread.Select(m => m.Id));
-            unread = new List<TeamMessage>();
+            return (new(), new(), new());
         }
-        var actionable = unread.Where(IsActionable).ToList();
-        var info = unread.Where(m => !IsActionable(m)).ToList();
+        // Answers to our requests close them (they stay in the prompt as context once).
+        foreach (var m in unread.Where(m => m.Kind is TeamMessageKind.Accept or TeamMessageKind.Decline)) Memory.CloseOutgoing(m.ReplyTo);
+        var actionable = unread.Where(NeedsAttention).ToList();
+        var info = unread.Where(m => !NeedsAttention(m)).ToList();
+        return (unread, actionable, info);
+    }
+
+    /// <summary>True when unread team messages ask this AI for a reaction (used to wake it while it cannot act).</summary>
+    public bool HasActionableInbox(GameSnapshot snapshot)
+    {
+        var settings = _settings();
+        if (!settings.Team.AutoReply || !snapshot.IsMultiplayer) return false;
+        return _team.PeekAiInbox().Any(NeedsAttention);
+    }
+
+    /// <summary>
+    /// The pilot cannot act right now (turn already ended, enemy turn, a teammate's choice) but a teammate asked
+    /// something: one LLM call that may only answer. Returns null when there is nothing to answer or the LLM is
+    /// unavailable.
+    /// </summary>
+    public async Task<AgentDecision?> ReplyOnlyAsync(GameSnapshot snapshot, string reason, CancellationToken ct)
+    {
+        var settings = _settings();
+        Memory.MaxHistory = settings.Strategy.HistoryLength;
+        var (unread, actionable, info) = ReadInbox(snapshot, settings);
+        if (actionable.Count == 0 || _clock() < _llmCooldownUntil) return null;
+        var context = BuildContext(snapshot, settings, actionable, info, null);
+        context.ReplyOnlyReason = reason;
+        try
+        {
+            var decision = await AskLlmAsync(snapshot, settings, context, ct, allowNoAction: true).ConfigureAwait(false);
+            _consecutiveLlmFailures = 0;
+            LastLlmError = null;
+            Memory.SetMemo(decision.Memo);
+            decision.ActionIds.Clear();
+            decision.PlanKeys.Clear();
+            decision.HandledInboxIds = unread.Select(m => m.Id).ToList();
+            if (decision.Messages.Count > MaxMessagesPerDecision)
+                decision.Messages.RemoveRange(MaxMessagesPerDecision, decision.Messages.Count - MaxMessagesPerDecision);
+            return decision;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (LlmException ex) when (ex.IsConfigError)
+        {
+            LastLlmError = ex.Message;
+            throw new PilotConfigException(ex.Message, ex);
+        }
+        catch (PilotConfigException) { throw; }
+        catch (Exception ex)
+        {
+            LastLlmError = ex.Message;
+            _log.Warn("LLM reply failed: " + ex.Message);
+            if (++_consecutiveLlmFailures >= 3)
+            {
+                _consecutiveLlmFailures = 0;
+                _llmCooldownUntil = _clock() + _cooldown;
+                _cooldown = TimeSpan.FromTicks(Math.Min(_cooldown.Ticks * 2, TimeSpan.FromMinutes(10).Ticks));
+            }
+            return null;
+        }
+    }
+
+    /// <param name="replyOnlyReason">
+    /// Set when the menu holds nothing the AI should do unprompted (only "undo end turn"): the model may then answer
+    /// teammates without acting ("actions": []).
+    /// </param>
+    public async Task<AgentDecision?> DecideAsync(GameSnapshot snapshot, string? liveInstruction, CancellationToken ct, string? replyOnlyReason = null)
+    {
+        if (snapshot.Actions.Count == 0) return null;
+        var settings = _settings();
+        Memory.MaxHistory = settings.Strategy.HistoryLength;
+        var (unread, actionable, info) = ReadInbox(snapshot, settings);
         bool hasInstruction = !string.IsNullOrWhiteSpace(liveInstruction);
 
         // 1) Continue a plan from the previous LLM answer (unless something needs fresh attention).
@@ -128,12 +208,13 @@ public sealed class DecisionEngine
 
         // 4) Ask the LLM (unless it keeps failing and is cooling down).
         var context = BuildContext(snapshot, settings, actionable, info, liveInstruction);
+        context.ReplyOnlyReason = replyOnlyReason;
         if (_clock() < _llmCooldownUntil && settings.Control.FallbackOnLlmFailure)
             return Fallback(snapshot, settings, "AI temporarily unavailable: " + LastLlmError);
 
         try
         {
-            var decision = await AskLlmAsync(snapshot, settings, context, ct).ConfigureAwait(false);
+            var decision = await AskLlmAsync(snapshot, settings, context, ct, allowNoAction: replyOnlyReason != null).ConfigureAwait(false);
             _consecutiveLlmFailures = 0;
             _cooldown = TimeSpan.FromSeconds(60);
             LastLlmError = null;
@@ -174,10 +255,11 @@ public sealed class DecisionEngine
         }
     }
 
-    private AgentDecision Fallback(GameSnapshot snapshot, PilotSettings settings, string why)
+    private AgentDecision? Fallback(GameSnapshot snapshot, PilotSettings settings, string why)
     {
-        var fb = FallbackPolicy.Choose(snapshot, settings) ?? throw new LlmException("no fallback action: " + why);
         Memory.ClearPlan();
+        var fb = FallbackPolicy.Choose(snapshot, settings);
+        if (fb == null) return null; // nothing the rules would do here (e.g. only "undo end turn"): wait
         return new AgentDecision
         {
             Source = DecisionSource.Fallback,
@@ -263,16 +345,18 @@ public sealed class DecisionEngine
 
     /// <summary>The action to take without asking when the menu has exactly one choice (never discarding a potion).</summary>
     public static ActionOption? TrivialAction(GameSnapshot s) =>
-        s.Actions.Count == 1 && s.Actions[0].Kind != ActionKind.DiscardPotion ? s.Actions[0] : null;
+        s.Actions.Count == 1 && s.Actions[0].Kind is not (ActionKind.DiscardPotion or ActionKind.UndoEndTurn) ? s.Actions[0] : null;
 
     private DecisionContext BuildContext(GameSnapshot s, PilotSettings settings, List<TeamMessage> inbox, List<TeamMessage> info, string? liveInstruction)
     {
         var ctx = new DecisionContext
         {
             LiveInstruction = liveInstruction,
-            Inbox = inbox,
-            InboxInfo = info,
+            // Newest first matters; a flood of messages must not blow up the prompt.
+            Inbox = inbox.TakeLast(MaxInboxInPrompt).ToList(),
+            InboxInfo = info.TakeLast(MaxInfoInPrompt).ToList(),
             OpenRequests = Memory.OpenRequests,
+            OutgoingRequests = Memory.OutgoingRequests,
             History = Memory.History,
             Memo = Memory.Memo,
         };
@@ -297,7 +381,8 @@ public sealed class DecisionEngine
         return _client;
     }
 
-    private async Task<AgentDecision> AskLlmAsync(GameSnapshot snapshot, PilotSettings settings, DecisionContext context, CancellationToken ct)
+    private async Task<AgentDecision> AskLlmAsync(GameSnapshot snapshot, PilotSettings settings, DecisionContext context, CancellationToken ct,
+        bool allowNoAction = false)
     {
         var profile = settings.Active ?? throw new PilotConfigException("No AI profile configured.");
         var problems = LlmClientFactory.Validate(profile);
@@ -327,7 +412,7 @@ public sealed class DecisionEngine
             TotalCachedTokens += response.CachedInputTokens ?? 0;
             if (settings.LogPrompts) _log.Info("ANSWER <<<\n" + response.Text);
 
-            var parsed = DecisionParser.Parse(response.Text, snapshot);
+            var parsed = DecisionParser.Parse(response.Text, snapshot, allowNoAction);
             if (parsed.Ok)
             {
                 var d = parsed.Decision!;
@@ -340,8 +425,9 @@ public sealed class DecisionEngine
             _log.Warn($"Unusable LLM answer ({parsed.Error}): {Truncate(response.Text, 300)}");
             // Repair turn: keep the original prompt (cache-friendly) and append the bad answer plus the problem.
             request.Messages.Add(new LlmMessage(LlmRole.Assistant, Truncate(response.Text, 2000)));
-            request.Messages.Add(new LlmMessage(LlmRole.User,
-                $"Invalid answer: {parsed.Error}. Valid ids are {string.Join(", ", snapshot.Actions.Select(a => a.Id))}. Reply with the JSON object only."));
+            request.Messages.Add(new LlmMessage(LlmRole.User, allowNoAction
+                ? $"Invalid answer: {parsed.Error}. Use \"actions\": [] and put your replies in \"messages\". Reply with the JSON object only."
+                : $"Invalid answer: {parsed.Error}. Valid ids are {string.Join(", ", snapshot.Actions.Select(a => a.Id))}. Reply with the JSON object only."));
         }
         throw new LlmException("The model did not return a usable decision: " + lastError);
     }
@@ -351,11 +437,7 @@ public sealed class DecisionEngine
         Memory.SetMemo(decision.Memo);
         decision.HandledInboxIds = inbox.Select(m => m.Id).ToList();
 
-        foreach (var msg in decision.Messages)
-        {
-            if (msg.Kind == TeamMessageKind.Accept && msg.ReplyTo != null && inbox.FirstOrDefault(m => m.Id == msg.ReplyTo) is { } accepted)
-                Memory.TrackAccepted(accepted);
-        }
+        // Accepted requests are tracked by the loop once the reply was actually delivered (never in advisor mode).
         // Team messages are only meaningful with teammates; respect the team settings.
         if (!snapshot.IsMultiplayer || !settings.Team.AutoReply) decision.Messages.Clear();
         else if (!settings.Team.ProactiveRequests)

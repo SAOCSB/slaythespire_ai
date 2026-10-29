@@ -46,6 +46,9 @@ public enum ActionKind
     SetAscension,
     Embark,
     ReturnToMenu,
+
+    // Co-op combat: take back "end turn" while teammates are still playing (e.g. to give a potion after all).
+    UndoEndTurn,
 }
 
 /// <summary>

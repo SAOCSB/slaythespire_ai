@@ -136,7 +136,7 @@ public class EndToEndTests
         }.ToJsonString()));
         var profile = new LlmProfile { Name = "deepseek", Provider = LlmProvider.OpenAiCompatible, BaseUrl = server.BaseUrl + "/v1", ApiKey = "sk-test", Model = "deepseek-chat" };
         var (loop, bridge, hub, transport, traces) = Make(profile);
-        hub.Receive(new TeamMessage { From = 2, FromName = "Bob", Kind = TeamMessageKind.RequestPotion, Text = "我快死了，能给我一瓶药吗？", Time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
+        hub.Receive(new TeamMessage { From = 2, To = 1, FromName = "Bob", Kind = TeamMessageKind.RequestPotion, Text = "我快死了，能给我一瓶药吗？", Time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
         bridge.Set(CoopCombat());
 
         loop.Start();
@@ -149,6 +149,7 @@ public class EndToEndTests
         Assert.Equal(2ul, sent.To);
         Assert.True(sent.FromAi);
         Assert.Empty(hub.PeekAiInbox()); // the request was handled
+        Assert.Empty(loop.Memory.OpenRequests); // ... and fulfilled by the potion on Bob
         var prompt = server.Requests[0].Body!["messages"]![1]!["content"]!.ToString();
         Assert.Contains("[TEAM INBOX]", prompt);
         Assert.Contains("我快死了", prompt);

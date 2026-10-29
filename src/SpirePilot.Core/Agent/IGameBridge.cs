@@ -1,4 +1,5 @@
 using SpirePilot.Core.Model;
+using SpirePilot.Core.Team;
 
 namespace SpirePilot.Core.Agent;
 
@@ -22,4 +23,10 @@ public interface IGameBridge
 
     /// <summary>Pings a map node for teammates using the game's own map ping (co-op only).</summary>
     void PingMapNode(string nodeKey);
+
+    /// <summary>
+    /// For teammates without SpirePilot (they cannot read team messages): shows the closest vanilla co-op signal
+    /// instead (a reaction emote such as thumbs up / question mark). Returns false when there is none.
+    /// </summary>
+    bool TrySignal(TeamMessageKind kind) => false;
 }

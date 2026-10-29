@@ -325,7 +325,7 @@ public class DecisionEngineTests
     }
 
     [Fact]
-    public async Task Accepted_requests_are_remembered()
+    public async Task Accepted_requests_are_only_remembered_once_the_reply_is_sent()
     {
         var (engine, _, hub) = Make(Settings(), req =>
         {
@@ -337,6 +337,6 @@ public class DecisionEngineTests
         snap.IsMultiplayer = true;
         var d = await engine.DecideAsync(snap, null, CancellationToken.None);
         Assert.Single(d!.Messages);
-        Assert.Single(engine.Memory.OpenRequests);
+        Assert.Empty(engine.Memory.OpenRequests); // the loop tracks it after delivery (never in advisor mode)
     }
 }

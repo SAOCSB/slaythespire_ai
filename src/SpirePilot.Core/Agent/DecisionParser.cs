@@ -55,7 +55,8 @@ public static class DecisionParser
         CommentHandling = JsonCommentHandling.Skip,
     };
 
-    public static ParseResult Parse(string text, GameSnapshot snapshot)
+    /// <param name="allowNoAction">The menu is empty and the model may only answer teammates ("actions": []).</param>
+    public static ParseResult Parse(string text, GameSnapshot snapshot, bool allowNoAction = false)
     {
         var json = ExtractJsonObject(StripReasoning(text));
         if (json == null) return new ParseResult { Error = "no JSON object found in the answer" };
@@ -87,7 +88,7 @@ public static class DecisionParser
                 else AddRawId(raw, actions);
             }
             if (raw.Count == 0 && TryGet(root, out var single, "action", "action_id", "id")) AddRawId(raw, single);
-            if (raw.Count == 0) return new ParseResult { Error = "no action chosen (\"actions\" is empty)" };
+            if (raw.Count == 0 && !allowNoAction) return new ParseResult { Error = "no action chosen (\"actions\" is empty)" };
 
             // The first id must be legal. A plan is only trusted up to its first unknown id (order matters),
             // and it ends after any step whose outcome cannot be foreseen (draws, random effects, end turn ...).
@@ -98,7 +99,7 @@ public static class DecisionParser
                 decision.ActionIds.Add(id);
                 if (snapshot.FindAction(id) is { } chosen && PlanSafety.IsBoundary(chosen, snapshot)) break;
             }
-            if (decision.ActionIds.Count == 0)
+            if (decision.ActionIds.Count == 0 && !allowNoAction)
                 return new ParseResult { Error = $"unknown action id \"{raw[0]}\"; choose ids from the legal action list" };
 
             // Remaining plan steps are remembered by semantic key so they survive index shifts.

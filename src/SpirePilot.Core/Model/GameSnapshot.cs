@@ -67,7 +67,9 @@ public sealed class GameSnapshot
     /// <summary>Keyword / term explanations (from the game's hover tips) for terms that appear in this snapshot.</summary>
     public Dictionary<string, string> Glossary { get; set; } = new();
 
+    [System.Text.Json.Serialization.JsonIgnore]
     public PlayerInfo? LocalPlayer => Players.FirstOrDefault(p => p.IsLocal);
+    [System.Text.Json.Serialization.JsonIgnore]
     public IEnumerable<PlayerInfo> Teammates => Players.Where(p => !p.IsLocal);
 
     public ActionOption? FindAction(string id) =>
@@ -200,8 +202,10 @@ public sealed class IntentInfo
 
 public sealed class CreatureInfo
 {
-    /// <summary>Short key used by actions to reference this creature (e.g. "e0", "p1").</summary>
+    /// <summary>Short key used by actions to reference this creature (e.g. "e0", "p1"). Local to this client.</summary>
     public string Key { get; set; } = "";
+    /// <summary>The game's combat id: the same on every client, so team messages use it to name an enemy.</summary>
+    public uint? CombatId { get; set; }
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";
     public int Hp { get; set; }

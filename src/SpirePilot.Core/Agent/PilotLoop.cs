@@ -88,6 +88,7 @@ public sealed class PilotLoop : IDisposable
     private PilotMode _lastMode = PilotMode.Off;
     private bool _wasPaused;
     private string? _runIdentity;
+    private DateTime _nextReplyCheck = DateTime.MinValue;
 
     public PilotStatus Status { get; private set; } = new(PilotState.Off, "");
     public AgentDecision? Advice { get; private set; }
@@ -152,6 +153,9 @@ public sealed class PilotLoop : IDisposable
     }
 
     public string? LiveInstruction { get { lock (_lock) return _liveInstruction; } }
+
+    /// <summary>The engine's run memory (history, memo, team requests), for the UI and tests.</summary>
+    public AgentMemory Memory => _engine.Memory;
 
     /// <summary>Forget run memory (called by the mod when a new run starts or the user asks).</summary>
     public void ResetMemory() => _engine.Memory.Reset();
@@ -230,8 +234,22 @@ public sealed class PilotLoop : IDisposable
         if (snap == null || !snap.CanAct || snap.Actions.Count == 0)
         {
             SetStatus(PilotState.Waiting, L10n.T("status.waiting", snap?.WaitReason ?? "…"));
+            // Nothing to play right now, but a teammate may be asking something: answer them.
+            if (snap != null && await TryReplyOnlyAsync(snap, mode, settings, ct).ConfigureAwait(false)) return;
             await SafeDelay(IdleDelay, ct).ConfigureAwait(false);
             return;
+        }
+        // Turn already ended in co-op: "undo end turn" is only worth considering when a teammate needs us.
+        string? replyOnly = null;
+        if (snap.Actions.All(a => a.Kind == ActionKind.UndoEndTurn))
+        {
+            if (mode == PilotMode.Advisor || !_engine.HasActionableInbox(snap))
+            {
+                SetStatus(PilotState.Waiting, L10n.T("status.waiting", snap.WaitReason ?? "teammates"));
+                await SafeDelay(IdleDelay, ct).ConfigureAwait(false);
+                return;
+            }
+            replyOnly = "you already ended your turn; teammates are still playing";
         }
         if (snap.Screen == ScreenKind.GameOver) _runEndedSinceEnabled = true;
         DetectNewRun(snap);
@@ -253,7 +271,7 @@ public sealed class PilotLoop : IDisposable
             var watcher = WatchForInterruptAsync(mode, decideCts);
             try
             {
-                decision = await _engine.DecideAsync(snap, instruction, decideCts.Token).ConfigureAwait(false);
+                decision = await _engine.DecideAsync(snap, instruction, decideCts.Token, replyOnly).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
@@ -270,6 +288,15 @@ public sealed class PilotLoop : IDisposable
         if (Interrupted(mode))
         {
             _engine.Memory.ClearPlan();
+            return;
+        }
+        if (decision is { ActionIds.Count: 0 } talk)
+        {
+            // An answer without an action (allowed only when nothing needs doing).
+            if (mode != PilotMode.Advisor) SendMessages(talk, snap, settings);
+            _team.MarkRead(talk.HandledInboxIds);
+            Emit(PilotEventKind.Decision, "💬 " + talk.Thought, talk);
+            await SafeDelay(IdleDelay, ct).ConfigureAwait(false);
             return;
         }
         var action = decision?.FirstActionId is { } id ? snap.FindAction(id) : null;
@@ -371,6 +398,9 @@ public sealed class PilotLoop : IDisposable
         else
         {
             _consecutiveFailures = 0;
+            if (target.Kind == ActionKind.UsePotion && DecisionEngine.TargetsTeammate(target, fresh) &&
+                TargetPlayer(target) is { } helped)
+                _engine.Memory.FulfilledPotionFor(helped);
             if (target.Kind == ActionKind.Embark)
             {
                 RunsStarted++;
@@ -380,6 +410,34 @@ public sealed class PilotLoop : IDisposable
             }
         }
         await SafeDelay(TimeSpan.FromMilliseconds(settings.Control.ActionDelayMs), ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// While the pilot cannot act (turn ended, enemy turn, loading), answers teammates' requests with a talk-only
+    /// LLM call. Never in advisor mode (the human speaks for themself) or on screens the mode leaves to the human.
+    /// </summary>
+    private async Task<bool> TryReplyOnlyAsync(GameSnapshot snap, PilotMode mode, PilotSettings settings, CancellationToken ct)
+    {
+        if (mode is PilotMode.Off or PilotMode.Advisor || Paused || !snap.IsMultiplayer || !settings.Team.AutoReply) return false;
+        if (!ModeAllows(mode, snap) || DateTime.UtcNow < _nextReplyCheck) return false;
+        _nextReplyCheck = DateTime.UtcNow + TimeSpan.FromSeconds(2);
+        if (!_engine.HasActionableInbox(snap)) return false;
+
+        SetStatus(PilotState.Thinking, L10n.T("status.thinking"));
+        var reply = await _engine.ReplyOnlyAsync(snap, snap.WaitReason ?? "you cannot act right now", ct).ConfigureAwait(false);
+        if (reply == null || Interrupted(mode)) return false;
+        SendMessages(reply, snap, settings);
+        _team.MarkRead(reply.HandledInboxIds);
+        Emit(PilotEventKind.Decision, "💬 " + reply.Thought, reply);
+        return true;
+    }
+
+    private static ulong? TargetPlayer(ActionOption a)
+    {
+        int at = a.SemanticKey.IndexOf("@P:", StringComparison.Ordinal);
+        if (at < 0) return null;
+        var digits = new string(a.SemanticKey[(at + 3)..].TakeWhile(char.IsDigit).ToArray());
+        return ulong.TryParse(digits, out var id) ? id : null;
     }
 
     /// <summary>True when the user paused the pilot or changed the mode since <paramref name="mode"/> was read.</summary>
@@ -497,36 +555,88 @@ public sealed class PilotLoop : IDisposable
         return false;
     }
 
+    private static bool IsRequestKind(TeamMessageKind k) =>
+        k is TeamMessageKind.RequestPotion or TeamMessageKind.OfferPotion or TeamMessageKind.AskNeedPotion or
+            TeamMessageKind.RequestDebuff or TeamMessageKind.RequestFocus or TeamMessageKind.RequestBlock or TeamMessageKind.SuggestRoute;
+
     private void SendMessages(AgentDecision decision, GameSnapshot snap, PilotSettings settings)
     {
+        var inbox = _team.PeekAiInbox();
         foreach (var intent in decision.Messages)
         {
+            var answered = intent.ReplyTo == null ? null : inbox.FirstOrDefault(m => m.Id == intent.ReplyTo);
+            ulong to = ResolveRecipient(intent.To, snap);
+            // A reply goes where the question came from; an answer to a question for everyone goes to everyone,
+            // so other helpers can see it is taken care of.
+            if (answered != null) to = answered.To == 0 ? 0 : answered.From;
+            bool isRequest = IsRequestKind(intent.Kind) && intent.ReplyTo == null;
+            if (isRequest && _engine.Memory.HasOpenOutgoing(intent.Kind, to))
+            {
+                _log.Info("AI request not repeated (still open): " + intent.Text);
+                continue;
+            }
+
+            // Who can read it? Teammates without SpirePilot only get the closest vanilla emote.
+            var readers = snap.Teammates.Where(p => p.HasTeamLink && (to == 0 || p.NetId == to)).ToList();
+            if (readers.Count == 0)
+            {
+                bool signalled = false;
+                try { signalled = _bridge.TrySignal(intent.Kind); } catch (Exception ex) { _log.Warn("signal failed: " + ex.Message); }
+                _engine.Memory.AddHistory((signalled ? "(teammate cannot read messages; showed an emote) " : "(teammate cannot read messages; not sent) ") + intent.Text);
+                Emit(PilotEventKind.TeamMessage, "💬✘ " + intent.Text);
+                continue;
+            }
+
             var msg = new TeamMessage
             {
                 Kind = intent.Kind,
                 Text = intent.Text,
                 Potion = intent.Potion,
                 Debuff = intent.Debuff,
-                Target = intent.Target,
+                Target = NormalizeTarget(intent.Target, snap),
                 ReplyTo = intent.ReplyTo,
-                To = ResolveRecipient(intent.To, snap),
+                To = to,
             };
             var entry = _team.Send(msg, fromAi: true);
             if (entry == null)
             {
                 _log.Info("AI team message dropped by rate limit: " + intent.Text);
+                _engine.Memory.AddHistory("(team message not sent: rate limit) " + intent.Text);
                 continue;
             }
-            if (intent.Kind == TeamMessageKind.Accept && intent.ReplyTo != null &&
-                _team.PeekAiInbox().FirstOrDefault(m => m.Id == intent.ReplyTo) is { } accepted)
-                _engine.Memory.TrackAccepted(accepted);
-            Emit(PilotEventKind.TeamMessage, "💬 " + intent.Text);
+            if (!entry.Delivered)
+            {
+                _engine.Memory.AddHistory("(team message not delivered) " + intent.Text);
+            }
+            else
+            {
+                if (intent.Kind == TeamMessageKind.Accept && answered != null) _engine.Memory.TrackAccepted(answered);
+                if (isRequest) _engine.Memory.TrackOutgoing(entry.Message);
+            }
+            Emit(PilotEventKind.TeamMessage, (entry.Delivered ? "💬 " : "💬✘ ") + intent.Text);
             if (settings.Team.SpeechBubbles)
             {
                 try { _bridge.ShowSpeech(snap.LocalPlayerId, intent.Text); } catch (Exception) { /* visual only */ }
             }
         }
         decision.Messages.Clear();
+    }
+
+    /// <summary>
+    /// Team messages name enemies by the game's combat id, which every client shares ("Cultist (cid:12)"); the
+    /// model writes this client's key ("e1") or a name.
+    /// </summary>
+    public static string? NormalizeTarget(string? target, GameSnapshot snap)
+    {
+        if (string.IsNullOrWhiteSpace(target) || snap.Combat == null) return target;
+        var t = target.Trim();
+        if (t.Contains("cid:", StringComparison.Ordinal)) return t;
+        var enemies = snap.Combat.Enemies.Where(e => e.IsAlive).ToList();
+        var enemy = enemies.FirstOrDefault(e => e.Key.Equals(t, StringComparison.OrdinalIgnoreCase))
+                    ?? enemies.FirstOrDefault(e => t.StartsWith(e.Key + " ", StringComparison.OrdinalIgnoreCase))
+                    ?? enemies.FirstOrDefault(e => e.Name.Equals(t, StringComparison.OrdinalIgnoreCase));
+        if (enemy == null) return t;
+        return enemy.CombatId is { } cid ? $"{enemy.Name} (cid:{cid})" : enemy.Name;
     }
 
     /// <summary>"all" → 0; a teammate's name (case-insensitive, prefix allowed) or net id → that id.</summary>
@@ -537,10 +647,14 @@ public sealed class PilotLoop : IDisposable
         if (to.Equals("all", StringComparison.OrdinalIgnoreCase) || to is "everyone" or "所有人" or "全体") return 0;
         if (ulong.TryParse(to, out var id) && snap.Players.Any(p => p.NetId == id)) return id;
         var mates = snap.Teammates.ToList();
-        var exact = mates.FirstOrDefault(p => p.Name.Equals(to, StringComparison.OrdinalIgnoreCase));
+        // The prompt shows names through PromptBuilder.Safe ("[CN]Bob" → "(CN)Bob"): compare in that form too.
+        var wanted = PromptBuilder.Safe(to);
+        string Norm(PlayerInfo p) => PromptBuilder.Safe(p.Name);
+        var exact = mates.FirstOrDefault(p => Norm(p).Equals(wanted, StringComparison.OrdinalIgnoreCase));
         if (exact != null) return exact.NetId;
-        var partial = mates.FirstOrDefault(p => p.Name.StartsWith(to, StringComparison.OrdinalIgnoreCase) ||
-                                                to.Contains(p.Name, StringComparison.OrdinalIgnoreCase) && p.Name.Length > 0);
+        var partial = mates.FirstOrDefault(p => Norm(p).Length > 0 &&
+                                                (Norm(p).StartsWith(wanted, StringComparison.OrdinalIgnoreCase) ||
+                                                 wanted.Contains(Norm(p), StringComparison.OrdinalIgnoreCase)));
         if (partial != null) return partial.NetId;
         var byCharacter = mates.FirstOrDefault(p => p.CharacterName.Equals(to, StringComparison.OrdinalIgnoreCase) ||
                                                     p.CharacterId.Equals(to, StringComparison.OrdinalIgnoreCase));

@@ -12,7 +12,8 @@ public static class FallbackPolicy
 {
     public static ActionOption? Choose(GameSnapshot s, PilotSettings settings)
     {
-        var actions = s.Actions;
+        // Taking back an ended turn is only ever done for a teammate, which needs the LLM.
+        var actions = s.Actions.Where(a => a.Kind != ActionKind.UndoEndTurn).ToList();
         if (actions.Count == 0) return null;
         ActionOption? Of(ActionKind k) => actions.FirstOrDefault(a => a.Kind == k);
 

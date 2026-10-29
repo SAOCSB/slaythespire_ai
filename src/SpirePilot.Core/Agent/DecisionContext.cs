@@ -17,6 +17,10 @@ public sealed class DecisionContext
     public string? PinnedNext { get; set; }
     /// <summary>Team messages already answered or informational (accept / decline / AI chat): context only.</summary>
     public List<TeamMessage> InboxInfo { get; set; } = new();
+    /// <summary>Requests / offers / questions this AI sent that are still unanswered or unfulfilled.</summary>
+    public List<TeamMessage> OutgoingRequests { get; set; } = new();
+    /// <summary>The menu is empty (turn already ended, enemy turn ...): the model may only answer teammates.</summary>
+    public string? ReplyOnlyReason { get; set; }
 }
 
 /// <summary>
@@ -62,6 +66,8 @@ public sealed class AgentMemory
     private readonly object _lock = new();
     private readonly List<string> _history = new();
     private readonly List<Team.TeamMessage> _openRequests = new();
+    private readonly List<Team.TeamMessage> _outgoing = new();
+    private string? _requestsCombat;
     private readonly List<string> _plan = new();
     private string? _planScope;
     private PlanGuard? _planGuard;
@@ -102,12 +108,84 @@ public sealed class AgentMemory
         }
     }
 
-    /// <summary>Drops accepted requests older than <paramref name="maxAge"/>.</summary>
+    /// <summary>Drops accepted requests and our own requests older than <paramref name="maxAge"/>.</summary>
     public void ExpireRequests(TimeSpan maxAge)
     {
         var cutoff = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - (long)maxAge.TotalMilliseconds;
-        lock (_lock) _openRequests.RemoveAll(r => r.Time != 0 && r.Time < cutoff);
+        lock (_lock)
+        {
+            _openRequests.RemoveAll(r => r.Time != 0 && r.Time < cutoff);
+            _outgoing.RemoveAll(r => r.Time != 0 && r.Time < cutoff);
+        }
     }
+
+    /// <summary>
+    /// Combat-bound requests end with their turn or fight: debuff / focus / block requests are per round, and
+    /// nothing accepted in one fight still applies in the next (enemy keys mean other monsters there).
+    /// </summary>
+    public void NoteCombat(string? fight, int round)
+    {
+        var scope = fight == null ? null : fight + ":" + round;
+        lock (_lock)
+        {
+            if (scope == _requestsCombat) return;
+            bool newFight = fight == null || _requestsCombat == null || !_requestsCombat.StartsWith(fight + ":", StringComparison.Ordinal);
+            if (newFight)
+            {
+                _openRequests.Clear();
+                _outgoing.RemoveAll(m => m.Kind is not (Team.TeamMessageKind.SuggestRoute or Team.TeamMessageKind.Chat));
+            }
+            else
+            {
+                static bool PerRound(Team.TeamMessage m) =>
+                    m.Kind is Team.TeamMessageKind.RequestDebuff or Team.TeamMessageKind.RequestFocus or Team.TeamMessageKind.RequestBlock;
+                _openRequests.RemoveAll(PerRound);
+                _outgoing.RemoveAll(PerRound);
+            }
+            _requestsCombat = scope;
+        }
+    }
+
+    /// <summary>We gave <paramref name="player"/> a potion: their potion request (and our offer to them) is done.</summary>
+    public void FulfilledPotionFor(ulong player)
+    {
+        lock (_lock)
+        {
+            _openRequests.RemoveAll(r => r.From == player && r.Kind is Team.TeamMessageKind.RequestPotion);
+            _outgoing.RemoveAll(r => (r.To == player || r.To == 0) && r.Kind is Team.TeamMessageKind.OfferPotion or Team.TeamMessageKind.AskNeedPotion);
+        }
+    }
+
+    /// <summary>Remembers a request / offer / question we sent (delivered), so answers to it can be matched.</summary>
+    public void TrackOutgoing(Team.TeamMessage sent)
+    {
+        lock (_lock)
+        {
+            _outgoing.Add(sent);
+            while (_outgoing.Count > 8) _outgoing.RemoveAt(0);
+        }
+    }
+
+    public Team.TeamMessage? FindOutgoing(string? id)
+    {
+        if (string.IsNullOrEmpty(id)) return null;
+        lock (_lock) return _outgoing.FirstOrDefault(m => m.Id == id);
+    }
+
+    /// <summary>An answer to one of our requests closes it.</summary>
+    public void CloseOutgoing(string? id)
+    {
+        if (string.IsNullOrEmpty(id)) return;
+        lock (_lock) _outgoing.RemoveAll(m => m.Id == id);
+    }
+
+    /// <summary>True when we already asked <paramref name="to"/> (or everyone) the same kind of thing and it is still open.</summary>
+    public bool HasOpenOutgoing(Team.TeamMessageKind kind, ulong to)
+    {
+        lock (_lock) return _outgoing.Any(m => m.Kind == kind && (m.To == to || m.To == 0 || to == 0));
+    }
+
+    public List<Team.TeamMessage> OutgoingRequests { get { lock (_lock) return _outgoing.ToList(); } }
 
     public List<string> History { get { lock (_lock) return _history.ToList(); } }
     public List<Team.TeamMessage> OpenRequests { get { lock (_lock) return _openRequests.ToList(); } }
@@ -168,6 +246,8 @@ public sealed class AgentMemory
             _history.Clear();
             _memo = null;
             _openRequests.Clear();
+            _outgoing.Clear();
+            _requestsCombat = null;
             _plan.Clear();
             _planScope = null;
             _planGuard = null;

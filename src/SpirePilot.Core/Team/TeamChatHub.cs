@@ -97,6 +97,10 @@ public sealed class TeamChatHub
             // Hello is link bookkeeping (handled by the transport), not something to show or answer.
             if (message.Kind == TeamMessageKind.Hello) return true;
             _aiInbox.Add(message);
+            // Bounded: at most 5 unread per sender and 20 overall (a flooding peer cannot grow prompts or memory).
+            var fromSender = _aiInbox.Where(m => m.From == message.From).ToList();
+            for (int i = 0; i < fromSender.Count - 5; i++) _aiInbox.Remove(fromSender[i]);
+            while (_aiInbox.Count > 20) _aiInbox.RemoveAt(0);
         }
         Append(new ChatEntry { Message = message, Incoming = true });
         return true;

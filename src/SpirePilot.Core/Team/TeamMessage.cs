@@ -6,7 +6,7 @@ namespace SpirePilot.Core.Team;
 /// Kinds of team messages. Every message also carries human-readable <see cref="TeamMessage.Text"/>, so a
 /// human teammate can read any kind; the structured fields let an AI teammate act on it.
 /// </summary>
-[JsonConverter(typeof(JsonStringEnumConverter<TeamMessageKind>))]
+[JsonConverter(typeof(TolerantKindConverter))]
 public enum TeamMessageKind
 {
     /// <summary>Free-form chat.</summary>
@@ -76,7 +76,8 @@ public sealed class TeamMessage
             if (s.Length > max) s = s[..max];
             return string.Create(s.Length, s, static (span, src) =>
             {
-                for (int i = 0; i < src.Length; i++) span[i] = char.IsControl(src[i]) ? ' ' : src[i];
+                for (int i = 0; i < src.Length; i++)
+                    span[i] = char.IsControl(src[i]) || src[i] is '\u2028' or '\u2029' ? ' ' : src[i];
             });
         }
         static string? IdOf(string? s)
@@ -101,4 +102,29 @@ public sealed class TeamMessage
             Time = Time,
         };
     }
+}
+
+/// <summary>
+/// Reads kinds by name, case-insensitively; a kind this version does not know (sent by a newer SpirePilot) becomes
+/// <see cref="TeamMessageKind.Chat"/> instead of failing the whole packet. Writes names.
+/// </summary>
+public sealed class TolerantKindConverter : JsonConverter<TeamMessageKind>
+{
+    public override TeamMessageKind Read(ref System.Text.Json.Utf8JsonReader reader, Type typeToConvert, System.Text.Json.JsonSerializerOptions options)
+    {
+        if (reader.TokenType == System.Text.Json.JsonTokenType.String)
+        {
+            var name = reader.GetString();
+            return Enum.TryParse<TeamMessageKind>(name, ignoreCase: true, out var kind) && Enum.IsDefined(kind) && !int.TryParse(name, out _)
+                ? kind
+                : TeamMessageKind.Chat;
+        }
+        if (reader.TokenType == System.Text.Json.JsonTokenType.Number && reader.TryGetInt32(out var n) && Enum.IsDefined((TeamMessageKind)n))
+            return (TeamMessageKind)n;
+        if (reader.TokenType is System.Text.Json.JsonTokenType.StartObject or System.Text.Json.JsonTokenType.StartArray) reader.Skip();
+        return TeamMessageKind.Chat;
+    }
+
+    public override void Write(System.Text.Json.Utf8JsonWriter writer, TeamMessageKind value, System.Text.Json.JsonSerializerOptions options) =>
+        writer.WriteStringValue(value.ToString());
 }
