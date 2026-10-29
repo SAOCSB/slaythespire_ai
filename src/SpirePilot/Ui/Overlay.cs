@@ -3,6 +3,7 @@ using HarmonyLib;
 using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.Debug;
 using SpirePilot.Core.Agent;
+using SpirePilot.Core.Config;
 using SpirePilot.Core.Text;
 using SpirePilot.Game;
 using SpirePilot.Infra;
@@ -20,7 +21,8 @@ internal static class Overlay
 {
     private const ulong FastRefreshMs = 200;
     private const ulong SlowRefreshMs = 500;
-    private const ulong CaptureIntervalMs = 500;
+    /// <summary>Capture interval while the pilot is off / paused: nothing else captures then, and nothing is urgent.</summary>
+    private const ulong IdleCaptureIntervalMs = 2000;
 
     private static Harmony? _harmony;
     private static bool _initialized;
@@ -171,14 +173,11 @@ internal static class Overlay
             ApplyVisibility();
             ModLog.Info("overlay ready");
 
+            // Scans the game assembly on a worker thread and patches over the next frames (never in this one).
             if (_harmony != null)
             {
-                var harmony = _harmony;
-                MainThread.Post(() =>
-                {
-                    try { InputGuard.ApplyInputOverrides(harmony); }
-                    catch (Exception ex) { ModLog.Warn("UI input guard (_Input) failed: " + ex.Message); }
-                });
+                try { InputGuard.ApplyInputOverrides(_harmony); }
+                catch (Exception ex) { ModLog.Warn("UI input guard (_Input) failed: " + ex.Message); }
             }
         }
         catch (Exception ex)
@@ -194,8 +193,7 @@ internal static class Overlay
     private static void Rebuild()
     {
         if (!SceneUtil.Valid(_host)) return;
-        var typing = UiKit.IsTyping;
-        if (typing) _host!.GetViewport()?.GuiReleaseFocus();
+        UiKit.EndTyping();
         foreach (var child in _host!.GetChildren())
         {
             _host.RemoveChild(child);
@@ -355,7 +353,8 @@ internal static class Overlay
             SizeFlagsVertical = Control.SizeFlags.ShrinkEnd,
         };
         grip.GuiInput += ev => UiKit.Guard("resize", () => OnGripInput(grip, ev));
-        _saveNow = UiKit.Button(L10n.T("ui.save"), SettingsDraft.Flush, UiTheme.ButtonKind.Small);
+        // Saves pending edits now; after a failed save it retries (e.g. once the settings file is writable again).
+        _saveNow = UiKit.Button(L10n.T("ui.save"), () => SettingsDraft.Flush(), UiTheme.ButtonKind.Small);
         _saveNow.Visible = false;
         footerMargin.AddChild(UiKit.Row(_footer, _saveNow, grip));
         column.AddChild(footerMargin);
@@ -395,7 +394,8 @@ internal static class Overlay
         {
             _dragging = false;
             _resizing = false;
-            if (UiKit.IsTyping) _panel.GetViewport()?.GuiReleaseFocus();
+            // Applies a half-typed number before the pending edits are saved.
+            UiKit.EndTyping();
             SettingsDraft.Flush();
         }
     }
@@ -455,17 +455,25 @@ internal static class Overlay
     }
 
     /// <summary>
-    /// Keeps the snapshot fresh while a live page is visible, at most every 0.5 s. The pilot captures on its own when
-    /// it is waiting / advising; while it thinks or acts we stay away, so an action it picked is never superseded by
-    /// our snapshot between its re-validation and its execution.
+    /// Keeps the snapshot fresh while a page that shows game state is visible (pages without game state never
+    /// capture, and nothing captures while the panel is hidden). A capture is a full snapshot build on the main
+    /// thread, so it runs at the page's own rate (about 0.5 s) only while the pilot is active, and every 2 s while it is
+    /// off or paused. Any capture counts (the pilot captures on its own while it waits / advises); while it thinks or
+    /// acts we stay away, so an action it picked is never superseded by our snapshot between its re-validation and
+    /// its execution.
     /// </summary>
     private static void MaybeCapture(Page page)
     {
-        if (!page.WantsSnapshot) return;
-        var now = Time.GetTicksMsec();
-        if (now - _lastCaptureMs < CaptureIntervalMs) return;
-        var state = PilotRuntime.Loop.Status.State;
+        var interval = page.SnapshotIntervalMs;
+        if (interval == 0 || !SceneUtil.Valid(_panel) || !_panel!.IsVisibleInTree()) return;
+        var loop = PilotRuntime.Loop;
+        var state = loop.Status.State;
         if (state is PilotState.Thinking or PilotState.Acting) return;
+        bool idle = loop.Paused || state is PilotState.Off or PilotState.Paused or PilotState.Error ||
+                    PilotRuntime.Settings.Control.Mode == PilotMode.Off;
+        if (idle) interval = Math.Max(interval, IdleCaptureIntervalMs);
+        var now = Time.GetTicksMsec();
+        if (now - _lastCaptureMs < interval) return;
         _lastCaptureMs = now;
         _ = PilotRuntime.Bridge.CaptureAsync(CancellationToken.None);
     }
@@ -507,14 +515,18 @@ internal static class Overlay
         catch (Exception) { return false; }
     }
 
-    /// <summary>Clicking anywhere outside the panel ends typing, so game hotkeys work again.</summary>
+    /// <summary>
+    /// A click anywhere but the focused text field ends typing (applying a half-typed number), so game hotkeys work
+    /// again: outside the panel, and inside it too, since the panel's buttons, switches, sliders and lists never take
+    /// focus themselves. A click on another text field moved the focus there already (GUI input runs before this).
+    /// </summary>
     private static void PollClickOutside()
     {
         bool down = Input.IsMouseButtonPressed(MouseButton.Left) || Input.IsMouseButtonPressed(MouseButton.Right);
         if (down && !_mouseWasDown && UiKit.IsTyping && SceneUtil.Valid(_host))
         {
             var mouse = _host!.GetGlobalMousePosition();
-            if (!IsOverUi(mouse)) _host.GetViewport()?.GuiReleaseFocus();
+            if (!UiKit.IsOverTypingControl(mouse) && !UiKit.TypingMenuOpen) UiKit.EndTyping();
         }
         _mouseWasDown = down;
     }

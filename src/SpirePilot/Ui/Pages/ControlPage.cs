@@ -184,24 +184,28 @@ internal sealed class ControlPage : Page
         _step.Visible = stepMode;
         _step.Disabled = status.State != PilotState.StepReady;
 
-        // Advisor suggestion.
+        // Advisor suggestion: executable only while the loop says it is current (it clears the advice when the
+        // situation changes); anything else is shown greyed out and cannot be executed.
         var advisor = mode == PilotMode.Advisor;
         _adviceCard.GetParent<Control>().Visible = advisor;
         if (advisor)
         {
             var advice = loop.Advice;
             var action = loop.AdviceAction;
+            bool current = AdviceIsCurrent(loop);
             if (action != null)
             {
                 UiKit.SetText(_adviceAction, action.Label);
-                UiKit.SetText(_adviceThought, advice?.Thought ?? "");
+                UiKit.SetText(_adviceThought, current ? advice?.Thought ?? "" : L10n.T("ui.ctl.advice_stale"));
             }
             else
             {
                 UiKit.SetText(_adviceAction, "");
                 UiKit.SetText(_adviceThought, L10n.T("ui.ctl.advice_none"));
             }
-            _execute.Disabled = action == null || _executing;
+            UiKit.SetColor(_adviceAction, current ? UiTheme.Gold : UiTheme.Faint);
+            UiKit.SetColor(_adviceThought, current ? UiTheme.Text : UiTheme.Faint);
+            _execute.Disabled = !current || _executing;
         }
 
         // Pending one-shot instruction.
@@ -234,10 +238,25 @@ internal sealed class ControlPage : Page
         return s.Length > 160 ? s[..160] + "…" : s;
     }
 
+    /// <summary>The advice belongs to the situation on screen: the loop is advising and holds an action.</summary>
+    private static bool AdviceIsCurrent(PilotLoop loop) =>
+        loop.Status.State == PilotState.Advising && loop.AdviceAction != null;
+
     private static void SetMode(PilotMode mode)
     {
         SettingsDraft.Flush();
-        PilotRuntime.SetMode(mode);
+        try
+        {
+            PilotRuntime.SetMode(mode);
+            SettingsDraft.Report(null);
+        }
+        catch (Exception ex)
+        {
+            // Not written to the file, but the mode applies for this session (the store keeps the new settings);
+            // finish what SetMode would have done after saving, and show the failure in the footer.
+            if (mode != PilotMode.Off) PilotRuntime.Loop.Paused = false;
+            SettingsDraft.Report(ex);
+        }
     }
 
     private static void TogglePause()
@@ -258,8 +277,11 @@ internal sealed class ControlPage : Page
 
     private void ExecuteAdvice()
     {
-        var action = PilotRuntime.Loop.AdviceAction;
-        if (action == null || _executing) return;
+        var loop = PilotRuntime.Loop;
+        var action = loop.AdviceAction;
+        // Re-checked at the click: the advice may have expired since the last refresh enabled the button. The bridge
+        // re-validates the action against the game (by id in its own snapshot, else by meaning in a fresh one).
+        if (action == null || _executing || !AdviceIsCurrent(loop)) return;
         _executing = true;
         _execute.Disabled = true;
         UiKit.SetText(_execResult, L10n.T("ui.ctl.executing"));

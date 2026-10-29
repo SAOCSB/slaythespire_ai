@@ -19,9 +19,17 @@ namespace SpirePilot.Ui;
 /// wheel / gestures over the visible panel or floating button are skipped so clicking the panel never clicks the game
 /// underneath. Releases and motion always pass, so drags started in the game finish normally.</item>
 /// </list>
-/// Every patch is optional (resolved by reflection, applied with try/catch) and every prefix fails open.
-/// The prefixes run for every input event on every patched node (NButton has many instances), so they only do
-/// type checks and cached-rectangle tests.
+/// Every patch is optional (resolved by reflection, applied with try/catch) and every prefix fails open: any
+/// exception lets the event through to the game. The prefixes run for every input event on every patched node (NButton
+/// has many instances), so they only do type checks and cached-rectangle tests.
+/// <para>
+/// Scope: the guard deliberately covers every <c>_Input</c> override, so a node added by a game update is covered too.
+/// If live testing shows side effects, the known consumers that matter are a much shorter list and could be patched
+/// instead: <c>NGame</c> (global keys), <c>NCombatUi</c>, <c>NTopBar</c>, <c>NMouseCardPlay</c> and <c>NTargetManager</c>
+/// (card play / targeting), <c>NMapScreen</c> and the map drawing nodes, <c>NScrollableContainer</c> (wheel / drag
+/// scrolling), <c>NDevConsole</c> (backtick) and <c>NPlayerHand</c>. There is no setting for this (no
+/// <c>Ui.FullInputGuard</c> exists); change <see cref="FindInputOverrides"/> if it is ever needed.
+/// </para>
 /// </summary>
 internal static class InputGuard
 {
@@ -45,16 +53,44 @@ internal static class InputGuard
 
     /// <summary>
     /// Patches every game node's own <c>_Input</c> override (found by reflection, so both game versions are covered).
-    /// Done once when the overlay is first built (the game is still loading then).
+    /// Called once when the overlay is first built (the game is still loading then), from the main thread; returns at
+    /// once. The type scan of the game assembly runs on a worker thread; the patches are applied on the main thread,
+    /// one queued work item each, so <see cref="MainThread"/>'s per-frame budget spreads them over a few frames and
+    /// no single frame stalls. Until a node is patched it simply behaves as without the guard.
     /// </summary>
     public static void ApplyInputOverrides(Harmony harmony)
     {
         if (_inputPatched) return;
         _inputPatched = true;
         var prefix = new HarmonyMethod(AccessTools.Method(typeof(InputGuard), nameof(InputPrefix)));
-        int before = PatchedCount;
-        foreach (var method in FindInputOverrides(typeof(NGame).Assembly)) TryPatch(harmony, method, prefix);
-        ModLog.Info($"UI input guard: {PatchedCount - before} _Input overrides guarded, {PatchedCount} patches total");
+        var assembly = typeof(NGame).Assembly;
+        Task.Run(() =>
+        {
+            List<MethodInfo> methods;
+            try { methods = FindInputOverrides(assembly).ToList(); }
+            catch (Exception ex)
+            {
+                ModLog.Warn("UI input guard: scanning the game's _Input overrides failed: " + ex.Message);
+                return;
+            }
+            if (methods.Count == 0)
+            {
+                ModLog.Warn("UI input guard: no _Input overrides found");
+                return;
+            }
+            // Only touched on the main thread (each posted item runs there).
+            int remaining = methods.Count, before = -1;
+            foreach (var method in methods)
+            {
+                MainThread.Post(() =>
+                {
+                    if (before < 0) before = PatchedCount;
+                    TryPatch(harmony, method, prefix);
+                    if (--remaining == 0)
+                        ModLog.Info($"UI input guard: {PatchedCount - before} of {methods.Count} _Input overrides guarded, {PatchedCount} patches total");
+                });
+            }
+        });
     }
 
     private static IEnumerable<MethodInfo> FindInputOverrides(Assembly assembly)

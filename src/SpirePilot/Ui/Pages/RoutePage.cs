@@ -8,7 +8,11 @@ using SpirePilot.Infra;
 
 namespace SpirePilot.Ui.Pages;
 
-/// <summary>Tab 2: route preset / custom weights / instructions, the planner's best paths and the pinned path.</summary>
+/// <summary>
+/// Tab 2: route preset / custom weights / instructions, the planner's best paths and the pinned path. Plans come from
+/// the act map of the latest in-run snapshot (any screen, not only the open map); the last map seen per run + act is
+/// kept, so the tab keeps working between captures that carry no map.
+/// </summary>
 internal sealed class RoutePage : Page
 {
     private static readonly RoutePreset[] Presets =
@@ -26,10 +30,19 @@ internal sealed class RoutePage : Page
     private TextEdit _instruction = null!;
     private CheckButton _letAi = null!, _ping = null!;
     private Label _plansHint = null!;
+    private Label _mapNote = null!;
     private VBoxContainer _plans = null!;
     private Label _pinned = null!;
     private Button _clearPin = null!;
     private string _planKey = "";
+
+    /// <summary>The map the plans were last drawn from (static: survives a rebuild of the panel).</summary>
+    private static MapInfo? _cachedMap;
+    private static string _cachedSeed = "";
+    private static int _cachedAct;
+
+    /// <summary>The act map to plan on: this snapshot's, else the cached one of the same run and act.</summary>
+    private readonly record struct MapView(MapInfo Map, string Seed, int Act, bool Cached);
 
     public override string TitleKey => "ui.tab.route";
 
@@ -75,6 +88,9 @@ internal sealed class RoutePage : Page
         var plans = UiKit.Card(Body, L10n.T("ui.route.plans"));
         _plansHint = UiKit.Muted(L10n.T("ui.route.no_map"));
         plans.AddChild(_plansHint);
+        _mapNote = UiKit.Label(L10n.T("ui.route.cached_map"), UiTheme.FontSmall, UiTheme.Faint);
+        _mapNote.Visible = false;
+        plans.AddChild(_mapNote);
         _plans = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, MouseFilter = Control.MouseFilterEnum.Pass };
         _plans.AddThemeConstantOverride("separation", 6);
         plans.AddChild(_plans);
@@ -132,32 +148,85 @@ internal sealed class RoutePage : Page
         UpdatePlans();
     }
 
+    /// <summary>
+    /// The map to plan on. Every in-run snapshot carries the act map (null when it could not be read); the last one
+    /// seen is cached per run seed + act, so a capture without a map does not empty the tab. Null outside a run.
+    /// </summary>
+    private static MapView? CurrentMap(GameSnapshot? snap)
+    {
+        if (snap == null || !snap.InRun) return null;
+        var seed = snap.Run?.Seed ?? "";
+        var act = snap.Run?.Act ?? 0;
+        if (snap.Map is { Nodes.Count: > 0 } map)
+        {
+            _cachedMap = map;
+            _cachedSeed = seed;
+            _cachedAct = act;
+            return new MapView(WithNextNodes(map), seed, act, false);
+        }
+        if (_cachedMap == null) return null;
+        // Without run info (unreadable this time) the cached map is the best guess; otherwise it must be the same run and act.
+        if (snap.Run == null) return new MapView(WithNextNodes(_cachedMap), _cachedSeed, _cachedAct, true);
+        if (seed != _cachedSeed || act != _cachedAct) return null;
+        return new MapView(WithNextNodes(_cachedMap), seed, act, true);
+    }
+
+    /// <summary>
+    /// The map with its next nodes: <see cref="MapInfo.Reachable"/> as read, or, when a snapshot has none (e.g. read
+    /// while travel is disabled), the children of the current node. A copy: the snapshot's map is shared.
+    /// </summary>
+    private static MapInfo WithNextNodes(MapInfo map)
+    {
+        if (map.Reachable.Count > 0 || map.Current == null || map.Find(map.Current) is not { } current || current.Children.Count == 0)
+            return map;
+        return new MapInfo
+        {
+            Nodes = map.Nodes,
+            Current = map.Current,
+            Rows = map.Rows,
+            TeammateVotes = map.TeammateVotes,
+            Reachable = current.Children.Where(c => map.Find(c) != null).Distinct().ToList(),
+        };
+    }
+
+    /// <summary>
+    /// Whether the pin was made in another run: its seed differs from the current run's (the same rule as
+    /// <see cref="RoutePlanner.PinnedNext"/>; a pin without a seed predates seeds and is not judged).
+    /// </summary>
+    private static bool PinFromOtherRun(RouteSettings route, string seed) =>
+        route.PinnedPath.Count > 0 && route.PinnedSeed.Length > 0 && seed.Length > 0 && route.PinnedSeed != seed;
+
     private void UpdatePlans()
     {
         var snap = Snap;
-        var map = snap?.Map;
-        if (snap == null || map == null || map.Nodes.Count == 0 || map.Reachable.Count == 0)
+        var view = CurrentMap(snap);
+        _mapNote.Visible = view is { Cached: true };
+        if (snap == null || view is not { } v)
         {
-            _plansHint.Visible = true;
+            ShowHint(snap is { InRun: true } ? "ui.route.no_map_yet" : "ui.route.no_map");
             if (_plans.GetChildCount() > 0) Clear(_plans);
             _planKey = "";
             return;
         }
+        var map = v.Map;
         var me = snap.LocalPlayer;
         double hp = me != null && me.MaxHp > 0 ? (double)me.Hp / me.MaxHp : 1.0;
         int gold = me?.Gold ?? 0;
         var route = Draft.Route;
-        int act = snap.Run?.Act ?? 0;
+        int act = v.Act;
+        string seed = v.Seed;
         string key = string.Join(";", map.Reachable) + "|" + map.Current + "|" + map.Nodes.Count + "|" + route.Preset + "|" +
                      string.Join(",", route.CustomWeights.OrderBy(k => k.Key).Select(k => k.Key + "=" + k.Value.ToString(CultureInfo.InvariantCulture))) +
-                     "|" + Math.Round(hp, 2) + "|" + gold / 25 + "|" + act + "|" + string.Join(",", route.PinnedPath) + route.PinnedAct;
+                     "|" + Math.Round(hp, 2) + "|" + gold / 25 + "|" + act + "|" + seed + "|" +
+                     string.Join(",", route.PinnedPath) + "|" + route.PinnedAct + "|" + route.PinnedSeed;
         if (key == _planKey) return;
         _planKey = key;
 
-        var plans = RoutePlanner.Plan(map, route, hp, gold, 5);
+        var plans = map.Reachable.Count > 0 ? RoutePlanner.Plan(map, route, hp, gold, 5) : new List<RoutePath>();
         Clear(_plans);
-        _plansHint.Visible = plans.Count == 0;
-        bool pinnedHere = route.PinnedAct == act && route.PinnedPath.Count > 0;
+        if (plans.Count == 0) ShowHint("ui.route.no_paths");
+        else _plansHint.Visible = false;
+        bool pinnedHere = route.PinnedAct == act && route.PinnedPath.Count > 0 && !PinFromOtherRun(route, seed);
         for (int i = 0; i < plans.Count; i++)
         {
             var path = plans[i];
@@ -172,12 +241,18 @@ internal sealed class RoutePage : Page
             var first = path.Nodes.Count > 0 ? map.Find(path.Nodes[0]) : null;
             if (first != null) text.AddChild(UiKit.Muted(L10n.T("ui.route.first", L10n.T("ui.route.short." + first.Type))));
             var nodes = path.Nodes.ToList();
-            var pin = UiKit.Button(L10n.T("ui.route.pin"), () => Pin(nodes, act), isPinned ? UiTheme.ButtonKind.Primary : UiTheme.ButtonKind.Small);
+            var pin = UiKit.Button(L10n.T("ui.route.pin"), () => Pin(nodes, act, seed), isPinned ? UiTheme.ButtonKind.Primary : UiTheme.ButtonKind.Small);
             pin.SizeFlagsVertical = Control.SizeFlags.ShrinkCenter;
             pin.Disabled = isPinned;
             row.AddChild(UiKit.Row(text, pin));
             _plans.AddChild(row);
         }
+    }
+
+    private void ShowHint(string key)
+    {
+        UiKit.SetText(_plansHint, L10n.T(key));
+        _plansHint.Visible = true;
     }
 
     private void UpdatePinned()
@@ -191,12 +266,17 @@ internal sealed class RoutePage : Page
             return;
         }
         var snap = Snap;
-        int act = snap?.Run?.Act ?? 0;
+        var view = CurrentMap(snap);
+        bool inRun = snap is { InRun: true } && (snap.Run != null || view != null);
+        string seed = view?.Seed ?? snap?.Run?.Seed ?? "";
+        int act = view?.Act ?? snap?.Run?.Act ?? 0;
+        // Another run: its map is not this one (every act map uses the same coordinate grid), so it never applies.
+        bool otherRun = inRun && PinFromOtherRun(route, seed);
+        bool otherAct = inRun && !otherRun && route.PinnedAct != act;
         string summary;
-        var map = snap?.Map;
-        if (map != null && route.PinnedAct == act)
+        if (view is { } v && !otherRun && !otherAct)
         {
-            var counts = route.PinnedPath.Select(map.Find).Where(n => n != null && n.Type != MapNodeType.Boss)
+            var counts = route.PinnedPath.Select(v.Map.Find).Where(n => n != null && n.Type != MapNodeType.Boss)
                 .GroupBy(n => n!.Type).ToDictionary(g => g.Key, g => g.Count());
             summary = counts.Count > 0 ? Summary(counts) : L10n.T("ui.route.nodes", route.PinnedPath.Count);
         }
@@ -205,19 +285,22 @@ internal sealed class RoutePage : Page
             summary = L10n.T("ui.route.nodes", route.PinnedPath.Count);
         }
         var text = L10n.T("ui.route.pinned", route.PinnedAct, summary);
-        bool stale = snap?.Run != null && route.PinnedAct != act;
-        if (stale) text += " " + L10n.T("ui.route.pinned_stale");
+        if (otherRun) text += " " + L10n.T("ui.route.pinned_other_run");
+        else if (otherAct) text += " " + L10n.T("ui.route.pinned_stale");
         UiKit.SetText(_pinned, text);
-        UiKit.SetColor(_pinned, stale ? UiTheme.Muted : UiTheme.Gold);
+        UiKit.SetColor(_pinned, otherRun ? UiTheme.Warn : otherAct ? UiTheme.Muted : UiTheme.Gold);
+        UiKit.SetText(_clearPin, L10n.T(otherRun ? "ui.route.clear_stale" : "ui.clear"));
         _clearPin.Visible = true;
     }
 
-    private void Pin(List<string> nodes, int act)
+    private void Pin(List<string> nodes, int act, string seed)
     {
         Edit(s =>
         {
             s.Route.PinnedPath = nodes.ToList();
             s.Route.PinnedAct = act;
+            // The pin belongs to this run's map: the planner ignores it in any other run.
+            s.Route.PinnedSeed = seed;
         }, now: true);
         RefreshSoon();
     }
@@ -228,6 +311,7 @@ internal sealed class RoutePage : Page
         {
             s.Route.PinnedPath = new List<string>();
             s.Route.PinnedAct = 0;
+            s.Route.PinnedSeed = "";
         }, now: true);
         RefreshSoon();
     }

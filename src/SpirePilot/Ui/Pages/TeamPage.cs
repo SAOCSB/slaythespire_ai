@@ -42,6 +42,8 @@ internal sealed class TeamPage : Page
     private string _matesKey = "";
 
     private const int DebuffAny = 0, DebuffVulnerable = 1, DebuffWeak = 2, DebuffOther = 3;
+    /// <summary>Id of a placeholder item ("no potions"). Not -1: Godot replaces a -1 id with the item's index.</summary>
+    private const int NoItemId = 10_000;
     private const int LangAuto = 0, LangZh = 1, LangEn = 2, LangCustom = 3;
 
     public override string TitleKey => "ui.tab.team";
@@ -303,7 +305,7 @@ internal sealed class TeamPage : Page
             _potions.Clear();
             _potions.AddRange(potions);
             _potion.Clear();
-            if (_potions.Count == 0) _potion.AddItem(L10n.T("ui.team.no_potions"), -1);
+            if (_potions.Count == 0) _potion.AddItem(L10n.T("ui.team.no_potions"), NoItemId);
             for (int i = 0; i < _potions.Count; i++) _potion.AddItem(_potions[i].Name, i);
             _potion.Select(0);
         }
@@ -318,7 +320,7 @@ internal sealed class TeamPage : Page
             _enemies.Clear();
             _enemies.AddRange(enemies);
             _enemy.Clear();
-            if (_enemies.Count == 0) _enemy.AddItem(L10n.T("ui.team.no_enemies"), -1);
+            if (_enemies.Count == 0) _enemy.AddItem(L10n.T("ui.team.no_enemies"), NoItemId);
             for (int i = 0; i < _enemies.Count; i++) _enemy.AddItem($"{_enemies[i].Name} ({_enemies[i].Hp}/{_enemies[i].MaxHp})", i);
             _enemy.Select(Math.Max(0, _enemies.FindIndex(e => e.Key == previous)));
         }

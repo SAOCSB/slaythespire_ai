@@ -41,26 +41,33 @@ internal static class SettingsDraft
     /// <summary>Raised on whatever thread saved the settings.</summary>
     private static void OnSaved(PilotSettings _) => _reloadRequested = true;
 
-    /// <summary>Applies <paramref name="change"/> to the draft and schedules a save (or saves now).</summary>
-    public static void Edit(Action<PilotSettings> change, bool now = false)
+    /// <summary>
+    /// Applies <paramref name="change"/> to the draft and schedules a save (or saves now). Returns false when the edit
+    /// failed or, with <paramref name="now"/>, the save failed (<see cref="SaveError"/> then says why).
+    /// </summary>
+    public static bool Edit(Action<PilotSettings> change, bool now = false)
     {
         try { change(Value); }
         catch (Exception ex)
         {
             ThrottledLog.Warn("ui.draft", "UI: settings edit failed: " + ex.Message);
-            return;
+            return false;
         }
         Pending.Add(change);
         _saveAtMs = Time.GetTicksMsec() + DebounceMs;
-        if (now) Flush();
+        return !now || Flush();
     }
 
-    /// <summary>Saves pending edits right away.</summary>
-    public static void Flush()
+    /// <summary>
+    /// Saves pending edits right away; after a failed save it also retries with nothing pending (the footer's "Save"
+    /// button), so a fixed settings file clears the error. Returns false when saving failed.
+    /// </summary>
+    public static bool Flush()
     {
-        if (Pending.Count == 0) return;
+        if (Pending.Count == 0 && SaveError == null) return true;
         var pending = Pending.ToList();
         Pending.Clear();
+        bool ok;
         try
         {
             // Replayed on a fresh copy of the live settings inside the runtime's settings lock, so a change made
@@ -73,17 +80,38 @@ internal static class SettingsDraft
                     catch (Exception ex) { ThrottledLog.Warn("ui.draft.replay", "UI: settings edit could not be replayed: " + ex.Message); }
                 }
             });
-            SaveError = null;
-            LastSavedMs = Time.GetTicksMsec();
+            Report(null);
+            ok = true;
         }
         catch (Exception ex)
         {
-            SaveError = ex.Message;
-            ModLog.Warn("UI: saving settings failed: " + ex.Message);
+            // The settings still apply for this session (the store keeps them); only the file is behind.
+            Report(ex);
+            ok = false;
         }
-        // Our own save raised SettingsChanged synchronously; one reload covers it.
+        // Our own save raised SettingsChanged synchronously (a failed one raised nothing); one reload covers both.
         _reloadRequested = false;
         Reload();
+        return ok;
+    }
+
+    /// <summary>
+    /// Records the outcome of a save: from <see cref="Flush"/>, or from a write made outside the draft through
+    /// <see cref="PilotRuntime.UpdateSettings"/> (e.g. <see cref="PilotRuntime.SetMode"/>). A failure shows in the
+    /// panel's footer until a later save succeeds.
+    /// </summary>
+    public static void Report(Exception? error)
+    {
+        if (error == null)
+        {
+            SaveError = null;
+            LastSavedMs = Time.GetTicksMsec();
+            return;
+        }
+        SaveError = error.Message;
+        ModLog.Warn("UI: saving settings failed: " + error.Message);
+        // A failed save raises no SettingsChanged, but the live settings did change: pick them up.
+        _reloadRequested = true;
     }
 
     public static void Tick()
