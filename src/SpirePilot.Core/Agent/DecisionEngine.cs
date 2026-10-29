@@ -42,6 +42,36 @@ public sealed class DecisionEngine
     private int _consecutiveLlmFailures;
     private DateTime _llmCooldownUntil = DateTime.MinValue;
     private TimeSpan _cooldown = TimeSpan.FromSeconds(60);
+    /// <summary>The breaker tripped and has not seen a success since: one more failure trips it again (half-open).</summary>
+    private bool _tripped;
+
+    /// <summary>Forget past LLM failures (settings changed, the user resumed or switched mode): try the model again now.</summary>
+    public void ResetCircuit()
+    {
+        _consecutiveLlmFailures = 0;
+        _llmCooldownUntil = DateTime.MinValue;
+        _cooldown = TimeSpan.FromSeconds(60);
+        _tripped = false;
+    }
+
+    private void LlmSucceeded()
+    {
+        _consecutiveLlmFailures = 0;
+        _cooldown = TimeSpan.FromSeconds(60);
+        _tripped = false;
+        LastLlmError = null;
+    }
+
+    /// <summary>Counts a failure; true when the breaker trips (3 in a row, or the first one after a trip).</summary>
+    private bool LlmFailed()
+    {
+        if (++_consecutiveLlmFailures < 3 && !_tripped) return false;
+        _consecutiveLlmFailures = 0;
+        _tripped = true;
+        _llmCooldownUntil = _clock() + _cooldown;
+        _cooldown = TimeSpan.FromTicks(Math.Min(_cooldown.Ticks * 2, TimeSpan.FromMinutes(10).Ticks));
+        return true;
+    }
 
     public AgentMemory Memory { get; } = new();
     private readonly CharacterPickMemory _picks = new();
@@ -142,6 +172,22 @@ public sealed class DecisionEngine
         return new(unread, actionable, info, answered);
     }
 
+    /// <summary>
+    /// The prompt the model would get for <paramref name="snapshot"/> right now — owner rules, inbox, memory, routes —
+    /// without any side effect (nothing is marked read, no request is closed). For GET /prompt and diagnostics.
+    /// </summary>
+    public (string System, string OwnerBlock, string User) PreviewPrompt(GameSnapshot snapshot, string? liveInstruction)
+    {
+        var settings = _settings();
+        var s = OwnerRules.Filtered(snapshot, settings);
+        var unread = s.IsMultiplayer ? _team.PeekAiInbox().Where(m => Readable(m, settings)).ToList() : new List<TeamMessage>();
+        var ctx = BuildContext(s, settings, unread.Where(NeedsAttention).ToList(), unread.Where(m => !NeedsAttention(m)).ToList(), liveInstruction);
+        ctx.AnsweredOutgoing = unread.Where(AnswersOurs).Select(m => Memory.FindOutgoing(m.ReplyTo)!).ToList();
+        var formatter = new StateFormatter { VerboseCards = settings.Strategy.VerboseCards, IncludePiles = settings.Strategy.IncludePiles };
+        return (PromptBuilder.CoreSystem, PromptBuilder.BuildOwnerBlock(settings, MessageLanguage(), CharacterGuide(s)),
+            PromptBuilder.BuildUser(s, ctx, formatter));
+    }
+
     /// <summary>True when unread team messages ask this AI for a reaction (used to wake it while it cannot act).</summary>
     public bool HasActionableInbox(GameSnapshot snapshot)
     {
@@ -183,15 +229,14 @@ public sealed class DecisionEngine
         var settings = _settings();
         Memory.MaxHistory = settings.Strategy.HistoryLength;
         var inbox = ReadInbox(snapshot, settings);
-        if (inbox.Actionable.Count == 0 || _clock() < _llmCooldownUntil) return null;
+        if (inbox.Actionable.Count == 0 || CoolingDown(settings)) return null;
         var context = BuildContext(snapshot, settings, inbox.Actionable, inbox.Info, null);
         context.AnsweredOutgoing = inbox.Answered;
         context.ReplyOnlyReason = reason;
         try
         {
             var decision = await AskLlmAsync(snapshot, settings, context, ct, allowNoAction: true).ConfigureAwait(false);
-            _consecutiveLlmFailures = 0;
-            LastLlmError = null;
+            LlmSucceeded();
             Memory.SetMemo(decision.Memo);
             decision.ActionIds.Clear();
             decision.PlanKeys.Clear();
@@ -210,12 +255,7 @@ public sealed class DecisionEngine
         {
             LastLlmError = ex.Message;
             _log.Warn("LLM reply failed: " + ex.Message);
-            if (++_consecutiveLlmFailures >= 3)
-            {
-                _consecutiveLlmFailures = 0;
-                _llmCooldownUntil = _clock() + _cooldown;
-                _cooldown = TimeSpan.FromTicks(Math.Min(_cooldown.Ticks * 2, TimeSpan.FromMinutes(10).Ticks));
-            }
+            LlmFailed();
             return null;
         }
     }
@@ -269,15 +309,13 @@ public sealed class DecisionEngine
         var context = BuildContext(snapshot, settings, actionable, info, liveInstruction);
         context.AnsweredOutgoing = inbox.Answered;
         context.ReplyOnlyReason = replyOnlyReason;
-        if (_clock() < _llmCooldownUntil && settings.Control.FallbackOnLlmFailure)
+        if (CoolingDown(settings) && settings.Control.FallbackOnLlmFailure)
             return Fallback(snapshot, settings, "AI temporarily unavailable: " + LastLlmError);
 
         try
         {
             var decision = await AskLlmAsync(snapshot, settings, context, ct, allowNoAction: replyOnlyReason != null).ConfigureAwait(false);
-            _consecutiveLlmFailures = 0;
-            _cooldown = TimeSpan.FromSeconds(60);
-            LastLlmError = null;
+            LlmSucceeded();
             PostProcess(decision, snapshot, settings, unread, scope);
             return decision;
         }
@@ -299,16 +337,10 @@ public sealed class DecisionEngine
         {
             LastLlmError = ex.Message;
             _log.Warn($"LLM decision failed: {ex.Message}");
-            if (++_consecutiveLlmFailures >= 3)
-            {
-                _consecutiveLlmFailures = 0;
-                // Without the fallback player there is nothing useful to do: stop instead of retrying (and paying) forever.
-                if (!settings.Control.FallbackOnLlmFailure)
-                    throw new PilotConfigException(L10n.T("status.llm_unavailable", ex.Message), ex);
-                // Circuit breaker: stop paying a full timeout for every decision while the endpoint is down.
-                _llmCooldownUntil = _clock() + _cooldown;
-                _cooldown = TimeSpan.FromTicks(Math.Min(_cooldown.Ticks * 2, TimeSpan.FromMinutes(10).Ticks));
-            }
+            // Circuit breaker: stop paying a full timeout for every decision while the endpoint is down.
+            // Without the fallback player there is nothing useful to do: stop instead of retrying (and paying) forever.
+            if (LlmFailed() && !settings.Control.FallbackOnLlmFailure)
+                throw new PilotConfigException(L10n.T("status.llm_unavailable", ex.Message), ex);
             if (!settings.Control.FallbackOnLlmFailure) throw;
             // Teammate requests stay unread: the rule-based fallback cannot answer them, the LLM can once it is back.
             return Fallback(snapshot, settings, ex.Message);
@@ -331,21 +363,13 @@ public sealed class DecisionEngine
     private AgentDecision? RuleDecision(GameSnapshot s, PilotSettings settings, bool softRules)
     {
         if (s.Screen != ScreenKind.CharacterSelect) _picks.Reset();
+        if (s.Screen == ScreenKind.CharacterSelect && s.CharacterSelect is { Characters.Count: > 0 } cs0 &&
+            settings.Characters.Allowed.Count > 0 && CharacterPicker.AllowedIds(cs0, settings).Count == 0)
+            throw new PilotConfigException(L10n.T("status.no_allowed_character", string.Join(", ", settings.Characters.Allowed)));
+        // Hard rules first (the same filter the HTTP API applies), then the rules that pick for the model.
+        OwnerRules.Filter(s, settings);
         if (s.Screen == ScreenKind.CharacterSelect && CharacterRules(s, settings, _picks) is { } characterRule)
             return characterRule;
-        if (s.Screen == ScreenKind.MainMenu && settings.Characters.Allowed.Count > 0 && s.Actions.Any(a => a.Kind == ActionKind.ContinueRun) &&
-            (s.SavedRun is not { CharacterId.Length: > 0 } saved || !settings.Characters.Allowed.Contains(saved.CharacterId, StringComparer.OrdinalIgnoreCase)))
-        {
-            // Continuing would (or might: the save could not be read) play a character the owner did not allow;
-            // abandoning the save is the human's call. The restriction is never silently widened.
-            s.Actions.RemoveAll(a => a.Kind == ActionKind.ContinueRun);
-            s.Notes.Add(L10n.T("status.saved_run_not_allowed", s.SavedRun?.CharacterName ?? s.SavedRun?.CharacterId ?? "?"));
-        }
-        if (!settings.Team.AllowGivingPotions)
-        {
-            // Hard rule: no potion (or throw) aimed at a teammate when the owner said so.
-            s.Actions.RemoveAll(a => a.Kind == ActionKind.UsePotion && TargetsTeammate(a, s));
-        }
         if (softRules && s.Screen == ScreenKind.Map && s.Map is { } map)
         {
             var me = s.LocalPlayer;
@@ -363,40 +387,13 @@ public sealed class DecisionEngine
         return null;
     }
 
-    /// <summary>
-    /// Character select as hard owner rules, whatever the pick policy: only allowed characters can be selected,
-    /// embarking needs an allowed character, and the ascension setting is applied before embarking. Returns the
-    /// rule's action, or null with the menu filtered.
-    /// </summary>
+    /// <summary>Character select decisions the owner's settings make: the ascension step, then the pick policy.</summary>
     private static AgentDecision? CharacterRules(GameSnapshot s, PilotSettings settings, CharacterPickMemory picks)
     {
         AgentDecision Rule(ActionOption a, string why) => new() { Source = DecisionSource.Rule, ActionIds = { a.Id }, Thought = why };
-        if (s.CharacterSelect is not { Characters.Count: > 0 } cs)
-        {
-            // Without the character list the restriction cannot be checked: never select or embark blindly.
-            s.Actions.RemoveAll(a => a.Kind is ActionKind.SelectCharacter or ActionKind.Embark or ActionKind.SetAscension);
-            return null;
-        }
-        var allowed = CharacterPicker.AllowedIds(cs, settings);
-        if (settings.Characters.Allowed.Count > 0 && allowed.Count == 0)
-            throw new PilotConfigException(L10n.T("status.no_allowed_character", string.Join(", ", settings.Characters.Allowed)));
-
-        s.Actions.RemoveAll(a => a.Kind == ActionKind.SelectCharacter && !allowed.Contains(a.Arg(ActionArgs.Character) ?? "", StringComparer.OrdinalIgnoreCase));
-        var current = cs.Characters.FirstOrDefault(c => c.Selected);
-        bool currentAllowed = current != null && allowed.Contains(current.Id, StringComparer.OrdinalIgnoreCase);
-        if (!currentAllowed)
-        {
-            s.Actions.RemoveAll(a => a.Kind is ActionKind.Embark or ActionKind.SetAscension);
-        }
-        else
-        {
-            int wanted = CharacterPicker.DesiredAscension(cs, settings);
-            if (cs.Ascension != wanted &&
-                s.Actions.FirstOrDefault(a => a.Kind == ActionKind.SetAscension && a.IntArg(ActionArgs.Ascension) == wanted) is { } asc)
-                return Rule(asc, "(ascension setting)");
-            // The owner sets the ascension; the model does not change it.
-            s.Actions.RemoveAll(a => a.Kind == ActionKind.SetAscension);
-        }
+        // After OwnerRules: the only ascension action left is the step to the owner's level.
+        if (s.Actions.FirstOrDefault(a => a.Kind == ActionKind.SetAscension) is { } asc)
+            return Rule(asc, "(ascension setting)");
         if (settings.Characters.Policy != CharacterPickPolicy.AiChoice && CharacterPicker.Choose(s, settings, picks) is { } pick)
             return Rule(pick, "(character policy)");
         return null;
@@ -439,11 +436,20 @@ public sealed class DecisionEngine
         return ctx;
     }
 
+    /// <summary>True while the breaker is open. Changed LLM settings close it at once: the old failures were about the old ones.</summary>
+    private bool CoolingDown(PilotSettings settings)
+    {
+        if (_client != null && settings.Active is { } profile && JsonSerializer.Serialize(profile) != _clientKey) ResetCircuit();
+        return _clock() < _llmCooldownUntil;
+    }
+
     private ILlmClient Client(LlmProfile profile)
     {
         var key = JsonSerializer.Serialize(profile);
         if (_client == null || _clientKey != key)
         {
+            // New settings deserve a fresh chance: the old failures were about the old ones.
+            if (_client != null) ResetCircuit();
             _client = _clientFactory(profile);
             _clientKey = key;
         }

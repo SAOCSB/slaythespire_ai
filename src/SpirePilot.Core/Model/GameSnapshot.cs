@@ -69,6 +69,18 @@ public sealed class GameSnapshot
     /// <summary>Keyword / term explanations (from the game's hover tips) for terms that appear in this snapshot.</summary>
     public Dictionary<string, string> Glossary { get; set; } = new();
 
+    /// <summary>
+    /// A copy whose menu and notes lists can be filtered without touching this snapshot (other readers — the UI, the
+    /// HTTP API — may hold it). The actions themselves are shared.
+    /// </summary>
+    public GameSnapshot WithOwnMenu()
+    {
+        var copy = (GameSnapshot)MemberwiseClone();
+        copy.Actions = new List<ActionOption>(Actions);
+        copy.Notes = new List<string>(Notes);
+        return copy;
+    }
+
     [System.Text.Json.Serialization.JsonIgnore]
     public PlayerInfo? LocalPlayer => Players.FirstOrDefault(p => p.IsLocal);
     [System.Text.Json.Serialization.JsonIgnore]
@@ -87,6 +99,8 @@ public sealed class RunInfo
     public int AscensionLevel { get; set; }
     public string? Seed { get; set; }
     public string? BossName { get; set; }
+    /// <summary>What the act boss does (its moves / powers in short), when the game exposes it.</summary>
+    public string? BossDescription { get; set; }
     public bool IsDaily { get; set; }
     /// <summary>Elapsed in-run time in seconds, when known.</summary>
     public long? RunTimeSeconds { get; set; }
@@ -146,6 +160,8 @@ public sealed class CardInfo
     /// <summary>Target type name (None, Self, AnyEnemy, AllEnemies, RandomEnemy, AnyPlayer, AnyAlly, AllAllies, ...).</summary>
     public string Target { get; set; } = "";
     public string Description { get; set; } = "";
+    /// <summary>Text of the upgraded card, for cards that can still be upgraded (Smith choices, upgrade prompts).</summary>
+    public string? UpgradedDescription { get; set; }
     public List<string> Keywords { get; set; } = new();
     /// <summary>In combat: whether the card can be played right now.</summary>
     public bool? Playable { get; set; }

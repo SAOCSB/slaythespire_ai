@@ -136,7 +136,7 @@ internal static class LlmHttp
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new LlmException($"Request timed out after {profile.TimeoutSeconds}s.", retryable: true);
+            throw new LlmException($"Request timed out after {profile.TimeoutSeconds}s.", retryable: true) { IsTimeout = true };
         }
         catch (HttpRequestException ex)
         {
@@ -149,7 +149,7 @@ internal static class LlmHttp
             try { text = await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false); }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
-                throw new LlmException($"Reading the response timed out after {profile.TimeoutSeconds}s.", retryable: true);
+                throw new LlmException($"Reading the response timed out after {profile.TimeoutSeconds}s.", retryable: true) { IsTimeout = true };
             }
 
             if (response.IsSuccessStatusCode) return text;
@@ -195,13 +195,17 @@ internal static class LlmHttp
     public static async Task<T> WithRetries<T>(Func<Task<T>> attempt, int maxRetries, CancellationToken cancellationToken)
     {
         var delay = TimeSpan.FromSeconds(1.5);
+        int timeouts = 0;
         for (int i = 0; ; i++)
         {
             try
             {
                 return await attempt().ConfigureAwait(false);
             }
-            catch (LlmException ex) when (ex.Retryable && i < maxRetries && !cancellationToken.IsCancellationRequested)
+            // A timeout is retried once at most: a model that needs longer than the limit will need it again, and
+            // every resend may be billed in full.
+            catch (LlmException ex) when (ex.Retryable && i < maxRetries && !cancellationToken.IsCancellationRequested &&
+                                          (!ex.IsTimeout || ++timeouts <= 1))
             {
                 var wait = ex.RetryAfter is { } ra && ra > TimeSpan.Zero ? ra : delay;
                 if (wait > TimeSpan.FromSeconds(60)) wait = TimeSpan.FromSeconds(60);

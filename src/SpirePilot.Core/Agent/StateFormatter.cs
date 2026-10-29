@@ -24,6 +24,7 @@ public sealed class StateFormatter
             if (!string.IsNullOrEmpty(run.BossName)) sb.Append(" | Boss: ").Append(run.BossName);
         }
         sb.AppendLine(s.IsMultiplayer ? " | Co-op" : "");
+        if (s.Run is { BossDescription.Length: > 0 } bossRun) sb.Append("Boss notes: ").AppendLine(Short(Clean(bossRun.BossDescription!), 300));
 
         if (s.LocalPlayer is { } me)
         {
@@ -104,7 +105,8 @@ public sealed class StateFormatter
         sb.Append("  Potions [").Append(p.Potions.Count).Append('/').Append(p.PotionSlots).Append("]: ");
         sb.AppendLine(p.Potions.Count == 0 ? "none" : string.Join("; ", p.Potions.Select(pt =>
             detailed && VerboseCards ? $"#{pt.Slot} {pt.Name} [{pt.Target}] {Clean(pt.Description)}"
-            : !detailed && pt.Target == "AnyPlayer" ? $"#{pt.Slot} {pt.Name} (can be given to a player)" : $"#{pt.Slot} {pt.Name}")));
+            : !detailed ? $"#{pt.Slot} {pt.Name}{(pt.Target == "AnyPlayer" ? " (can be given to a player)" : "")}{(pt.Description.Length > 0 ? ": " + Short(Clean(pt.Description), 80) : "")}"
+            : $"#{pt.Slot} {pt.Name}")));
 
         if (detailed)
         {
@@ -257,10 +259,13 @@ public sealed class StateFormatter
         sb.AppendLine("Shop:");
         foreach (var i in shop.Items)
         {
-            sb.Append("  ").Append(i.Kind).Append(' ').Append(i.Name).Append(" — ").Append(i.Price).Append('g');
+            sb.Append("  ").Append(i.Kind).Append(' ');
+            // Cards carry cost, type and rarity like everywhere else.
+            sb.Append(i.Card is { } card ? Card(card, withKey: false) : i.Name);
+            sb.Append(" — ").Append(i.Price).Append('g');
             if (i.OnSale) sb.Append(" (sale)");
             if (!i.Affordable) sb.Append(" (can't afford)");
-            if (i.Description.Length > 0) sb.Append(": ").Append(Clean(i.Description));
+            if (i.Card == null && i.Description.Length > 0) sb.Append(": ").Append(Clean(i.Description));
             sb.AppendLine();
         }
         if (shop.RemovalPrice is { } rp) sb.Append("  Card removal: ").Append(rp).Append('g').Append(shop.RemovalAvailable ? "" : " (unavailable)").AppendLine();
@@ -300,6 +305,7 @@ public sealed class StateFormatter
         if (c.Keywords.Count > 0) sb.Append(" {").Append(string.Join(",", c.Keywords)).Append('}');
         if (c.Playable == false) sb.Append(" (unplayable").Append(string.IsNullOrEmpty(c.UnplayableReason) ? "" : ": " + c.UnplayableReason).Append(')');
         if (c.Description.Length > 0) sb.Append(": ").Append(Clean(c.Description));
+        if (!string.IsNullOrEmpty(c.UpgradedDescription)) sb.Append(" → upgraded: ").Append(Clean(c.UpgradedDescription!));
         return sb.ToString();
     }
 

@@ -221,6 +221,7 @@ public sealed class PilotLoop : IDisposable
             AdviceAction = null;
             // A plan made under another mode may be stale (the human may have played in between).
             _engine.Memory.ClearPlan();
+            _engine.ResetCircuit();
         }
         if (mode == PilotMode.Off)
         {
@@ -244,6 +245,7 @@ public sealed class PilotLoop : IDisposable
             await SafeDelay(IdleDelay, ct).ConfigureAwait(false);
             return;
         }
+        if (_wasPaused) _engine.ResetCircuit(); // resumed: the user may have fixed what made the model fail
         _wasPaused = false;
 
         var snap = await _bridge.CaptureAsync(ct).ConfigureAwait(false);
@@ -288,13 +290,15 @@ public sealed class PilotLoop : IDisposable
             ? Route.RoutePlanner.PinnedNext(mapBefore, settings.Route, snap.Run?.Act ?? 0, snap.Run?.Seed)
             : null;
         AgentDecision? decision;
+        // The engine filters the menu by owner rules: give it its own lists, and take the action from them.
+        var menu = snap.WithOwnMenu();
         // Pausing or switching modes while the model thinks cancels the call: the human may already be playing.
         using (var decideCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
         {
             var watcher = WatchForInterruptAsync(mode, decideCts);
             try
             {
-                decision = await _engine.DecideAsync(snap, instruction, decideCts.Token, replyOnly).ConfigureAwait(false);
+                decision = await _engine.DecideAsync(menu, instruction, decideCts.Token, replyOnly).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
@@ -322,7 +326,7 @@ public sealed class PilotLoop : IDisposable
             await SafeDelay(IdleDelay, ct).ConfigureAwait(false);
             return;
         }
-        var action = decision?.FirstActionId is { } id ? snap.FindAction(id) : null;
+        var action = decision?.FirstActionId is { } id ? menu.FindAction(id) : null;
         if (decision == null || action == null)
         {
             // Nothing the owner's rules allow here (e.g. no allowed character can be selected): wait for a change.

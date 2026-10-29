@@ -47,6 +47,8 @@ public sealed class LlmException : Exception
     public TimeSpan? RetryAfter { get; }
 
     private readonly bool _configError;
+    /// <summary>The request ran out of time (the provider may still be generating — and billing — the answer).</summary>
+    public bool IsTimeout { get; init; }
 
     public LlmException(string message, int? statusCode = null, bool retryable = false, TimeSpan? retryAfter = null, Exception? inner = null,
         bool configError = false)
@@ -64,10 +66,20 @@ public sealed class LlmException : Exception
     /// </summary>
     public bool IsConfigError =>
         _configError ||
-        StatusCode is 401 or 403 or 404 ||
-        StatusCode is 400 or 422 && Message.Contains("model", StringComparison.OrdinalIgnoreCase) &&
-        (Message.Contains("not found", StringComparison.OrdinalIgnoreCase) || Message.Contains("does not exist", StringComparison.OrdinalIgnoreCase) ||
-         Message.Contains("invalid model", StringComparison.OrdinalIgnoreCase) || Message.Contains("unknown model", StringComparison.OrdinalIgnoreCase));
+        StatusCode is 401 or 402 or 403 or 404 ||
+        StatusCode is 400 or 422 && ConfigWords.Any(w => Message.Contains(w, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// 400 wordings that mean "fix your settings" (wrong model name, bad key, no credit) across providers:
+    /// DeepSeek "Model Not Exist" / "Insufficient Balance", GLM "模型不存在" / "余额不足", OpenRouter "not a valid model ID",
+    /// Gemini "API key not valid", Anthropic "credit balance is too low".
+    /// </summary>
+    private static readonly string[] ConfigWords =
+    {
+        "model not found", "model_not_found", "does not exist", "not exist", "invalid model", "unknown model",
+        "not a valid model", "no such model", "api key", "api_key", "apikey", "credit balance", "insufficient balance",
+        "insufficient_quota", "模型不存在", "余额不足", "无效的api", "api key无效",
+    };
 }
 
 public interface ILlmClient

@@ -23,6 +23,9 @@ public sealed class AnthropicClient : ILlmClient
     private bool _dropFallbacks;
     private bool _dropStructuredOutput;
     private bool _dropEffort;
+    /// <summary>Effort values the server rejected; the next best configured one is used instead.</summary>
+    private readonly HashSet<string> _badEfforts = new(StringComparer.OrdinalIgnoreCase);
+    private string? _lastEffort;
     private bool _dropCacheControl;
 
     public AnthropicClient(LlmProfile profile)
@@ -69,6 +72,9 @@ public sealed class AnthropicClient : ILlmClient
         }
         if (!_dropEffort && e.Contains("effort"))
         {
+            // Drop only the value that was rejected (e.g. an unsupported combat effort); effort as a whole only when
+            // the general one fails too.
+            if (_lastEffort != null && _badEfforts.Add(_lastEffort)) return true;
             _dropEffort = true;
             return true;
         }
@@ -120,9 +126,18 @@ public sealed class AnthropicClient : ILlmClient
         body["messages"] = messages;
 
         var outputConfig = new JsonObject();
-        var effort = string.IsNullOrWhiteSpace(request.Effort) ? _profile.ReasoningEffort : request.Effort;
-        if (!string.IsNullOrWhiteSpace(effort) && !_dropEffort)
-            outputConfig["effort"] = effort!.Trim().ToLowerInvariant();
+        string? effort = null;
+        foreach (var candidate in new[] { request.Effort, _profile.ReasoningEffort })
+        {
+            if (string.IsNullOrWhiteSpace(candidate)) continue;
+            var value = candidate.Trim().ToLowerInvariant();
+            if (_badEfforts.Contains(value)) continue;
+            effort = value;
+            break;
+        }
+        _lastEffort = _dropEffort ? null : effort;
+        if (effort != null && !_dropEffort)
+            outputConfig["effort"] = effort;
         if (_profile.JsonMode && request.JsonSchema != null && !_dropStructuredOutput)
             outputConfig["format"] = new JsonObject { ["type"] = "json_schema", ["schema"] = JsonNode.Parse(request.JsonSchema) };
         if (outputConfig.Count > 0) body["output_config"] = outputConfig;

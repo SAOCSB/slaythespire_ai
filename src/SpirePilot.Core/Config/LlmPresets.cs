@@ -46,6 +46,8 @@ public static class LlmPresets
             "gemini" or "zhipu" or "openrouter" => 16000,
             _ => 8192,
         },
+        // Reasoning models and local CPUs can take minutes for one answer; a timeout is a wasted (billed) call.
+        TimeoutSeconds = preset.Id is "anthropic" or "openai" or "gemini" or "zhipu" or "openrouter" or "ollama" or "lmstudio" ? 300 : 120,
     };
 
     public static LlmProfile Default() => FromPreset(All[0], "default");
