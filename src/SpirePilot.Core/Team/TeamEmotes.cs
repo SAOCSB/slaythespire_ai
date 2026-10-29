@@ -4,9 +4,9 @@ namespace SpirePilot.Core.Team;
 
 /// <summary>
 /// Vanilla reaction emotes, both ways. Out: the emote a teammate without SpirePilot sees instead of a message. In: a
-/// teammate's emote as an inbox message: thumbs up / down answer the newest request this player showed that teammate
-/// as an emote; "!", "?" and every other emote become a short chat line, of which only "!" and "?" ask the AI for a
-/// reaction.
+/// teammate's emote as an inbox message: thumbs up / down answer the newest request that teammate saw (shown as an
+/// emote, or read as text by a linked teammate); "!", "?" and every other emote become a short chat line, of which only
+/// "!" and "?" ask the AI for a reaction.
 /// </summary>
 public static class TeamEmotes
 {
@@ -27,12 +27,13 @@ public static class TeamEmotes
     /// <param name="reaction">The game's reaction type name ("ThumbUp", "Exclamation" ...).</param>
     /// <param name="asked">
     /// The newest request this player showed <paramref name="from"/> (or everyone) as an emote, and whether it is still
-    /// open (<c>AgentMemory.LastSignalTo</c>). A thumbs up answers it only while it is open: once it is closed the
-    /// emote answers nothing we know of, and never an older request the teammate may not have seen.
+    /// open (<c>AgentMemory.LastSignalTo</c>; for a linked teammate the newest open one it read, <c>LastOpenTo</c>). A
+    /// thumbs up answers it only while it is open: once it is closed the emote answers nothing we know of, and never an
+    /// older request the teammate may not have seen.
     /// </param>
     /// <param name="fromLinkedPeer">
-    /// The sender runs SpirePilot: it answers us in text, so its emote is meant for a teammate without the mod and is
-    /// context only.
+    /// The sender runs SpirePilot and someone in the party does not: the sender can answer us in text, so its emote is
+    /// most likely meant for that teammate, and is context only.
     /// </param>
     public static TeamMessage ToMessage(string reaction, ulong from, string fromName, ulong localId, (string Id, bool Open)? asked,
         bool fromLinkedPeer = false, DateTimeOffset? now = null)
@@ -63,7 +64,10 @@ public static class TeamEmotes
     /// are context only: waking the AI (a paid call that also weighs undoing its end of turn) for each of them is not
     /// worth it.
     /// </summary>
-    public static bool AsksForReaction(TeamMessage m) => m.Emote is "Exclamation" or "QuestionMark" && !m.EmoteForOthers;
+    public static bool AsksForReaction(TeamMessage m) => Asks(m.Emote) && !m.EmoteForOthers;
+
+    /// <summary>The reaction asks something ("!", "?"), unlike an answer or a feeling.</summary>
+    public static bool Asks(string? reaction) => reaction is "Exclamation" or "QuestionMark";
 
     /// <summary>
     /// The same emote from the same teammate within one 10-second window, after the same question, gets the same id (a

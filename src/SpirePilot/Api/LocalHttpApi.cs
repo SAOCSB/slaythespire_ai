@@ -424,6 +424,7 @@ internal sealed class LocalHttpApi : IDisposable
         var snap = await PilotRuntime.Bridge.CaptureAsync(CancellationToken.None) ?? PilotRuntime.Bridge.Latest;
         var toText = body?["to"]?.ToString();
         var replyTo = body?["reply_to"]?.ToString();
+        var kind = DecisionParser.ParseKind(body?["kind"]?.ToString());
         ulong to = 0;
         if (!IsEveryone(toText))
         {
@@ -438,13 +439,13 @@ internal sealed class LocalHttpApi : IDisposable
         // An answer without a named recipient goes where the question came from, as the AI's own answers do.
         else if (PilotRuntime.Team.FindReceived(replyTo) is { } asked)
         {
-            to = TeamDelivery.ReplyRecipient(asked);
+            to = TeamDelivery.ReplyRecipient(asked, kind);
         }
         var target = body?["target"]?.ToString();
         var msg = new TeamMessage
         {
             Text = text,
-            Kind = DecisionParser.ParseKind(body?["kind"]?.ToString()),
+            Kind = kind,
             To = to,
             Potion = body?["potion"]?.ToString(),
             Debuff = body?["debuff"]?.ToString(),

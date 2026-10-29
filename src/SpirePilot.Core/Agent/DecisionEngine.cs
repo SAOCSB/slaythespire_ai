@@ -124,6 +124,13 @@ public sealed class DecisionEngine
     /// <summary>The running fight ("floor:encounter"), or null outside one.</summary>
     public static string? FightKey(GameSnapshot s) => s.Combat == null ? null : $"{s.Run?.Floor}:{s.Combat.EncounterName}";
 
+    /// <summary>
+    /// Where a capture was taken (fight, round), for a request made or accepted in it: a decision point says so, and so
+    /// does a capture inside a fight while waiting; null for one that cannot tell (waiting, no fight read).
+    /// </summary>
+    public static (string? Fight, int Round)? FightAndRound(GameSnapshot? s) =>
+        s != null && (s.CanAct || s.Combat != null) ? (FightKey(s), s.Combat?.Round ?? 0) : null;
+
     /// <summary>Unread team messages older than this are dropped: requests go stale quickly in combat.</summary>
     public static readonly TimeSpan InboxMaxAge = TimeSpan.FromMinutes(3);
 
@@ -141,11 +148,13 @@ public sealed class DecisionEngine
         : null;
 
     /// <summary>
-    /// After the model reacted to a teammate's "!" or "?", the same emote from them is context for this long: a
-    /// teammate tapping again must not buy a paid call each time.
+    /// After the AI answered a teammate's "!" or "?", the same emote from them is context for this long: a teammate
+    /// tapping again must not buy a paid call each time.
     /// </summary>
     private static readonly TimeSpan EmoteCooldown = TimeSpan.FromSeconds(45);
     private readonly Dictionary<(ulong From, string Emote), DateTime> _emotesHandled = new();
+    /// <summary>The "!" and "?" the latest model decision was asked to react to; answered once that decision is carried out.</summary>
+    private List<TeamMessage> _emotesDecided = new();
 
     private bool EmoteCoolingDown(TeamMessage m)
     {
@@ -153,11 +162,26 @@ public sealed class DecisionEngine
         lock (_emotesHandled) return _emotesHandled.TryGetValue((m.From, m.Emote!), out var at) && _clock() - at < EmoteCooldown;
     }
 
-    private void NoteEmotesHandled(IEnumerable<TeamMessage> actionable)
+    private void NoteDecided(Inbox inbox)
     {
+        lock (_emotesHandled) _emotesDecided = inbox.Actionable.Where(TeamEmotes.AsksForReaction).ToList();
+    }
+
+    /// <summary>
+    /// A decision's inbox was dealt with (its action ran, or its replies went out): marks <paramref name="ids"/> read
+    /// and starts the cooldown of the "!" and "?" among them it reacted to. A decision dropped before that leaves them
+    /// unread and still asking.
+    /// </summary>
+    public void MarkHandled(IEnumerable<string> ids)
+    {
+        var handled = ids.ToHashSet();
         var now = _clock();
         lock (_emotesHandled)
-            foreach (var m in actionable.Where(TeamEmotes.AsksForReaction)) _emotesHandled[(m.From, m.Emote!)] = now;
+        {
+            foreach (var m in _emotesDecided.Where(m => handled.Contains(m.Id))) _emotesHandled[(m.From, m.Emote!)] = now;
+            _emotesDecided = new();
+        }
+        if (handled.Count > 0) _team.MarkRead(handled);
     }
 
     /// <summary>
@@ -187,11 +211,11 @@ public sealed class DecisionEngine
 
     /// <summary>
     /// What the AI reads from the team inbox under the owner's switches: everything with auto-reply on; with it off,
-    /// only answers to the AI's own requests (when it may make requests). Everything else is marked read.
+    /// only answers to this player's requests (the AI's or the owner's), which need no reply and may be a promise to
+    /// keep. Everything else is marked read.
     /// </summary>
     private static bool Readable(TeamMessage m, PilotSettings settings, Func<string?, TeamMessage?> ours) =>
-        settings.Team.AutoReply ||
-        settings.Team.ProactiveRequests && m.Kind is TeamMessageKind.Accept or TeamMessageKind.Decline && ours(m.ReplyTo) != null;
+        settings.Team.AutoReply || m.Kind is TeamMessageKind.Accept or TeamMessageKind.Decline && ours(m.ReplyTo) != null;
 
     /// <summary>
     /// The one reading of the inbox and our requests, shared by the decision and the prompt preview so both agree:
@@ -210,8 +234,15 @@ public sealed class DecisionEngine
         TeamMessage? Ours(string? id) => id == null ? null : outgoing.FirstOrDefault(m => m.Id == id);
         var ignored = unread.Where(m => !Readable(m, settings, Ours)).Select(m => m.Id).ToList();
         unread = unread.Where(m => Readable(m, settings, Ours)).ToList();
-        var actionable = unread.Where(m => NeedsAttention(m, Ours)).ToList();
-        var info = unread.Where(m => !NeedsAttention(m, Ours)).ToList();
+        // A teammate's "yes" to a question they already answered (a second tap) asks nothing new.
+        var repeats = new HashSet<TeamMessage>();
+        var yeses = new HashSet<(string, ulong)>();
+        foreach (var m in unread.Where(m => m.Kind == TeamMessageKind.Accept))
+            if (Ours(m.ReplyTo) is { } asked && (Memory.AnsweredBy(asked.Id).Contains(m.From) || !yeses.Add((asked.Id, m.From))))
+                repeats.Add(m);
+        bool Acts(TeamMessage m) => !repeats.Contains(m) && NeedsAttention(m, Ours);
+        var actionable = unread.Where(Acts).ToList();
+        var info = unread.Where(m => !Acts(m)).ToList();
 
         var answered = new List<TeamMessage>();
         var promises = new List<TeamMessage>();
@@ -252,7 +283,7 @@ public sealed class DecisionEngine
         Memory.ExpireRequests(AgentMemory.RequestMaxAge);
         if (inbox.Combat is { } at) Memory.NoteCombat(at.Fight, at.Round);
         if (inbox.Ignored.Count > 0) _team.MarkRead(inbox.Ignored);
-        foreach (var promise in inbox.Promises) Memory.TrackAccepted(promise, whileWaiting: !snapshot.CanAct);
+        foreach (var promise in inbox.Promises) Memory.TrackAccepted(promise, whileWaiting: !snapshot.CanAct, FightAndRound(snapshot));
         foreach (var (id, by) in inbox.Answers) Memory.NoteAnswer(id, by);
         foreach (var id in inbox.Closed) Memory.CloseOutgoing(id);
         return inbox;
@@ -323,7 +354,7 @@ public sealed class DecisionEngine
         {
             var decision = await AskLlmAsync(s, settings, context, ct, allowNoAction: true).ConfigureAwait(false);
             LlmSucceeded();
-            NoteEmotesHandled(inbox.Actionable);
+            NoteDecided(inbox);
             Memory.SetMemo(decision.Memo);
             decision.ActionIds.Clear();
             decision.PlanKeys.Clear();
@@ -364,9 +395,12 @@ public sealed class DecisionEngine
         bool hasInstruction = !string.IsNullOrWhiteSpace(liveInstruction);
 
         // 1) Continue a plan from the previous LLM answer (unless something needs fresh attention). A bare "!" or "?"
-        //    waits for the next model call instead of throwing the turn's plan away.
+        //    waits for the next model call instead of throwing the turn's plan away, but not past the plan's last
+        //    step: ending the turn or drinking a potion is for a model that has seen it.
         var scope = PlanScope(snapshot);
-        if (hasInstruction || actionable.Any(m => !TeamEmotes.AsksForReaction(m)))
+        bool boundaryNext = Memory.NextPlanStep is { } next &&
+                            snapshot.Actions.FirstOrDefault(a => a.SemanticKey == next) is { } nextStep && PlanSafety.IsBoundary(nextStep, snapshot);
+        if (hasInstruction || actionable.Any(m => !TeamEmotes.AsksForReaction(m)) || actionable.Count > 0 && boundaryNext)
         {
             Memory.ClearPlan();
         }
@@ -616,7 +650,7 @@ public sealed class DecisionEngine
     {
         Memory.SetMemo(decision.Memo);
         decision.HandledInboxIds = inbox.All.Select(m => m.Id).ToList();
-        NoteEmotesHandled(inbox.Actionable);
+        NoteDecided(inbox);
 
         // Accepted requests are tracked by the loop once the reply was actually delivered (never in advisor mode).
         FilterMessages(decision, snapshot, settings, inbox.All);

@@ -68,8 +68,8 @@ public sealed class TeamMessage
     [JsonIgnore]
     public bool IsEmote => Emote != null;
     /// <summary>
-    /// An emote from a teammate who runs SpirePilot: aimed at someone who cannot read text, so context only for us.
-    /// Local only, like <see cref="Emote"/>.
+    /// An emote from a teammate who runs SpirePilot, in a party with someone who does not: most likely aimed at that
+    /// one, so context only for us. Local only, like <see cref="Emote"/>.
     /// </summary>
     [JsonIgnore]
     public bool EmoteForOthers { get; set; }

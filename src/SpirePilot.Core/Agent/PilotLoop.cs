@@ -327,7 +327,7 @@ public sealed class PilotLoop : IDisposable
         {
             // An answer without an action (allowed only when nothing needs doing).
             if (mode != PilotMode.Advisor) SendMessages(talk, snap, settings);
-            _team.MarkRead(talk.HandledInboxIds);
+            _engine.MarkHandled(talk.HandledInboxIds);
             Emit(PilotEventKind.Decision, "💬 " + talk.Thought, talk);
             await SafeDelay(IdleDelay, ct).ConfigureAwait(false);
             return;
@@ -446,7 +446,7 @@ public sealed class PilotLoop : IDisposable
             foreach (var m in _team.PeekAiInbox().Where(m => handled.Contains(m.Id) && DecisionEngine.IsActionable(m) && IsPromiseForUs(m)))
                 _engine.Memory.TrackAccepted(m);
         }
-        _team.MarkRead(decision.HandledInboxIds);
+        _engine.MarkHandled(decision.HandledInboxIds);
         if (instruction != null && decision.Source == DecisionSource.Llm && result.Success && !undid)
         {
             // The model saw the instruction and its decision got executed: consume it.
@@ -503,7 +503,7 @@ public sealed class PilotLoop : IDisposable
         var reply = await _engine.ReplyOnlyAsync(snap, DecisionEngine.ReplyOnlyReason(snap) ?? "you cannot act right now", ct).ConfigureAwait(false);
         if (reply == null || Interrupted(mode)) return false;
         SendMessages(reply, snap, settings);
-        _team.MarkRead(reply.HandledInboxIds);
+        _engine.MarkHandled(reply.HandledInboxIds);
         Emit(PilotEventKind.Decision, "💬 " + reply.Thought, reply);
         return true;
     }
@@ -714,7 +714,7 @@ public sealed class PilotLoop : IDisposable
         foreach (var intent in decision.Messages)
         {
             var answered = intent.ReplyTo == null ? null : inbox.FirstOrDefault(m => m.Id == intent.ReplyTo);
-            ulong to = answered != null ? TeamDelivery.ReplyRecipient(answered) : ResolveRecipient(intent.To, snap);
+            ulong to = answered != null ? TeamDelivery.ReplyRecipient(answered, intent.Kind) : ResolveRecipient(intent.To, snap);
             if (IsRequestKind(intent.Kind) && intent.ReplyTo == null && _engine.Memory.HasOpenOutgoing(intent.Kind, to))
             {
                 _log.Info("AI request not repeated (still open): " + intent.Text);
@@ -743,7 +743,7 @@ public sealed class PilotLoop : IDisposable
                     : "(teammate cannot read messages; not sent) " + intent.Text);
             else if (sent.Entry is { Delivered: false })
                 _engine.Memory.AddHistory("(team message not delivered) " + intent.Text);
-            if (sent.Reached) Remember(sent, answered, waiting);
+            if (sent.Reached) Remember(sent, answered, waiting, DecisionEngine.FightAndRound(snap));
             Emit(PilotEventKind.TeamMessage, (sent.Entry is { Delivered: true } ? "💬 " : "💬✘ ") + intent.Text);
             if (sent.Entry != null && settings.Team.SpeechBubbles)
             {
@@ -754,23 +754,28 @@ public sealed class PilotLoop : IDisposable
     }
 
     /// <summary>What a message someone saw commits us to: an accepted request is a promise, our request waits for its answer.</summary>
-    private void Remember(Delivery sent, TeamMessage? answered, bool waiting)
+    /// <param name="at">Where it was said (<see cref="DecisionEngine.FightAndRound"/>): the fight and round a request holds for.</param>
+    private void Remember(Delivery sent, TeamMessage? answered, bool waiting, (string? Fight, int Round)? at)
     {
         var m = sent.Message;
         if (m.Kind == TeamMessageKind.Accept && answered != null)
         {
-            if (IsPromiseForUs(answered)) _engine.Memory.TrackAccepted(answered, waiting);
+            if (IsPromiseForUs(answered)) _engine.Memory.TrackAccepted(answered, waiting, at);
             else if (answered.Kind is TeamMessageKind.OfferPotion or TeamMessageKind.AskNeedPotion)
-                _engine.Memory.AddHistory($"(you said yes to {answered.FromName}'s potion offer: they use it on you, not you on them)");
+                _engine.Memory.AddHistory($"(you said yes to {PromptBuilder.Safe(answered.FromName)}'s potion offer: they use it on you, not you on them)");
         }
-        if (Tracked(m)) _engine.Memory.TrackOutgoing(m, waiting, signalled: sent.Emote != null);
+        if (Tracked(m)) _engine.Memory.TrackOutgoing(m, waiting, signalled: sent.Emote != null, at);
+        // A "!" or "?" for something we do not track (a request in answer to someone): a thumbs up after it answers
+        // nothing we know of, never an older request.
+        else if (TeamEmotes.Asks(sent.Emote)) _engine.Memory.NoteSignal(m.Id, m.To);
     }
 
     /// <summary>
     /// A team message for this player that the pilot did not write: the owner's Team tab, or an external agent's POST
     /// /chat. It goes out by the same rule as the AI's own (text to teammates with SpirePilot, the vanilla emote to the
-    /// others) and the AI remembers it like its own: a request stays open so the teammate's "yes" reaches the AI, an
-    /// answer is not given a second time, and the history says what was said.
+    /// others) and the AI remembers it like its own: a request stays open (for the fight and round of the capture) so
+    /// the teammate's "yes" reaches the AI, an answer is not given a second time, and the history says what the player
+    /// committed to (chat is left out: it would push the AI's own lines out).
     /// </summary>
     /// <param name="snap">A recent capture (co-op flag, roster, whether the player can act).</param>
     /// <param name="reads">Who runs SpirePilot by the live roster, which may be newer than the capture.</param>
@@ -780,8 +785,9 @@ public sealed class PilotLoop : IDisposable
         var sent = TeamDelivery.Send(_team, snap, msg, fromAi, _bridge.TrySignal, reads);
         if (!sent.Reached) return sent;
         var m = sent.Message;
-        Remember(sent, answered, snap != null && Waiting(snap));
+        Remember(sent, answered, snap != null && Waiting(snap), DecisionEngine.FightAndRound(snap));
         if (m.ReplyTo != null) _team.MarkRead(new[] { m.ReplyTo });
+        if (m.Kind == TeamMessageKind.Chat) return sent;
         var to = m.To == 0 ? "everyone"
             : snap?.Players.FirstOrDefault(p => p.NetId == m.To) is { } mate ? (mate.Name.Length > 0 ? mate.Name : mate.CharacterName)
             : m.To.ToString();

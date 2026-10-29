@@ -114,16 +114,21 @@ public sealed class AgentMemory
 
     /// <param name="whileWaiting">Accepted while the AI could not act (enemy turn, turn ended): a per-round request
     /// then still holds for the next round.</param>
-    public void TrackAccepted(Team.TeamMessage request, bool whileWaiting = false)
+    /// <param name="at">Where it was accepted (fight, round); null: the fight last noted.</param>
+    public void TrackAccepted(Team.TeamMessage request, bool whileWaiting = false, (string? Fight, int Round)? at = null)
     {
         lock (_lock)
         {
             if (_openRequests.Any(r => r.Id == request.Id)) return;
             _openRequests.Add(request);
-            _scopes[request.Id] = (_fight, _round, whileWaiting);
+            _scopes[request.Id] = Scope(at, whileWaiting);
             while (_openRequests.Count > MaxOpenRequests) Remove(_openRequests, _openRequests[0]);
         }
     }
+
+    /// <summary>Caller holds the lock.</summary>
+    private (string? fight, int round, bool waiting) Scope((string? Fight, int Round)? at, bool waiting) =>
+        at is { } a ? (a.Fight, a.Round, waiting) : (_fight, _round, waiting);
 
     private void Remove(List<Team.TeamMessage> list, Team.TeamMessage m)
     {
@@ -211,12 +216,13 @@ public sealed class AgentMemory
 
     /// <summary>Remembers a request / offer / question we sent (delivered), so answers to it can be matched.</summary>
     /// <param name="signalled">It was also shown as a vanilla emote, so a thumbs up can answer it.</param>
-    public void TrackOutgoing(Team.TeamMessage sent, bool whileWaiting = false, bool signalled = false)
+    /// <param name="at">Where it was sent (fight, round); null: the fight last noted.</param>
+    public void TrackOutgoing(Team.TeamMessage sent, bool whileWaiting = false, bool signalled = false, (string? Fight, int Round)? at = null)
     {
         lock (_lock)
         {
             _outgoing.Add(sent);
-            _scopes[sent.Id] = (_fight, _round, whileWaiting);
+            _scopes[sent.Id] = Scope(at, whileWaiting);
             while (_outgoing.Count > 8) Remove(_outgoing, _outgoing[0]);
         }
         if (signalled) NoteSignal(sent.Id, sent.To);
@@ -252,6 +258,19 @@ public sealed class AgentMemory
             }
             return null;
         }
+    }
+
+    /// <summary>
+    /// The newest of our open requests that <paramref name="teammate"/> read as text (to them or to everyone) within
+    /// <see cref="RequestMaxAge"/>; null when there is none.
+    /// </summary>
+    public (string Id, bool Open)? LastOpenTo(ulong teammate)
+    {
+        var cutoff = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - (long)RequestMaxAge.TotalMilliseconds;
+        lock (_lock)
+            return _outgoing.LastOrDefault(m => (m.To == teammate || m.To == 0) && (m.Time == 0 || m.Time >= cutoff)) is { } last
+                ? (last.Id, true)
+                : null;
     }
 
     public Team.TeamMessage? FindOutgoing(string? id)
@@ -345,6 +364,9 @@ public sealed class AgentMemory
     }
 
     public bool HasPlan { get { lock (_lock) return _plan.Count > 0; } }
+
+    /// <summary>The semantic key of the plan's next step, without taking it; null without a plan.</summary>
+    public string? NextPlanStep { get { lock (_lock) return _plan.Count > 0 ? _plan[0] : null; } }
 
     /// <summary>Forget everything (new run).</summary>
     public void Reset()

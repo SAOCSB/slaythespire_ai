@@ -36,12 +36,20 @@ public static class TeamDelivery
         return (addressed.Count, addressed.Count(p => reads?.Invoke(p.NetId) ?? p.HasTeamLink));
     }
 
-    /// <summary>A reply goes to the asker; an answer to a question for everyone goes to everyone, so other helpers see it is taken care of.</summary>
-    public static ulong ReplyRecipient(TeamMessage asked) => asked.To == 0 ? 0 : asked.From;
+    /// <summary>
+    /// A reply goes to the asker; an answer to a question for everyone goes to everyone, so other helpers see it is
+    /// taken care of. A potion offer or question in answer to someone is for them alone: sent to everyone it would wait
+    /// for answers from teammates it was never meant for.
+    /// </summary>
+    public static ulong ReplyRecipient(TeamMessage asked, TeamMessageKind kind) =>
+        asked.To == 0 && kind is not (TeamMessageKind.OfferPotion or TeamMessageKind.AskNeedPotion) ? 0 : asked.From;
 
     /// <param name="snap">A recent capture for the co-op flag and the roster; null or solo: text only.</param>
     /// <param name="signal">Shows the kind's vanilla emote (<c>IGameBridge.TrySignal</c>); false when it could not.</param>
-    /// <param name="reads">Who runs SpirePilot by the live roster; default: the snapshot's <see cref="PlayerInfo.HasTeamLink"/>.</param>
+    /// <param name="reads">
+    /// Who runs SpirePilot by the live roster (0 = anyone); default: the snapshot's <see cref="PlayerInfo.HasTeamLink"/>.
+    /// It alone decides when the capture lists nobody addressed (a lobby, a run in transition).
+    /// </param>
     public static Delivery Send(TeamChatHub hub, GameSnapshot? snap, TeamMessage msg, bool fromAi, Func<TeamMessageKind, bool> signal,
         Func<ulong, bool>? reads = null)
     {
@@ -51,6 +59,7 @@ public static class TeamDelivery
             return new Delivery { Message = solo?.Message ?? msg, Entry = solo, RateLimited = solo == null };
         }
         var (addressed, readers) = Reach(snap, msg.To, reads);
+        if (addressed == 0 && reads?.Invoke(msg.To) == true) readers = 1;
         ChatEntry? entry = null;
         if (readers > 0)
         {
