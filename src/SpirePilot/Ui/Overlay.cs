@@ -7,6 +7,7 @@ using SpirePilot.Core.Config;
 using SpirePilot.Core.Text;
 using SpirePilot.Game;
 using SpirePilot.Infra;
+using SpirePilot.Team;
 using SpirePilot.Ui.Pages;
 
 namespace SpirePilot.Ui;
@@ -23,6 +24,8 @@ internal static class Overlay
     private const ulong SlowRefreshMs = 500;
     /// <summary>Capture interval while the pilot is off / paused: nothing else captures then, and nothing is urgent.</summary>
     private const ulong IdleCaptureIntervalMs = 2000;
+    private const ulong ToastMs = 6000;
+    private const int ToastMaxChars = 160;
 
     private static Harmony? _harmony;
     private static bool _initialized;
@@ -40,6 +43,13 @@ internal static class Overlay
     private static Label? _titleStatus;
     private static Label? _footer;
     private static Button? _saveNow;
+    private static PanelContainer? _toast;
+    private static Label? _toastText;
+    private static ulong _toastUntil;
+    /// <summary>Teammates' messages that arrived while the Team tab was not in view.</summary>
+    private static int _unread;
+    private static int _shownUnread = -1;
+    private static bool _versionNoteShown;
     private static readonly List<Page> Pages = new();
     private static readonly List<Button> TabButtons = new();
     private static int _tab;
@@ -81,6 +91,7 @@ internal static class Overlay
         if (!_initialized) return;
         UiKit.Guard("draft.tick", SettingsDraft.Tick);
         UiKit.Guard("feeds", Feeds.Pump);
+        UiKit.Guard("team.notify", NotifyTeamMessages);
 
         if (!_built || !SceneUtil.Valid(_layer))
         {
@@ -110,6 +121,7 @@ internal static class Overlay
         UiKit.Guard("hotkey", PollHotkey);
         UiKit.Guard("focus", PollClickOutside);
         UiKit.Guard("layout", UpdateLayout);
+        UiKit.Guard("unread", UpdateUnread);
 
         if (SettingsDraft.Version != _syncedVersion) UiKit.Guard("sync", SyncAll);
 
@@ -132,6 +144,23 @@ internal static class Overlay
         }
     }
 
+    /// <summary>
+    /// Shows <paramref name="text"/> for a few seconds next to the AI button, panel open or not. Main thread; does
+    /// nothing before the overlay is built.
+    /// </summary>
+    private static void ShowToast(string text, Color color, ulong durationMs = ToastMs)
+    {
+        if (!SceneUtil.Valid(_toast) || !SceneUtil.Valid(_toastText)) return;
+        var clean = text.Replace('\n', ' ').Replace('\r', ' ').Trim();
+        if (clean.Length > ToastMaxChars) clean = clean[..(ToastMaxChars - 1)] + "…";
+        UiKit.SetText(_toastText, clean);
+        UiKit.SetColor(_toastText, color);
+        // Shrink to the new text (a container never shrinks by itself).
+        _toast!.Size = Vector2.Zero;
+        _toast.Visible = true;
+        _toastUntil = Time.GetTicksMsec() + durationMs;
+    }
+
     /// <summary>True while one of the overlay's text fields has keyboard focus.</summary>
     public static bool IsTyping => UiKit.IsTyping;
 
@@ -145,6 +174,7 @@ internal static class Overlay
         scale = Math.Clamp(scale, 0.5f, 3f);
         if (SceneUtil.Valid(_panel)) _panel!.Scale = new Vector2(scale, scale);
         if (SceneUtil.Valid(_fab)) _fab!.Scale = new Vector2(scale, scale);
+        if (SceneUtil.Valid(_toast)) _toast!.Scale = new Vector2(scale, scale);
     }
 
     // ---------------------------------------------------------------- build
@@ -209,7 +239,9 @@ internal static class Overlay
         UiTheme.Rebuild();
         _host!.Theme = UiTheme.Theme;
         BuildFab();
+        BuildToast();
         BuildPanel();
+        _shownUnread = -1;
         _statusColor = new Color(0, 0, 0, 0);
         _syncedVersion = -1;
         SyncAll();
@@ -237,6 +269,19 @@ internal static class Overlay
         _fab.AddThemeFontSizeOverride("font_size", UiTheme.FontBody);
         _fab.Pressed += UiKit.Safe("fab", () => SetVisible(!_visible));
         _host!.AddChild(_fab);
+    }
+
+    /// <summary>A small note left of the AI button; never takes the mouse.</summary>
+    private static void BuildToast()
+    {
+        _toast = new PanelContainer { Name = "SpirePilotToast", MouseFilter = Control.MouseFilterEnum.Ignore, Visible = false };
+        _toast.AddThemeStyleboxOverride("panel", UiTheme.Box(new Color(0.07f, 0.08f, 0.10f, 0.94f), new Color(UiTheme.Gold, 0.55f), 8, 1, 10, 6));
+        _toastText = UiKit.Label("", UiTheme.FontSmall, UiTheme.Text);
+        _toastText.MouseFilter = Control.MouseFilterEnum.Ignore;
+        _toastText.CustomMinimumSize = new Vector2(280, 0);
+        _toast.AddChild(_toastText);
+        _host!.AddChild(_toast);
+        _toastUntil = 0;
     }
 
     private static void BuildPanel()
@@ -366,6 +411,40 @@ internal static class Overlay
 
     // ---------------------------------------------------------------- state
 
+    private static bool TeamTabInView => _visible && _tab >= 0 && _tab < Pages.Count && Pages[_tab] is TeamPage;
+
+    /// <summary>
+    /// Teammates' messages count as unread until the Team tab is seen. Outside a fight (speech bubbles only show in
+    /// combat) the newest one also shows as a toast.
+    /// </summary>
+    private static void NotifyTeamMessages()
+    {
+        var arrived = Feeds.NewTeamMessages;
+        if (arrived.Count == 0) return;
+        var latest = arrived[^1].Message;
+        int count = arrived.Count;
+        arrived.Clear();
+        if (TeamTabInView) return;
+        _unread += count;
+        if (SpeechBubbles.FightRunning()) return;
+        var who = string.IsNullOrEmpty(latest.FromName) ? "?" : latest.FromName;
+        ShowToast(latest.IsEmote ? latest.Text : $"{who}: {latest.Text}", UiTheme.Info);
+    }
+
+    /// <summary>The unread count on the AI button and the Team tab; viewing the Team tab clears it.</summary>
+    private static void UpdateUnread()
+    {
+        if (TeamTabInView) _unread = 0;
+        if (_unread == _shownUnread) return;
+        _shownUnread = _unread;
+        UiKit.SetText(_fab, _unread > 0 ? $"AI ({_unread})" : "AI");
+        // Shrink back to the text (outside a container a control keeps its widest size); UpdateLayout re-anchors it.
+        if (SceneUtil.Valid(_fab)) _fab!.Size = Vector2.Zero;
+        int team = Pages.FindIndex(p => p is TeamPage);
+        if (team >= 0 && team < TabButtons.Count)
+            UiKit.SetText(TabButtons[team], L10n.T(Pages[team].TitleKey) + (_unread > 0 ? $" ({_unread})" : ""));
+    }
+
     private static void SelectTab(int index)
     {
         _tab = Math.Clamp(index, 0, Pages.Count - 1);
@@ -424,7 +503,15 @@ internal static class Overlay
     private static void UpdateStatus()
     {
         var status = PilotRuntime.Loop.Status;
-        var color = UiTheme.StateColor(status.State);
+        // A build for another game version keeps the AI off: that says more than any pilot state.
+        var problem = PilotRuntime.VersionProblem;
+        var color = problem != null ? UiTheme.Bad : UiTheme.StateColor(status.State);
+        var statusText = problem ?? (status.Text.Length > 0 ? status.Text : L10n.T("ui.state." + status.State));
+        if (problem != null && !_versionNoteShown)
+        {
+            _versionNoteShown = true;
+            ShowToast(problem, UiTheme.Bad, 30_000);
+        }
         var keyName = PilotRuntime.Settings.Ui.ToggleKey;
         bool recolor = color != _statusColor;
         _statusColor = color;
@@ -439,10 +526,11 @@ internal static class Overlay
                 _fab.AddThemeColorOverride("font_hover_color", color);
                 _fab.AddThemeColorOverride("font_pressed_color", color);
             }
-            var tip = L10n.T("ui.fab.tooltip", keyName, status.Text.Length > 0 ? status.Text : L10n.T("ui.state." + status.State));
+            var tip = L10n.T("ui.fab.tooltip", keyName, statusText);
             if (_fab!.TooltipText != tip) _fab.TooltipText = tip;
         }
-        UiKit.SetText(_titleStatus, status.Text.Length > 0 ? status.Text : L10n.T("ui.state." + status.State));
+        UiKit.SetText(_titleStatus, statusText);
+        UiKit.SetColor(_titleStatus, problem != null ? UiTheme.Bad : UiTheme.Muted);
 
         string footer;
         if (SettingsDraft.SaveError is { } err) footer = L10n.T("ui.footer.save_failed", err);
@@ -637,6 +725,13 @@ internal static class Overlay
                 if (clamped != _panel.Position) _panel.Position = clamped;
             }
             _panelRect = _panel!.Visible ? _panel.GetGlobalRect() : new Rect2();
+        }
+        if (SceneUtil.Valid(_toast) && _toast!.Visible)
+        {
+            if (Time.GetTicksMsec() >= _toastUntil) _toast.Visible = false;
+            // Left of the AI button, top-aligned with it.
+            var size = _toast.Size * _toast.Scale.X;
+            _toast.Position = new Vector2(Math.Max(6, _fabRect.Position.X - size.X - 8), _fabRect.Position.Y);
         }
     }
 }

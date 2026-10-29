@@ -19,6 +19,21 @@ public static class OwnerRules
         return copy;
     }
 
+    /// <summary>
+    /// The action an external agent names by semantic key (preferred) or id, looked up in the owner-filtered menu
+    /// <paramref name="filtered"/>. <paramref name="removedByOwner"/> is true when it is only on the raw menu
+    /// <paramref name="raw"/>: an owner rule took it away.
+    /// </summary>
+    public static ActionOption? Find(GameSnapshot filtered, GameSnapshot raw, string? semanticKey, string? id, out bool removedByOwner)
+    {
+        ActionOption? Lookup(GameSnapshot s) => !string.IsNullOrWhiteSpace(semanticKey)
+            ? s.Actions.FirstOrDefault(a => a.SemanticKey == semanticKey)
+            : string.IsNullOrWhiteSpace(id) ? null : s.FindAction(id.Trim());
+        var action = Lookup(filtered);
+        removedByOwner = action == null && Lookup(raw) != null;
+        return action;
+    }
+
     public static void Filter(GameSnapshot s, PilotSettings settings)
     {
         if (s.Screen == ScreenKind.CharacterSelect) FilterCharacterSelect(s, settings);

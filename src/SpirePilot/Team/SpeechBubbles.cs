@@ -46,7 +46,8 @@ internal static class SpeechBubbles
             // Received messages only: system notes are Incoming but not Delivered and have no sender.
             if (!entry.Incoming || !entry.Delivered) return;
             var m = entry.Message;
-            if (m.From == 0 || m.Kind == TeamMessageKind.Hello || string.IsNullOrWhiteSpace(m.Text)) return;
+            // The game already shows a teammate's emote itself.
+            if (m.From == 0 || m.Kind == TeamMessageKind.Hello || m.IsEmote || string.IsNullOrWhiteSpace(m.Text)) return;
             if (!PilotRuntime.Settings.Team.SpeechBubbles) return;
             ulong from = m.From;
             string text = m.Text;
@@ -65,9 +66,8 @@ internal static class SpeechBubbles
         if (clean.Length == 0) return;
 
         // Creature nodes only exist in combat.
-        var combatManager = CombatManager.Instance;
-        if (combatManager == null || !combatManager.IsInProgress) return;
-        var creature = combatManager.DebugOnlyGetState()?.GetPlayer(playerNetId)?.Creature;
+        if (!FightRunning()) return;
+        var creature = CombatManager.Instance?.DebugOnlyGetState()?.GetPlayer(playerNetId)?.Creature;
         if (creature == null) return;
         var room = NCombatRoom.Instance;
         if (!SceneUtil.Alive(room)) return;
@@ -82,6 +82,13 @@ internal static class SpeechBubbles
         if (bubble == null) return;
         GodotTreeExtensions.AddChildSafely(container, bubble);
         Active[playerNetId] = bubble;
+    }
+
+    /// <summary>Main thread. Whether a fight is running, i.e. whether bubbles can show at all.</summary>
+    public static bool FightRunning()
+    {
+        try { return CombatManager.Instance is { IsInProgress: true }; }
+        catch (Exception) { return false; }
     }
 
     private static void Dismiss(ulong playerNetId)

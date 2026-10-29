@@ -98,6 +98,9 @@ public sealed class TeamChatHub
             message.Time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             // Hello is link bookkeeping (handled by the transport), not something to show or answer.
             if (message.Kind == TeamMessageKind.Hello) return true;
+            // An emote the teammate repeats while the AI has not read it yet says nothing new: keep only the newest.
+            if (message.IsEmote)
+                _aiInbox.RemoveAll(m => m.From == message.From && m.Emote == message.Emote && m.ReplyTo == message.ReplyTo);
             _aiInbox.Add(message);
             // Bounded: at most 5 unread per sender and 20 overall (a flooding peer cannot grow prompts or memory).
             var fromSender = _aiInbox.Where(m => m.From == message.From).ToList();

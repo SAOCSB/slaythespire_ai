@@ -105,6 +105,7 @@ public static class L10n
         ["team.q.suggest_route"] = ("我建议走这里：{0}", "I suggest we go here: {0}"),
         ["team.q.accept"] = ("好的！", "OK!"),
         ["team.q.decline"] = ("这次不行，抱歉。", "Not this time, sorry."),
+        ["team.emote_signal"] = ("{0} 发出了表情 {1}", "{0} signalled {1}"),
 
         // ---- status / notes ----
         ["status.off"] = ("AI 已关闭", "AI is off"),
@@ -119,9 +120,10 @@ public static class L10n
         ["status.no_allowed_character"] = ("允许的角色（{0}）都还没解锁，已暂停。请在“角色”页调整。", "None of the allowed characters ({0}) is unlocked; paused. Adjust the Characters tab."),
         ["status.llm_unavailable"] = ("AI 连续多次出错，已暂停：{0}（检查网络/接口后点继续）", "The AI failed several times in a row, paused: {0} (check the connection, then resume)"),
         ["status.saved_run_not_allowed"] = ("存档里的角色（{0}）不在允许列表中：AI 不会继续这局，请手动处理存档", "The saved run's character ({0}) is not allowed: the AI will not continue it; handle the save yourself"),
+        ["status.version_mismatch"] = ("这个 SpirePilot 是为游戏 {0} 编译的，当前游戏是 {1}：AI 已关闭。请安装 {2} 版本的 SpirePilot。", "This SpirePilot build is for game {0}, but the game is {1}: the AI is off. Install the {2} build of SpirePilot."),
         ["status.stuck"] = ("同一操作重复执行但游戏没有变化，已暂停：{0}", "Same action repeated without effect, paused: {0}"),
         ["ui.run_started"] = ("AI 开始了新的一局。", "The AI started a new run."),
-        ["team.link_unavailable"] = ("队友通信不可用：对方没有安装 SpirePilot，消息只显示在本地。", "Team link unavailable: teammates without SpirePilot can't receive messages (shown locally only)."),
+        ["team.link_unavailable"] = ("队友通信不可用：没有安装 SpirePilot 的队友看不到消息，只能看到表情。", "Team link unavailable: teammates without SpirePilot can't read messages, only emotes."),
         ["team.rate_limited"] = ("AI 消息过于频繁，已暂缓发送。", "AI messages rate-limited; message dropped."),
     };
 }

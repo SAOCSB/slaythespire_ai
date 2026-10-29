@@ -124,7 +124,8 @@ internal static class TeamLink
             ModLog.Warn("team link: no client-side discovery hook; as a client we only link when the host announces itself");
 #endif
         ModLog.Info($"team link ready: host receive={TeamPatches.HostReceive}, client receive={TeamPatches.ClientReceive}, " +
-                    $"client discovery={TeamPatches.ClientDiscovery}, host discovery={TeamPatches.HostDiscovery}, channel {Channel}");
+                    $"client discovery={TeamPatches.ClientDiscovery}, host discovery={TeamPatches.HostDiscovery}, " +
+                    $"teammate emotes={TeamPatches.ReactionReceive}, channel {Channel}");
     }
 
     /// <summary>
@@ -185,6 +186,16 @@ internal static class TeamLink
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Whether a teammate who runs SpirePilot would read a message to <paramref name="to"/> (0 = everyone), by the
+    /// live roster (<see cref="Annotate"/>'s rule) rather than a possibly older snapshot. Any thread.
+    /// </summary>
+    public static bool HasReader(ulong to)
+    {
+        var linked = _linked;
+        return to == 0 ? linked.Length > 0 : linked.Contains(to);
     }
 
     /// <summary>Tells linked teammates whether our AI pilot is active (sent on change and when peers join).</summary>
@@ -253,6 +264,10 @@ internal static class TeamLink
     /// <summary>Host side: one client left.</summary>
     internal static void OnPeerLeft(INetGameService service, ulong peerId) =>
         Control.Enqueue(() => { if (ReferenceEquals(service, _service)) RemovePeer(peerId, "disconnected"); });
+
+    /// <summary>A player's vanilla reaction emote arrived (<paramref name="reaction"/> = the game's reaction type name).</summary>
+    internal static void OnReaction(INetGameService? service, ulong senderId, string reaction) =>
+        Post(() => HandleReaction(service, senderId, reaction));
 
     private static void Post(Action work)
     {
@@ -749,6 +764,26 @@ internal static class TeamLink
         }
     }
 
+    /// <summary>
+    /// Emotes are all a teammate without SpirePilot can say to the AI: they go to the inbox as messages (see
+    /// <see cref="TeamEmotes"/>). Our own are skipped, and so are those of a linked peer whose AI is active: its AI
+    /// signals to players who cannot read it, and taken as an answer to us that would fake one. A linked peer who
+    /// plays by hand chose the emote, so it counts like anyone's.
+    /// </summary>
+    private static void HandleReaction(INetGameService? service, ulong senderId, string reaction)
+    {
+        var hub = _hub;
+        if (hub == null || senderId == 0) return;
+        (ulong id, PlatformType platform) local;
+        try { local = TeamNet.LocalIdentity(service); }
+        catch (Exception ex) { local = Broken("local identity", ex, (0UL, PlatformType.None)); }
+        if (senderId == local.id || senderId == _localId || senderId == hub.LocalNetId) return;
+        lock (RosterLock)
+            if (Peers.TryGetValue(senderId, out var peer) && peer.Confirmed && peer.IsAi) return;
+        var name = PlayerName(local.platform, senderId);
+        hub.Receive(TeamEmotes.ToMessage(reaction, senderId, name, hub.LocalNetId, PilotRuntime.Engine.Memory.OutgoingRequests));
+    }
+
     private static bool WithinInboundBudget(ulong sender, long now)
     {
         if (!Inbound.TryGetValue(sender, out var w) || now - w.start > InboundWindowMs) w = (now, 0);
@@ -849,29 +884,34 @@ internal static class TeamLink
 
     /// <summary>
     /// Host only: introduces a newly linked client to the other linked clients by forwarding a copy of its Hello to
-    /// everyone. They answer it (through us), so the newcomer learns about them as well.
+    /// each of them, addressed to that client. Addressed, it is a probe even for a client that still lists the newcomer
+    /// from before it left and rejoined: every client answers it (through us), so the newcomer learns about them as
+    /// well. The answers are addressed to the newcomer, which answers back only when it has not greeted that client
+    /// lately (it just did), so this never ping-pongs.
     /// </summary>
     private static void ForwardHello(TeamMessage hello)
     {
         var svc = _service;
         if (!IsHost(svc)) return;
-        var others = _linked.Where(id => id != hello.From).ToArray();
-        if (others.Length == 0) return;
-        byte[] bytes;
-        try
+        foreach (var id in _linked)
         {
-            bytes = TeamWire.Encode(new TeamMessage
+            if (id == hello.From) continue;
+            byte[] bytes;
+            try
             {
-                Kind = TeamMessageKind.Hello,
-                From = hello.From,
-                To = 0,
-                FromName = hello.FromName,
-                Text = hello.Text,
-                Time = hello.Time,
-            });
+                bytes = TeamWire.Encode(new TeamMessage
+                {
+                    Kind = TeamMessageKind.Hello,
+                    From = hello.From,
+                    To = id,
+                    FromName = hello.FromName,
+                    Text = hello.Text,
+                    Time = hello.Time,
+                });
+            }
+            catch (Exception) { return; }
+            SendToClient(svc, id, bytes);
         }
-        catch (Exception) { return; }
-        foreach (var id in others) SendToClient(svc, id, bytes);
     }
 
     // ------------------------------------------------------------------------------------------------------------

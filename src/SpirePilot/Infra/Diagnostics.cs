@@ -11,7 +11,8 @@ namespace SpirePilot.Infra;
 
 /// <summary>
 /// Writes a self-contained diagnostics report (versions, patches, missing game members, current screen and snapshot,
-/// recent log) for bug reports. Main thread only. API keys are never included.
+/// recent log) for bug reports. The game parts are read on the main thread, the log tail and the file off it. API
+/// keys are never included.
 /// </summary>
 internal static class Diagnostics
 {
@@ -24,8 +25,26 @@ internal static class Diagnostics
         Converters = { new JsonStringEnumConverter() },
     };
 
-    /// <summary>Builds the report text.</summary>
-    public static string Build()
+    /// <summary>Builds the report text. Any thread.</summary>
+    public static async Task<string> BuildAsync()
+    {
+        var report = await MainThread.Run(BuildGameParts).ConfigureAwait(false);
+        // The log can be megabytes: its tail is read off the main thread.
+        return report + await Task.Run(RecentLog).ConfigureAwait(false);
+    }
+
+    /// <summary>Writes the report next to the log and returns its path. Any thread.</summary>
+    public static async Task<string> WriteAsync()
+    {
+        var report = await BuildAsync().ConfigureAwait(false);
+        var path = Path.Combine(PilotRuntime.DataDir, $"diagnostics-{DateTime.Now:yyyyMMdd-HHmmss}.md");
+        await File.WriteAllTextAsync(path, report).ConfigureAwait(false);
+        ModLog.Info("diagnostics written to " + path);
+        return path;
+    }
+
+    /// <summary>Everything but the log (main thread).</summary>
+    private static string BuildGameParts()
     {
         var sb = new StringBuilder();
         sb.AppendLine("# SpirePilot diagnostics");
@@ -84,15 +103,21 @@ internal static class Diagnostics
         }
         catch (Exception ex) { sb.AppendLine("(snapshot failed: " + ex + ")"); }
 
+        return sb.ToString();
+    }
+
+    private static string RecentLog()
+    {
+        var sb = new StringBuilder();
         sb.AppendLine();
         sb.AppendLine("## Recent log");
         try
         {
-            if (ModLog.FilePath != null && File.Exists(ModLog.FilePath))
+            var lines = ModLog.Tail(200);
+            if (lines.Count > 0)
             {
-                var lines = File.ReadAllLines(ModLog.FilePath);
                 sb.AppendLine("```");
-                foreach (var line in lines.Skip(Math.Max(0, lines.Length - 200))) sb.AppendLine(line);
+                foreach (var line in lines) sb.AppendLine(line);
                 sb.AppendLine("```");
             }
         }
@@ -100,16 +125,8 @@ internal static class Diagnostics
         return sb.ToString();
     }
 
-    /// <summary>Writes the report next to the log and returns its path.</summary>
-    public static string Write()
-    {
-        var path = Path.Combine(PilotRuntime.DataDir, $"diagnostics-{DateTime.Now:yyyyMMdd-HHmmss}.md");
-        File.WriteAllText(path, Build());
-        ModLog.Info("diagnostics written to " + path);
-        return path;
-    }
-
-    private const string CompiledFor =
+    /// <summary>The game branch this DLL was compiled against ("0.107" / "0.111").</summary>
+    internal const string CompiledFor =
 #if STS2_V0107
         "0.107";
 #else

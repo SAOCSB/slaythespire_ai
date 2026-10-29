@@ -102,14 +102,16 @@ public sealed class DecisionEngine
         s.Screen == ScreenKind.Combat && s.Combat != null ? $"combat:{s.Run?.Floor}:{s.Combat.Round}" : $"{s.Screen}:{s.Sequence}";
 
     /// <summary>
-    /// Team messages that deserve a reaction (requests, questions, human chat). Accept/decline answers and chat
-    /// from other AIs are context only — replying to them is how two AIs end up talking forever.
+    /// Team messages that deserve a reaction (requests, questions, human chat, a teammate's "!" or "?"). Accept/decline
+    /// answers, chat from other AIs and other emotes are context only — replying to AI chat is how two AIs end up
+    /// talking forever.
     /// </summary>
     public static bool IsActionable(TeamMessage m) =>
         m.Kind is not (TeamMessageKind.Accept or TeamMessageKind.Decline or TeamMessageKind.Hello) &&
         !(m.FromAi && m.Kind == TeamMessageKind.Chat) &&
         // An AI answering with a counter-request is how two AIs keep each other busy.
-        !(m.FromAi && m.ReplyTo != null);
+        !(m.FromAi && m.ReplyTo != null) &&
+        !(m.IsEmote && !TeamEmotes.AsksForReaction(m));
 
     /// <summary>
     /// Actionable for this AI: requests and questions, plus a "yes" to our own offer or question ("do you need a
@@ -182,7 +184,9 @@ public sealed class DecisionEngine
         var s = OwnerRules.Filtered(snapshot, settings);
         var unread = s.IsMultiplayer ? _team.PeekAiInbox().Where(m => Readable(m, settings)).ToList() : new List<TeamMessage>();
         var ctx = BuildContext(s, settings, unread.Where(NeedsAttention).ToList(), unread.Where(m => !NeedsAttention(m)).ToList(), liveInstruction);
-        ctx.AnsweredOutgoing = unread.Where(AnswersOurs).Select(m => Memory.FindOutgoing(m.ReplyTo)!).ToList();
+        // The pilot's worker may close a request between two lookups: skip it rather than show a null.
+        ctx.AnsweredOutgoing = unread.Where(m => m.Kind is TeamMessageKind.Accept or TeamMessageKind.Decline)
+            .Select(m => Memory.FindOutgoing(m.ReplyTo)).OfType<TeamMessage>().ToList();
         var formatter = new StateFormatter { VerboseCards = settings.Strategy.VerboseCards, IncludePiles = settings.Strategy.IncludePiles };
         return (PromptBuilder.CoreSystem, PromptBuilder.BuildOwnerBlock(settings, MessageLanguage(), CharacterGuide(s)),
             PromptBuilder.BuildUser(s, ctx, formatter));
@@ -426,14 +430,21 @@ public sealed class DecisionEngine
             History = Memory.History,
             Memo = Memory.Memo,
         };
-        if (s.Screen == ScreenKind.Map && s.Map is { } map)
-        {
-            var me = s.LocalPlayer;
-            double hp = me is { MaxHp: > 0 } ? (double)me.Hp / me.MaxHp : 1;
-            ctx.RouteSuggestions = RoutePlanner.Plan(map, settings.Route, hp, me?.Gold ?? 0, 3);
-            ctx.PinnedNext = RoutePlanner.PinnedNext(map, settings.Route, s.Run?.Act ?? 0, s.Run?.Seed);
-        }
+        (ctx.RouteSuggestions, ctx.PinnedNext) = Routes(s, settings);
         return ctx;
+    }
+
+    /// <summary>
+    /// What the prompt's [ROUTES] block shows on the map screen: the planner's best paths from here and the pinned
+    /// route's next node. Nothing on other screens.
+    /// </summary>
+    public static (List<RoutePath> Routes, string? PinnedNext) Routes(GameSnapshot s, PilotSettings settings)
+    {
+        if (s.Screen != ScreenKind.Map || s.Map is not { } map) return (new List<RoutePath>(), null);
+        var me = s.LocalPlayer;
+        double hp = me is { MaxHp: > 0 } ? (double)me.Hp / me.MaxHp : 1;
+        return (RoutePlanner.Plan(map, settings.Route, hp, me?.Gold ?? 0, 3),
+            RoutePlanner.PinnedNext(map, settings.Route, s.Run?.Act ?? 0, s.Run?.Seed));
     }
 
     /// <summary>True while the breaker is open. Changed LLM settings close it at once: the old failures were about the old ones.</summary>

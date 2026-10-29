@@ -37,6 +37,11 @@ public sealed class LlmResponse
     /// <summary>Model that actually produced the answer, when reported.</summary>
     public string? Model { get; init; }
     public TimeSpan Elapsed { get; init; }
+    /// <summary>
+    /// The reasoning effort the answered request was sent with (null = none). It differs from the configured one when
+    /// the server rejected that value and the client fell back.
+    /// </summary>
+    public string? Effort { get; set; }
 }
 
 /// <summary>Raised for failures the caller may show to the user. <see cref="Retryable"/> tells the retry loop what to do.</summary>

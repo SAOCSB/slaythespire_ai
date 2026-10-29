@@ -49,8 +49,12 @@ public static class LlmClientFactory
                (b[0] == 100 && b[1] >= 64 && b[1] <= 127); // CGNAT / Tailscale
     }
 
-    /// <summary>Sends a tiny request to check that the endpoint, key and model work.</summary>
-    public static async Task<LlmResponse> TestAsync(LlmProfile profile, CancellationToken cancellationToken)
+    /// <summary>
+    /// Sends a tiny request to check that the endpoint, key and model work, with <paramref name="effort"/> instead of
+    /// the profile's general effort when set (the combat effort). <see cref="LlmResponse.Effort"/> tells whether the
+    /// server took that effort.
+    /// </summary>
+    public static async Task<LlmResponse> TestAsync(LlmProfile profile, CancellationToken cancellationToken, string? effort = null)
     {
         var client = Create(profile);
         var request = new LlmRequest
@@ -59,6 +63,7 @@ public static class LlmClientFactory
             Messages = { new LlmMessage(LlmRole.User, "Reply exactly with {\"ok\": true}") },
             JsonSchema = """{"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"],"additionalProperties":false}""",
             MaxTokens = Math.Min(profile.MaxTokens, 2048),
+            Effort = effort,
         };
         return await client.CompleteAsync(request, cancellationToken).ConfigureAwait(false);
     }
