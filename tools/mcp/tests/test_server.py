@@ -49,7 +49,8 @@ class FakeMod:
         self.on_act = None  # callback(action) that changes self.state after a successful act
         self.executed: list[dict] = []
         self.posts: list[tuple[str, dict | None]] = []
-        self.owner_forbids: set[str] = set()  # semantic keys an owner rule removed after the client read the menu
+        self.owner_forbids: set[str] = set()  # semantic keys an owner rule removes from every menu the API serves
+        self.version_mismatch: str | None = None  # PilotRuntime.VersionProblemEnglish
         self.rate_limited = False
         self.delivered = True
         self.chat_answer: dict | None = None  # replaces the POST /chat answer when set
@@ -151,7 +152,12 @@ class FakeMod:
             "outputTokens": 900,
             "cachedTokens": 8000,
             "profile": "Claude",
+            "versionMismatch": self.version_mismatch,
         }
+
+    def filtered(self, snap: dict) -> dict:
+        """OwnerRules.Filtered: the owner's rules take actions off the menu; the ids of the others stay."""
+        return {**snap, "actions": [a for a in snap["actions"] if a["semanticKey"] not in self.owner_forbids]}
 
     def snapshot(self) -> dict | None:
         if self.state is None:
@@ -174,7 +180,7 @@ class FakeMod:
             return 200, self.status()
         if (method, path) == ("GET", "/state"):
             snap = self.snapshot()
-            return (503, {"error": "no game state yet"}) if snap is None else (200, snap)
+            return (503, {"error": "no game state yet"}) if snap is None else (200, self.filtered(snap))
         if (method, path) == ("GET", "/prompt"):
             if self.state is None:
                 return 503, {"error": "no game state yet"}
@@ -191,26 +197,33 @@ class FakeMod:
             return 200, self.compendium[kind]
         if (method, path) == ("POST", "/act"):
             if self.mode not in ("Off", "Advisor") and not self.paused:
-                return 409, {"error": "the built-in pilot is in control; set mode Off or Advisor first (POST /mode)"}
-            snap = self.snapshot()
-            if snap is None:
-                return 503, {"error": "no game state yet"}
-            if not snap["canAct"]:
-                return 409, {"error": "cannot act now: " + snap.get("waitReason", "")}
-            id_, key = (body or {}).get("id"), (body or {}).get("semantic_key")
-            match = [
-                a
-                for a in snap["actions"]
-                if (a["id"].lower() == id_.lower() if id_ is not None else a["semanticKey"] == key)
-            ]
-            if not match:
-                return 404, {
-                    "error": "no such legal action",
-                    "legal": [{"id": a["id"], "label": a["label"]} for a in snap["actions"]],
+                return 409, {
+                    "error": "the built-in pilot is in control; set mode Off or Advisor first (POST /mode)",
+                    "code": "pilot_active",
                 }
+            raw = self.snapshot()
+            if raw is None:
+                return 503, {"error": "no game state yet"}
+            if not raw["canAct"]:
+                return 409, {"error": "cannot act now: " + raw.get("waitReason", "")}
+            snap = self.filtered(raw)
+            id_, key = (body or {}).get("id"), (body or {}).get("semantic_key")
+
+            def find(s: dict) -> list[dict]:
+                return [
+                    a
+                    for a in s["actions"]
+                    if (a["id"].lower() == id_.lower() if id_ is not None else a["semanticKey"] == key)
+                ]
+
+            match = find(snap)
+            if not match:
+                legal = [{"id": a["id"], "label": a["label"]} for a in snap["actions"]]
+                if find(raw):
+                    error = "the owner's settings do not allow this action"
+                    return 403, {"error": error, "code": "owner_rule", "legal": legal}
+                return 404, {"error": "no such legal action", "legal": legal}
             action = match[0]
-            if action["semanticKey"] in self.owner_forbids:
-                return 403, {"error": "the owner's settings do not allow this action", "code": "owner_rule"}
             ok, message = self.act_result
             self.executed.append(action)
             if ok and self.on_act:
@@ -224,6 +237,8 @@ class FakeMod:
             modes = {m.lower(): m for m in ("FullAuto", "CombatOnly", "OutOfCombatOnly", "Advisor", "Off")}
             if str((body or {}).get("mode", "")).lower() not in modes:
                 return 400, {"error": "unknown mode"}
+            if self.version_mismatch and modes[body["mode"].lower()] != "Off":
+                return 409, {"error": self.version_mismatch, "code": "version_mismatch"}
             self.mode = modes[body["mode"].lower()]
             return 200, self.status()
         if (method, path) == ("POST", "/instruction"):
@@ -403,9 +418,10 @@ def test_act_refuses_ids_never_shown_or_gone(fake):
     with pytest.raises(srv.SpirePilotError, match="a99 was not in the last menu"):
         run(srv.act(id="a99"))
     fake.state["actions"] = fake.state["actions"][:3]
-    with pytest.raises(srv.SpirePilotError, match="a10 no longer exists"):
+    with pytest.raises(srv.SpirePilotError, match="a10 no longer exists.*That action is no longer available"):
         run(srv.act(id="a10"))
-    assert act_posts(fake) == []
+    # Sent by its key all the same, so the mod can tell an owner rule from a state change; it answered 404.
+    assert act_posts(fake) == [{"semantic_key": "end_turn"}] and fake.executed == []
 
 
 def test_act_by_semantic_key(fake):
@@ -413,6 +429,7 @@ def test_act_by_semantic_key(fake):
     assert act_posts(fake) == [{"semantic_key": "end_turn"}]
     with pytest.raises(srv.SpirePilotError, match="No legal action has semantic_key 'map:1,7'"):
         run(srv.act(semantic_key="map:1,7"))
+    assert len(fake.executed) == 1
 
 
 def test_act_needs_exactly_one_argument(fake):
@@ -475,11 +492,11 @@ def test_read_chat(fake):
     run(srv.get_state())  # player names come from the last snapshot
     lines = run(srv.read_chat()).splitlines()
     assert lines[0] == (
-        "14:02:51 ← Mika (AI) → everyone | request_potion [id 4f2a9c01d2e3]: Could you spare a potion? I need help."
+        "14:02:51 ← Mika (AI) → everyone | request_potion #4f2a9c01d2e3: Could you spare a potion? I need help."
     )
-    assert lines[1].startswith("14:03:05 → Yang (AI) → Mika | offer_potion [id 77aa01bb02cc]: I have Block Potion.")
+    assert lines[1].startswith("14:03:05 → Yang (AI) → Mika | offer_potion #77aa01bb02cc: I have Block Potion.")
     assert lines[1].endswith("[not delivered: no teammate runs SpirePilot]")
-    assert lines[2] == "14:03:12 ← Mika → everyone | accept [id 9e8d7c6b5a40, reply to 77aa01bb02cc]: Yes please!"
+    assert lines[2] == "14:03:12 ← Mika → everyone | accept #9e8d7c6b5a40 re #77aa01bb02cc: Yes please!"
     assert len(run(srv.read_chat(limit=1)).splitlines()) == 1
     del fake.chat[0]["id"]  # mods before message ids
     assert run(srv.read_chat()).splitlines()[0].startswith("14:02:51 ← Mika (AI) → everyone | request_potion: Could")
@@ -526,9 +543,15 @@ def test_send_chat_answers_a_request_with_reply_to(fake):
     assert text.startswith("Sent to Mika (accept)")
     run(srv.send_chat("Sorry, I need it.", kind="decline", reply_to="4f2a9c01d2e3"))
     assert fake.posts[-1][1]["kind"] == "decline" and fake.posts[-1][1]["reply_to"] == "4f2a9c01d2e3"
+    # Models copy what read_chat shows around the id.
+    for shown in ("#4f2a9c01d2e3", "re #4f2a9c01d2e3", "[id 4f2a9c01d2e3]", "ID: 4f2a9c01d2e3"):
+        run(srv.send_chat("Sure.", kind="accept", reply_to=shown))
+        assert fake.posts[-1][1]["reply_to"] == "4f2a9c01d2e3", shown
     posted = len(fake.posts)
     with pytest.raises(srv.SpirePilotError, match="accept answers a message: pass reply_to"):
         run(srv.send_chat("ok", kind="accept"))
+    with pytest.raises(srv.SpirePilotError, match="decline answers a message: pass reply_to"):
+        run(srv.send_chat("no", kind="decline", reply_to=" # "))
     assert len(fake.posts) == posted
     tool = next(t for t in run(srv.mcp.list_tools()) if t.name == "send_chat")
     params = tool.model_dump(by_alias=True)["inputSchema"]["properties"]
@@ -542,21 +565,44 @@ def test_send_chat_to_teammates_without_the_mod_reports_the_emote(fake):
     assert text == not_sent + "they see the game's ThumbUp emote instead."
     fake.chat_answer = {"delivered": False, "emote": None, "reason": "no_reader"}
     assert run(srv.send_chat("Nice run so far")) == not_sent + "chat has no emote, so they see nothing."
+    # A kind with an emote that was not shown (repeat, budget spent, or the game could not show it).
+    text = run(srv.send_chat("Potion please", kind="request_potion"))
+    assert text.startswith(not_sent + "no emote was shown either (") and text.endswith("so nothing reached them.")
 
 
 def test_act_403_when_an_owner_rule_forbids_the_action(fake):
+    fire = "potion:FIRE_POTION@E:NIBBIT#0"
     run(srv.get_state())  # a7 = Fire Potion → Nibbit
-    fake.owner_forbids = {"potion:FIRE_POTION@E:NIBBIT#0"}
+    # The owner changes a rule: the action leaves the menu /state serves, so act cannot find it there either.
+    fake.owner_forbids = {fire}
     with pytest.raises(srv.SpirePilotError) as err:
         run(srv.act(id="a7"))
     msg = str(err.value)
     assert msg.startswith("The owner's rules forbid this action (the owner's settings do not allow this action)")
     assert "Nothing was done." in msg and "Current menu:\na0 | Play Bash" in msg
-    assert fake.executed == []
+    assert "a7 |" not in msg and "a8 | Use potion Fire Potion → Shrinker Beetle" in msg  # the other ids stay
+    assert act_posts(fake) == [{"semantic_key": fire}] and fake.executed == []
     with pytest.raises(srv.SpirePilotError, match="owner's rules forbid"):
-        run(srv.act(semantic_key="potion:FIRE_POTION@E:NIBBIT#0"))
+        run(srv.act(semantic_key=fire))
+    assert "a7 |" not in run(srv.get_state())
     run(srv.act(id="a0"))
     assert [a["semanticKey"] for a in fake.executed] == ["play:BASH@E:NIBBIT#0"]
+
+
+def test_wrong_build_for_the_game_version(fake):
+    fake.version_mismatch = (
+        "this SpirePilot build is for game 0.107, but the game is 0.111.0: the AI stays off; install the 0.111 build"
+    )
+    text = run(srv.status())
+    assert "Wrong SpirePilot build for this game (this SpirePilot build is for game 0.107" in text
+    assert "You can act" not in text
+    with pytest.raises(srv.SpirePilotError, match="Wrong SpirePilot build.*The mode stays Off"):
+        run(srv.set_mode("FullAuto"))
+    assert fake.mode == "Off" and "Wrong SpirePilot build" in run(srv.set_mode("Off"))
+    run(srv.get_state())
+    with pytest.raises(srv.SpirePilotError, match="Wrong SpirePilot build.*Nothing was done"):
+        run(srv.act(id="a0"))
+    assert act_posts(fake) == []
 
 
 def test_get_prompt(fake):
