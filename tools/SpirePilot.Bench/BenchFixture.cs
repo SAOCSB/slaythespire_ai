@@ -158,10 +158,19 @@ public static class FixtureValidator
         }
 
         if (s.Actions.Count == 0) problems.Add("snapshot has no actions");
+        bool idsReported = false;
         for (int i = 0; i < s.Actions.Count; i++)
         {
             var a = s.Actions[i];
-            if (a.Id != "a" + i) problems.Add($"action #{i} has id \"{a.Id}\", expected \"a{i}\" (ids are a0..aN in order)");
+            if (a.Id != "a" + i && !idsReported)
+            {
+                // Reported once: a gap shifts every later id.
+                idsReported = true;
+                problems.Add($"action #{i} has id \"{a.Id}\", expected \"a{i}\": ids must be a0..aN in order. GET /state keeps the " +
+                             "game's ids when an owner rule (allowed characters, potion giving off) removed actions, so a capture taken " +
+                             "with such rules on has gaps: renumber the menu a0..aN and name actions by semantic key, not id, in " +
+                             "expect_any / forbid, or capture with those rules off and set them in the fixture's \"settings\"");
+            }
             if (string.IsNullOrWhiteSpace(a.SemanticKey)) problems.Add($"{a.Id} has no semanticKey");
             if (string.IsNullOrWhiteSpace(a.Label)) problems.Add($"{a.Id} has no label");
             problems.AddRange(CheckConsistency(a, s));

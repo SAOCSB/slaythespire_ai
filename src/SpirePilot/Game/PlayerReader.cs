@@ -58,17 +58,19 @@ internal static class PlayerReader
     private const int MaxBossMonsters = 3;
     private static string _bossKey = "";
     private static string? _bossNotes;
+    private static string _bossFailedKey = "";
 
     /// <summary>
     /// What is known about the act's boss fight before it starts: each monster with its HP and the names of its moves
     /// (the monster's localization entries; intents, numbers and powers only exist once the fight runs). Cached per
-    /// act, bosses and game language; null when nothing could be read.
+    /// act, bosses and game language once something was read; null (and retried on the next capture) when nothing was.
     /// </summary>
     private static string? BossNotes(ActModel act, List<EncounterModel> bosses)
     {
         string key = RuntimeHelpers.GetHashCode(act) + "|" + string.Join(",", bosses.Select(ModelText.SafeId)) + "|" + ModelText.GameLanguage();
         if (key == _bossKey) return _bossNotes;
         var fights = new List<string>();
+        var failures = new List<string>();
         foreach (var boss in bosses)
         {
             var monsters = new List<string>();
@@ -77,11 +79,20 @@ internal static class PlayerReader
                 foreach (var monster in boss.AllPossibleMonsters.Where(m => m != null).DistinctBy(ModelText.SafeId).Take(MaxBossMonsters))
                     monsters.Add(MonsterNote(monster));
             }
-            catch (Exception) { /* encounter not readable before the fight */ }
+            catch (Exception ex) { failures.Add($"{ModelText.SafeId(boss)}: {ex.GetType().Name}"); }
             if (monsters.Count > 0) fights.Add(string.Join("; ", monsters));
         }
+        if (fights.Count == 0)
+        {
+            // Right after an act starts the encounter may not be readable yet: only a failure that repeats is logged.
+            if (bosses.Count > 0 && key == _bossFailedKey)
+                ThrottledLog.Warn("boss-notes", "boss notes: no boss monsters readable for " + string.Join(", ", bosses.Select(ModelText.SafeId)) +
+                                                (failures.Count > 0 ? " (" + string.Join("; ", failures) + ")" : ""));
+            _bossFailedKey = key;
+            return null;
+        }
         _bossKey = key;
-        _bossNotes = fights.Count > 0 ? string.Join(" / ", fights) : null;
+        _bossNotes = string.Join(" / ", fights);
         return _bossNotes;
     }
 

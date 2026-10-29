@@ -357,5 +357,22 @@ internal static class UiStrings
         ("ui.misc.version", "SpirePilot v{0}", "SpirePilot v{0}"),
         ("ui.misc.settings_file", "设置文件: {0}", "Settings file: {0}"),
         ("ui.team.sent_and_emote", "已发送（没有 SpirePilot 的队友看到了对应的表情）", "Sent (teammates without SpirePilot saw the matching emote)"),
+
+        // ---- game version notices ----
+        ("ui.version.untested", "这个 SpirePilot 是为游戏 {0} 编译的，当前游戏 {1} 更新，未经测试：AI 照常运行，但部分功能可能失效。请留意 SpirePilot 更新。",
+            "This SpirePilot build is for game {0}; game {1} is newer and untested: the AI runs, but parts may not work. Check for a SpirePilot update."),
+        ("ui.version.forced", "这个 SpirePilot 是为游戏 {0} 编译的，当前游戏是 {1}：已按你的选择仍然运行，可能读错界面或操作失败。",
+            "This SpirePilot build is for game {0}, but the game is {1}: running anyway as you chose; screens may be misread and actions may fail."),
+        ("ui.version.no_build", "这个 SpirePilot 是为游戏 {0} 编译的，当前游戏是 {1}：AI 已关闭。还没有适用于游戏 {2} 的 SpirePilot，请检查 SpirePilot 更新。",
+            "This SpirePilot build is for game {0}, but the game is {1}: the AI is off. There is no SpirePilot build for game {2} yet: check for a SpirePilot update."),
+        ("ui.version.no_build_try", "这个 SpirePilot 是为游戏 {0} 编译的，当前游戏是 {1}：AI 已关闭。还没有适用于游戏 {2} 的 SpirePilot：请检查 SpirePilot 更新，或试试 {3} 版本（未在这个游戏版本上测试）。",
+            "This SpirePilot build is for game {0}, but the game is {1}: the AI is off. There is no SpirePilot build for game {2} yet: check for a SpirePilot update, or try the {3} build (untested on this game)."),
+        ("ui.version.run_anyway", "仍然运行（风险自负）", "Run anyway (at your own risk)"),
+        ("ui.version.run_anyway_tip", "游戏版本与这个构建不兼容：AI 可能读错界面、操作失败。打开时模式会切到“关闭”，再选要运行的模式。只对这个游戏版本和构建有效；设置会保存，可随时关闭。",
+            "This build is not made for this game version: the AI may misread screens and actions may fail. Turning this on sets the mode to Off: then pick the mode to run in. It holds for this game version and build only; saved in the settings, turn it off any time."),
+        ("ui.version.toast_off", "这个 SpirePilot 是为游戏 {0} 编译的，当前游戏是 {1}：AI 已关闭。详见面板的“{2}”页。",
+            "This SpirePilot build is for game {0}, but the game is {1}: the AI is off. See the panel's {2} tab."),
+        ("ui.version.toast_runs", "这个 SpirePilot 是为游戏 {0} 编译的，当前游戏是 {1}：AI 在未经测试的版本上运行。详见面板的“{2}”页。",
+            "This SpirePilot build is for game {0}, but the game is {1}: the AI runs untested. See the panel's {2} tab."),
     };
 }

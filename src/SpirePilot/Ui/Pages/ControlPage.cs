@@ -18,6 +18,8 @@ internal sealed class ControlPage : Page
     private Label _stateLabel = null!;
     private Label _statusText = null!;
     private Label _lastEvent = null!;
+    private Label _versionNote = null!;
+    private CheckButton _runAnyway = null!;
     private readonly Dictionary<PilotMode, Button> _modeButtons = new();
     private Label _modeTip = null!;
     private Button _pause = null!;
@@ -64,6 +66,13 @@ internal sealed class ControlPage : Page
         _lastEvent.AutowrapMode = TextServer.AutowrapMode.Off;
         _lastEvent.ClipText = true;
         status.AddChild(_lastEvent);
+        // Game version notice; on an incompatible game the owner may run the build anyway.
+        _versionNote = UiKit.Label("", UiTheme.FontSmall, UiTheme.Warn);
+        _versionNote.Visible = false;
+        status.AddChild(_versionNote);
+        _runAnyway = UiKit.Switch(L10n.T("ui.version.run_anyway"), SetRunAnyway, L10n.T("ui.version.run_anyway_tip"));
+        _runAnyway.Visible = false;
+        status.AddChild(_runAnyway);
 
         // ---- mode ----
         var mode = UiKit.Card(Body, L10n.T("ui.ctl.mode"));
@@ -166,7 +175,9 @@ internal sealed class ControlPage : Page
     {
         var loop = PilotRuntime.Loop;
         var status = loop.Status;
-        var mode = PilotRuntime.Settings.Control.Mode;
+        // While the game version blocks the AI the saved mode is kept but not used: show Off, and only Off can be chosen.
+        var mode = PilotRuntime.EffectiveMode;
+        bool blocked = PilotRuntime.VersionBlocked;
 
         var color = UiTheme.StateColor(status.State);
         if (_dotStyle.BgColor != color) _dotStyle.BgColor = color;
@@ -176,7 +187,22 @@ internal sealed class ControlPage : Page
         var last = Feeds.LastOf(PilotEventKind.Action, PilotEventKind.Decision, PilotEventKind.Error);
         UiKit.SetText(_lastEvent, last == null ? "" : L10n.T("ui.ctl.last_event", $"{last.Time:HH:mm:ss} {OneLine(last.Text)}"));
 
-        foreach (var (m, b) in _modeButtons) UiKit.SetPressed(b, m == mode);
+        foreach (var (m, b) in _modeButtons)
+        {
+            UiKit.SetPressed(b, m == mode);
+            bool disabled = blocked && m != PilotMode.Off;
+            if (b.Disabled != disabled) b.Disabled = disabled;
+        }
+        var problem = PilotRuntime.VersionProblem;
+        var versionNote = problem ?? PilotRuntime.VersionWarning;
+        UiKit.SetText(_versionNote, versionNote ?? "");
+        UiKit.SetColor(_versionNote, problem != null ? UiTheme.Bad : UiTheme.Warn);
+        _versionNote.Visible = versionNote != null;
+        // Pressed from the live state, not the settings sync: the pairing it stands for is known only once the game
+        // version has been read.
+        bool overridable = PilotRuntime.VersionOverrideKey != null;
+        _runAnyway.Visible = overridable;
+        if (overridable) UiKit.SetPressed(_runAnyway, !blocked);
         UiKit.SetText(_modeTip, L10n.T("ui.mode.tip." + mode));
         UiKit.SetText(_pause, L10n.T(loop.Paused ? "ui.ctl.resume" : "ui.ctl.pause"));
         _pause.Disabled = mode == PilotMode.Off;
@@ -255,6 +281,20 @@ internal sealed class ControlPage : Page
             // Not written to the file, but the mode applies for this session: show the failure in the footer.
             SettingsDraft.Report(ex);
         }
+    }
+
+    /// <summary>
+    /// "Run anyway" holds for this build on this game version only. Switching it on also sets the mode to Off, so the
+    /// AI starts only once the owner picks a mode, never in one saved earlier (perhaps on a matching build).
+    /// </summary>
+    private static void SetRunAnyway(bool on)
+    {
+        if (PilotRuntime.VersionOverrideKey is not { } key) return;
+        Edit(s =>
+        {
+            s.Control.IgnoreGameVersionFor = on ? key : null;
+            if (on) s.Control.Mode = PilotMode.Off;
+        }, now: true);
     }
 
     private static void TogglePause()
