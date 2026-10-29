@@ -49,10 +49,13 @@ class FakeMod:
         self.on_act = None  # callback(action) that changes self.state after a successful act
         self.executed: list[dict] = []
         self.posts: list[tuple[str, dict | None]] = []
+        self.owner_forbids: set[str] = set()  # semantic keys an owner rule removed after the client read the menu
         self.rate_limited = False
         self.delivered = True
+        self.chat_answer: dict | None = None  # replaces the POST /chat answer when set
         self.chat = [
             {
+                "id": "4f2a9c01d2e3",
                 "time": "2026-10-29T14:02:51.1234567+08:00",
                 "incoming": True,
                 "delivered": True,
@@ -63,6 +66,7 @@ class FakeMod:
                 "to": 0,
             },
             {
+                "id": "77aa01bb02cc",
                 "time": "2026-10-29T14:03:05.0000000+08:00",
                 "incoming": False,
                 "delivered": False,
@@ -71,6 +75,18 @@ class FakeMod:
                 "kind": "OfferPotion",
                 "text": "I have Block Potion.",
                 "to": MIKA,
+            },
+            {
+                "id": "9e8d7c6b5a40",
+                "time": "2026-10-29T14:03:12.0000000+08:00",
+                "incoming": True,
+                "delivered": True,
+                "from": "Mika",
+                "fromAi": False,
+                "kind": "accept",
+                "text": "Yes please!",
+                "to": 0,
+                "replyTo": "77aa01bb02cc",
             },
         ]
         self.compendium = {
@@ -193,6 +209,8 @@ class FakeMod:
                     "legal": [{"id": a["id"], "label": a["label"]} for a in snap["actions"]],
                 }
             action = match[0]
+            if action["semanticKey"] in self.owner_forbids:
+                return 403, {"error": "the owner's settings do not allow this action", "code": "owner_rule"}
             ok, message = self.act_result
             self.executed.append(action)
             if ok and self.on_act:
@@ -217,7 +235,7 @@ class FakeMod:
                 return 400, {"error": "text required"}
             if self.rate_limited:
                 return 429, {"error": "rate limited"}
-            return 200, {"delivered": self.delivered}
+            return 200, self.chat_answer or {"delivered": self.delivered, "id": "5b5b5b5b5b5b"}
         return 404, {"error": "unknown endpoint"}
 
 
@@ -456,10 +474,15 @@ def test_give_instruction(fake):
 def test_read_chat(fake):
     run(srv.get_state())  # player names come from the last snapshot
     lines = run(srv.read_chat()).splitlines()
-    assert lines[0] == "14:02:51 ← Mika (AI) → everyone | request_potion: Could you spare a potion? I need help."
-    assert lines[1].startswith("14:03:05 → Yang (AI) → Mika | offer_potion: I have Block Potion.")
+    assert lines[0] == (
+        "14:02:51 ← Mika (AI) → everyone | request_potion [id 4f2a9c01d2e3]: Could you spare a potion? I need help."
+    )
+    assert lines[1].startswith("14:03:05 → Yang (AI) → Mika | offer_potion [id 77aa01bb02cc]: I have Block Potion.")
     assert lines[1].endswith("[not delivered: no teammate runs SpirePilot]")
+    assert lines[2] == "14:03:12 ← Mika → everyone | accept [id 9e8d7c6b5a40, reply to 77aa01bb02cc]: Yes please!"
     assert len(run(srv.read_chat(limit=1)).splitlines()) == 1
+    del fake.chat[0]["id"]  # mods before message ids
+    assert run(srv.read_chat()).splitlines()[0].startswith("14:02:51 ← Mika (AI) → everyone | request_potion: Could")
     fake.chat = []
     assert run(srv.read_chat()) == "No team messages yet."
 
@@ -492,6 +515,48 @@ def test_send_chat(fake):
         run(srv.send_chat("hi again"))
     with pytest.raises(srv.SpirePilotError, match="text is required"):
         run(srv.send_chat("  "))
+
+
+def test_send_chat_answers_a_request_with_reply_to(fake):
+    text = run(srv.send_chat("Sure, here it comes.", kind="accept", recipient="Mika", reply_to=" 4f2a9c01d2e3 "))
+    assert fake.posts[-1] == (
+        "/chat",
+        {"text": "Sure, here it comes.", "kind": "accept", "to": "Mika", "reply_to": "4f2a9c01d2e3"},
+    )
+    assert text.startswith("Sent to Mika (accept)")
+    run(srv.send_chat("Sorry, I need it.", kind="decline", reply_to="4f2a9c01d2e3"))
+    assert fake.posts[-1][1]["kind"] == "decline" and fake.posts[-1][1]["reply_to"] == "4f2a9c01d2e3"
+    posted = len(fake.posts)
+    with pytest.raises(srv.SpirePilotError, match="accept answers a message: pass reply_to"):
+        run(srv.send_chat("ok", kind="accept"))
+    assert len(fake.posts) == posted
+    tool = next(t for t in run(srv.mcp.list_tools()) if t.name == "send_chat")
+    params = tool.model_dump(by_alias=True)["inputSchema"]["properties"]
+    assert {"accept", "decline"} <= set(params["kind"]["enum"]) and "reply_to" in params
+
+
+def test_send_chat_to_teammates_without_the_mod_reports_the_emote(fake):
+    not_sent = "Text not sent: no teammate you addressed runs SpirePilot; "
+    fake.chat_answer = {"delivered": False, "emote": "ThumbUp", "reason": "no_reader"}
+    text = run(srv.send_chat("Yes!", kind="accept", reply_to="4f2a9c01d2e3"))
+    assert text == not_sent + "they see the game's ThumbUp emote instead."
+    fake.chat_answer = {"delivered": False, "emote": None, "reason": "no_reader"}
+    assert run(srv.send_chat("Nice run so far")) == not_sent + "chat has no emote, so they see nothing."
+
+
+def test_act_403_when_an_owner_rule_forbids_the_action(fake):
+    run(srv.get_state())  # a7 = Fire Potion → Nibbit
+    fake.owner_forbids = {"potion:FIRE_POTION@E:NIBBIT#0"}
+    with pytest.raises(srv.SpirePilotError) as err:
+        run(srv.act(id="a7"))
+    msg = str(err.value)
+    assert msg.startswith("The owner's rules forbid this action (the owner's settings do not allow this action)")
+    assert "Nothing was done." in msg and "Current menu:\na0 | Play Bash" in msg
+    assert fake.executed == []
+    with pytest.raises(srv.SpirePilotError, match="owner's rules forbid"):
+        run(srv.act(semantic_key="potion:FIRE_POTION@E:NIBBIT#0"))
+    run(srv.act(id="a0"))
+    assert [a["semanticKey"] for a in fake.executed] == ["play:BASH@E:NIBBIT#0"]
 
 
 def test_get_prompt(fake):
