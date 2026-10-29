@@ -1,0 +1,918 @@
+{
+  "sequence": 412,
+  "screen": "Combat",
+  "screenName": "NCombatRoom",
+  "inRun": true,
+  "isMultiplayer": true,
+  "localPlayerId": 76561198000000001,
+  "canAct": true,
+  "run": {
+    "act": 1,
+    "actName": "Overgrowth",
+    "floor": 7,
+    "ascensionLevel": 2,
+    "seed": "7QK2M9XR",
+    "bossName": "Ceremonial Beast",
+    "isDaily": false,
+    "runTimeSeconds": 1312
+  },
+  "players": [
+    {
+      "netId": 76561198000000001,
+      "name": "Yang",
+      "characterId": "IRONCLAD",
+      "characterName": "Ironclad",
+      "isLocal": true,
+      "isAiControlled": false,
+      "hasTeamLink": true,
+      "isAlive": true,
+      "hp": 62,
+      "maxHp": 80,
+      "block": 0,
+      "gold": 143,
+      "energy": 3,
+      "maxEnergy": 3,
+      "orbSlots": 0,
+      "orbs": [],
+      "powers": [
+        {
+          "id": "STRENGTH_POWER",
+          "name": "Strength",
+          "amount": 1,
+          "isDebuff": false,
+          "description": "Increases attack damage by 1."
+        }
+      ],
+      "potionSlots": 3,
+      "potions": [
+        {
+          "slot": 0,
+          "id": "FIRE_POTION",
+          "name": "Fire Potion",
+          "description": "Deal [gold]20[/gold] damage to target enemy.",
+          "target": "AnyEnemy",
+          "rarity": "Common",
+          "usableNow": true
+        },
+        {
+          "slot": 1,
+          "id": "BLOCK_POTION",
+          "name": "Block Potion",
+          "description": "Gain 12 Block.",
+          "target": "Self",
+          "rarity": "Common",
+          "usableNow": true
+        }
+      ],
+      "relics": [
+        {
+          "id": "BURNING_BLOOD",
+          "name": "Burning Blood",
+          "description": "At the end of combat, heal 6 HP."
+        },
+        {
+          "id": "VAJRA",
+          "name": "Vajra",
+          "description": "At the start of each combat, gain 1 [gold]Strength[/gold]."
+        },
+        {
+          "id": "PEN_NIB",
+          "name": "Pen Nib",
+          "description": "Every 10th Attack you play deals double damage.",
+          "counter": 7
+        }
+      ],
+      "deck": [
+        {
+          "key": "",
+          "id": "STRIKE_IRONCLAD",
+          "name": "Strike",
+          "upgraded": false,
+          "cost": 1,
+          "type": "Attack",
+          "rarity": "Basic",
+          "target": "AnyEnemy",
+          "description": "Deal 6 damage.",
+          "keywords": []
+        },
+        {
+          "key": "",
+          "id": "STRIKE_IRONCLAD",
+          "name": "Strike",
+          "upgraded": false,
+          "cost": 1,
+          "type": "Attack",
+          "rarity": "Basic",
+          "target": "AnyEnemy",
+          "description": "Deal 6 damage.",
+          "keywords": []
+        },
+        {
+          "key": "",
+          "id": "STRIKE_IRONCLAD",
+          "name": "Strike",
+          "upgraded": false,
+          "cost": 1,
+          "type": "Attack",
+          "rarity": "Basic",
+          "target": "AnyEnemy",
+          "description": "Deal 6 damage.",
+          "keywords": []
+        },
+        {
+          "key": "",
+          "id": "STRIKE_IRONCLAD",
+          "name": "Strike",
+          "upgraded": false,
+          "cost": 1,
+          "type": "Attack",
+          "rarity": "Basic",
+          "target": "AnyEnemy",
+          "description": "Deal 6 damage.",
+          "keywords": []
+        },
+        {
+          "key": "",
+          "id": "STRIKE_IRONCLAD",
+          "name": "Strike",
+          "upgraded": false,
+          "cost": 1,
+          "type": "Attack",
+          "rarity": "Basic",
+          "target": "AnyEnemy",
+          "description": "Deal 6 damage.",
+          "keywords": []
+        },
+        {
+          "key": "",
+          "id": "DEFEND_IRONCLAD",
+          "name": "Defend",
+          "upgraded": false,
+          "cost": 1,
+          "type": "Skill",
+          "rarity": "Basic",
+          "target": "Self",
+          "description": "Gain 5 Block.",
+          "keywords": []
+        },
+        {
+          "key": "",
+          "id": "DEFEND_IRONCLAD",
+          "name": "Defend",
+          "upgraded": false,
+          "cost": 1,
+          "type": "Skill",
+          "rarity": "Basic",
+          "target": "Self",
+          "description": "Gain 5 Block.",
+          "keywords": []
+        },
+        {
+          "key": "",
+          "id": "DEFEND_IRONCLAD",
+          "name": "Defend",
+          "upgraded": false,
+          "cost": 1,
+          "type": "Skill",
+          "rarity": "Basic",
+          "target": "Self",
+          "description": "Gain 5 Block.",
+          "keywords": []
+        },
+        {
+          "key": "",
+          "id": "DEFEND_IRONCLAD",
+          "name": "Defend",
+          "upgraded": false,
+          "cost": 1,
+          "type": "Skill",
+          "rarity": "Basic",
+          "target": "Self",
+          "description": "Gain 5 Block.",
+          "keywords": []
+        },
+        {
+          "key": "",
+          "id": "BASH",
+          "name": "Bash",
+          "upgraded": false,
+          "cost": 2,
+          "type": "Attack",
+          "rarity": "Basic",
+          "target": "AnyEnemy",
+          "description": "Deal 8 damage. Apply 2 Vulnerable.",
+          "keywords": []
+        },
+        {
+          "key": "",
+          "id": "POMMEL_STRIKE",
+          "name": "Pommel Strike",
+          "upgraded": true,
+          "cost": 1,
+          "type": "Attack",
+          "rarity": "Common",
+          "target": "AnyEnemy",
+          "description": "Deal 10 damage. Draw 2 cards.",
+          "keywords": []
+        },
+        {
+          "key": "",
+          "id": "INFLAME",
+          "name": "Inflame",
+          "upgraded": false,
+          "cost": 1,
+          "type": "Power",
+          "rarity": "Uncommon",
+          "target": "Self",
+          "description": "Gain 2 [gold]Strength[/gold].",
+          "keywords": []
+        }
+      ],
+      "deckCount": 12,
+      "companions": [],
+      "endedTurn": false,
+      "handCount": 5
+    },
+    {
+      "netId": 76561198000000002,
+      "name": "Mika",
+      "characterId": "SILENT",
+      "characterName": "Silent",
+      "isLocal": false,
+      "isAiControlled": true,
+      "hasTeamLink": true,
+      "isAlive": true,
+      "hp": 31,
+      "maxHp": 70,
+      "block": 5,
+      "gold": 99,
+      "energy": 1,
+      "maxEnergy": 3,
+      "orbSlots": 0,
+      "orbs": [],
+      "powers": [
+        {
+          "id": "WEAK_POWER",
+          "name": "Weak",
+          "amount": 1,
+          "isDebuff": true,
+          "description": "Deals 25% less attack damage."
+        }
+      ],
+      "potionSlots": 3,
+      "potions": [
+        {
+          "slot": 0,
+          "id": "WEAK_POTION",
+          "name": "Weak Potion",
+          "description": "Apply 3 Weak.",
+          "target": "AnyEnemy",
+          "rarity": "Common",
+          "usableNow": true
+        }
+      ],
+      "relics": [
+        {
+          "id": "RING_OF_THE_SNAKE",
+          "name": "Ring of the Snake",
+          "description": "At the start of each combat, draw 2 additional cards."
+        }
+      ],
+      "deck": [],
+      "deckCount": 15,
+      "companions": [],
+      "endedTurn": false,
+      "handCount": 4
+    }
+  ],
+  "combat": {
+    "round": 2,
+    "isPlayerTurn": true,
+    "encounterType": "Normal",
+    "encounterName": "Nibbits and Beetle",
+    "hand": [
+      {
+        "key": "h0",
+        "id": "STRIKE_IRONCLAD",
+        "name": "Strike",
+        "upgraded": false,
+        "cost": 1,
+        "type": "Attack",
+        "rarity": "Basic",
+        "target": "AnyEnemy",
+        "description": "Deal [blue]7[/blue] damage.",
+        "keywords": []
+      },
+      {
+        "key": "h1",
+        "id": "BASH",
+        "name": "Bash",
+        "upgraded": false,
+        "cost": 2,
+        "type": "Attack",
+        "rarity": "Basic",
+        "target": "AnyEnemy",
+        "description": "Deal 10 damage. Apply 2 [gold]Vulnerable[/gold].",
+        "keywords": []
+      },
+      {
+        "key": "h2",
+        "id": "DEFEND_IRONCLAD",
+        "name": "Defend",
+        "upgraded": false,
+        "cost": 1,
+        "type": "Skill",
+        "rarity": "Basic",
+        "target": "Self",
+        "description": "Gain 5 [gold]Block[/gold].",
+        "keywords": []
+      },
+      {
+        "key": "h3",
+        "id": "POMMEL_STRIKE",
+        "name": "Pommel Strike",
+        "upgraded": true,
+        "cost": 1,
+        "type": "Attack",
+        "rarity": "Common",
+        "target": "AnyEnemy",
+        "description": "Deal 11 damage.\nDraw 2 cards.",
+        "keywords": []
+      },
+      {
+        "key": "h4",
+        "id": "WOUND",
+        "name": "Wound",
+        "upgraded": false,
+        "type": "Status",
+        "rarity": "Status",
+        "target": "None",
+        "description": "Unplayable.",
+        "keywords": [
+          "Unplayable"
+        ],
+        "playable": false,
+        "unplayableReason": "Unplayable"
+      }
+    ],
+    "drawPileCount": 4,
+    "discardPileCount": 4,
+    "exhaustPileCount": 0,
+    "drawPile": [
+      {
+        "key": "",
+        "id": "INFLAME",
+        "name": "Inflame",
+        "upgraded": false,
+        "cost": 1,
+        "type": "Power",
+        "rarity": "Uncommon",
+        "target": "Self",
+        "description": "Gain 2 [gold]Strength[/gold].",
+        "keywords": []
+      },
+      {
+        "key": "",
+        "id": "DEFEND_IRONCLAD",
+        "name": "Defend",
+        "upgraded": false,
+        "cost": 1,
+        "type": "Skill",
+        "rarity": "Basic",
+        "target": "Self",
+        "description": "Gain 5 Block.",
+        "keywords": []
+      },
+      {
+        "key": "",
+        "id": "STRIKE_IRONCLAD",
+        "name": "Strike",
+        "upgraded": false,
+        "cost": 1,
+        "type": "Attack",
+        "rarity": "Basic",
+        "target": "AnyEnemy",
+        "description": "Deal 6 damage.",
+        "keywords": []
+      },
+      {
+        "key": "",
+        "id": "STRIKE_IRONCLAD",
+        "name": "Strike",
+        "upgraded": false,
+        "cost": 1,
+        "type": "Attack",
+        "rarity": "Basic",
+        "target": "AnyEnemy",
+        "description": "Deal 6 damage.",
+        "keywords": []
+      }
+    ],
+    "discardPile": [
+      {
+        "key": "",
+        "id": "STRIKE_IRONCLAD",
+        "name": "Strike",
+        "upgraded": false,
+        "cost": 1,
+        "type": "Attack",
+        "rarity": "Basic",
+        "target": "AnyEnemy",
+        "description": "Deal 6 damage.",
+        "keywords": []
+      },
+      {
+        "key": "",
+        "id": "DEFEND_IRONCLAD",
+        "name": "Defend",
+        "upgraded": false,
+        "cost": 1,
+        "type": "Skill",
+        "rarity": "Basic",
+        "target": "Self",
+        "description": "Gain 5 Block.",
+        "keywords": []
+      },
+      {
+        "key": "",
+        "id": "STRIKE_IRONCLAD",
+        "name": "Strike",
+        "upgraded": false,
+        "cost": 1,
+        "type": "Attack",
+        "rarity": "Basic",
+        "target": "AnyEnemy",
+        "description": "Deal 6 damage.",
+        "keywords": []
+      },
+      {
+        "key": "",
+        "id": "DEFEND_IRONCLAD",
+        "name": "Defend",
+        "upgraded": false,
+        "cost": 1,
+        "type": "Skill",
+        "rarity": "Basic",
+        "target": "Self",
+        "description": "Gain 5 Block.",
+        "keywords": []
+      }
+    ],
+    "exhaustPile": [],
+    "enemies": [
+      {
+        "key": "e0",
+        "id": "NIBBIT",
+        "name": "Nibbit",
+        "hp": 28,
+        "maxHp": 44,
+        "block": 0,
+        "isAlive": true,
+        "powers": [
+          {
+            "id": "VULNERABLE_POWER",
+            "name": "Vulnerable",
+            "amount": 1,
+            "isDebuff": true,
+            "description": "Takes 50% more damage from attacks."
+          }
+        ],
+        "intents": [
+          {
+            "type": "Attack",
+            "damage": 12,
+            "hits": 1,
+            "targetName": "Yang"
+          }
+        ]
+      },
+      {
+        "key": "e1",
+        "id": "SHRINKER_BEETLE",
+        "name": "Shrinker Beetle",
+        "hp": 19,
+        "maxHp": 38,
+        "block": 6,
+        "isAlive": true,
+        "powers": [],
+        "intents": [
+          {
+            "type": "Attack",
+            "damage": 4,
+            "hits": 2,
+            "targetName": "Mika"
+          },
+          {
+            "type": "Debuff",
+            "description": "Will apply Shrink."
+          }
+        ]
+      },
+      {
+        "key": "e2",
+        "id": "NIBBIT",
+        "name": "Nibbit",
+        "hp": 0,
+        "maxHp": 44,
+        "block": 0,
+        "isAlive": false,
+        "powers": [],
+        "intents": []
+      }
+    ]
+  },
+  "actions": [
+    {
+      "id": "a0",
+      "kind": "PlayCard",
+      "label": "Play Bash → Nibbit (10 dmg, 2 Vulnerable)",
+      "args": {
+        "index": "1",
+        "target": "e0"
+      },
+      "semanticKey": "play:BASH@E:NIBBIT#0",
+      "unpredictable": false
+    },
+    {
+      "id": "a1",
+      "kind": "PlayCard",
+      "label": "Play Bash → Shrinker Beetle (10 dmg, 2 Vulnerable)",
+      "args": {
+        "index": "1",
+        "target": "e1"
+      },
+      "semanticKey": "play:BASH@E:SHRINKER_BEETLE#0",
+      "unpredictable": false
+    },
+    {
+      "id": "a2",
+      "kind": "PlayCard",
+      "label": "Play Strike → Nibbit (10 dmg)",
+      "args": {
+        "index": "0",
+        "target": "e0"
+      },
+      "semanticKey": "play:STRIKE_IRONCLAD@E:NIBBIT#0",
+      "unpredictable": false
+    },
+    {
+      "id": "a3",
+      "kind": "PlayCard",
+      "label": "Play Strike → Shrinker Beetle (7 dmg)",
+      "args": {
+        "index": "0",
+        "target": "e1"
+      },
+      "semanticKey": "play:STRIKE_IRONCLAD@E:SHRINKER_BEETLE#0",
+      "unpredictable": false
+    },
+    {
+      "id": "a4",
+      "kind": "PlayCard",
+      "label": "Play Pommel Strike+ → Nibbit (16 dmg, draw 2)",
+      "args": {
+        "index": "3",
+        "target": "e0"
+      },
+      "semanticKey": "play:POMMEL_STRIKE+1@E:NIBBIT#0",
+      "unpredictable": true
+    },
+    {
+      "id": "a5",
+      "kind": "PlayCard",
+      "label": "Play Pommel Strike+ → Shrinker Beetle (11 dmg, draw 2)",
+      "args": {
+        "index": "3",
+        "target": "e1"
+      },
+      "semanticKey": "play:POMMEL_STRIKE+1@E:SHRINKER_BEETLE#0",
+      "unpredictable": true
+    },
+    {
+      "id": "a6",
+      "kind": "PlayCard",
+      "label": "Play Defend (5 block)",
+      "args": {
+        "index": "2"
+      },
+      "semanticKey": "play:DEFEND_IRONCLAD@-",
+      "unpredictable": false
+    },
+    {
+      "id": "a7",
+      "kind": "UsePotion",
+      "label": "Use potion Fire Potion → Nibbit (30 dmg)",
+      "args": {
+        "slot": "0",
+        "target": "e0"
+      },
+      "semanticKey": "potion:FIRE_POTION@E:NIBBIT#0",
+      "unpredictable": false
+    },
+    {
+      "id": "a8",
+      "kind": "UsePotion",
+      "label": "Use potion Fire Potion → Shrinker Beetle (20 dmg)",
+      "args": {
+        "slot": "0",
+        "target": "e1"
+      },
+      "semanticKey": "potion:FIRE_POTION@E:SHRINKER_BEETLE#0",
+      "unpredictable": false
+    },
+    {
+      "id": "a9",
+      "kind": "UsePotion",
+      "label": "Use potion Block Potion (12 block)",
+      "args": {
+        "slot": "1"
+      },
+      "semanticKey": "potion:BLOCK_POTION@-",
+      "unpredictable": false
+    },
+    {
+      "id": "a10",
+      "kind": "EndTurn",
+      "label": "End turn",
+      "args": {},
+      "semanticKey": "end_turn",
+      "unpredictable": false
+    }
+  ],
+  "notes": [],
+  "glossary": {
+    "Vulnerable": "Takes [gold]50%[/gold] more damage from Attacks.",
+    "Block": "Until next turn, prevents damage.",
+    "Strength": "Increases attack damage by 1 per stack.",
+    "Weak": "Deals 25% less damage with Attacks."
+  },
+  "localPlayer": {
+    "netId": 76561198000000001,
+    "name": "Yang",
+    "characterId": "IRONCLAD",
+    "characterName": "Ironclad",
+    "isLocal": true,
+    "isAiControlled": false,
+    "hasTeamLink": true,
+    "isAlive": true,
+    "hp": 62,
+    "maxHp": 80,
+    "block": 0,
+    "gold": 143,
+    "energy": 3,
+    "maxEnergy": 3,
+    "orbSlots": 0,
+    "orbs": [],
+    "powers": [
+      {
+        "id": "STRENGTH_POWER",
+        "name": "Strength",
+        "amount": 1,
+        "isDebuff": false,
+        "description": "Increases attack damage by 1."
+      }
+    ],
+    "potionSlots": 3,
+    "potions": [
+      {
+        "slot": 0,
+        "id": "FIRE_POTION",
+        "name": "Fire Potion",
+        "description": "Deal [gold]20[/gold] damage to target enemy.",
+        "target": "AnyEnemy",
+        "rarity": "Common",
+        "usableNow": true
+      },
+      {
+        "slot": 1,
+        "id": "BLOCK_POTION",
+        "name": "Block Potion",
+        "description": "Gain 12 Block.",
+        "target": "Self",
+        "rarity": "Common",
+        "usableNow": true
+      }
+    ],
+    "relics": [
+      {
+        "id": "BURNING_BLOOD",
+        "name": "Burning Blood",
+        "description": "At the end of combat, heal 6 HP."
+      },
+      {
+        "id": "VAJRA",
+        "name": "Vajra",
+        "description": "At the start of each combat, gain 1 [gold]Strength[/gold]."
+      },
+      {
+        "id": "PEN_NIB",
+        "name": "Pen Nib",
+        "description": "Every 10th Attack you play deals double damage.",
+        "counter": 7
+      }
+    ],
+    "deck": [
+      {
+        "key": "",
+        "id": "STRIKE_IRONCLAD",
+        "name": "Strike",
+        "upgraded": false,
+        "cost": 1,
+        "type": "Attack",
+        "rarity": "Basic",
+        "target": "AnyEnemy",
+        "description": "Deal 6 damage.",
+        "keywords": []
+      },
+      {
+        "key": "",
+        "id": "STRIKE_IRONCLAD",
+        "name": "Strike",
+        "upgraded": false,
+        "cost": 1,
+        "type": "Attack",
+        "rarity": "Basic",
+        "target": "AnyEnemy",
+        "description": "Deal 6 damage.",
+        "keywords": []
+      },
+      {
+        "key": "",
+        "id": "STRIKE_IRONCLAD",
+        "name": "Strike",
+        "upgraded": false,
+        "cost": 1,
+        "type": "Attack",
+        "rarity": "Basic",
+        "target": "AnyEnemy",
+        "description": "Deal 6 damage.",
+        "keywords": []
+      },
+      {
+        "key": "",
+        "id": "STRIKE_IRONCLAD",
+        "name": "Strike",
+        "upgraded": false,
+        "cost": 1,
+        "type": "Attack",
+        "rarity": "Basic",
+        "target": "AnyEnemy",
+        "description": "Deal 6 damage.",
+        "keywords": []
+      },
+      {
+        "key": "",
+        "id": "STRIKE_IRONCLAD",
+        "name": "Strike",
+        "upgraded": false,
+        "cost": 1,
+        "type": "Attack",
+        "rarity": "Basic",
+        "target": "AnyEnemy",
+        "description": "Deal 6 damage.",
+        "keywords": []
+      },
+      {
+        "key": "",
+        "id": "DEFEND_IRONCLAD",
+        "name": "Defend",
+        "upgraded": false,
+        "cost": 1,
+        "type": "Skill",
+        "rarity": "Basic",
+        "target": "Self",
+        "description": "Gain 5 Block.",
+        "keywords": []
+      },
+      {
+        "key": "",
+        "id": "DEFEND_IRONCLAD",
+        "name": "Defend",
+        "upgraded": false,
+        "cost": 1,
+        "type": "Skill",
+        "rarity": "Basic",
+        "target": "Self",
+        "description": "Gain 5 Block.",
+        "keywords": []
+      },
+      {
+        "key": "",
+        "id": "DEFEND_IRONCLAD",
+        "name": "Defend",
+        "upgraded": false,
+        "cost": 1,
+        "type": "Skill",
+        "rarity": "Basic",
+        "target": "Self",
+        "description": "Gain 5 Block.",
+        "keywords": []
+      },
+      {
+        "key": "",
+        "id": "DEFEND_IRONCLAD",
+        "name": "Defend",
+        "upgraded": false,
+        "cost": 1,
+        "type": "Skill",
+        "rarity": "Basic",
+        "target": "Self",
+        "description": "Gain 5 Block.",
+        "keywords": []
+      },
+      {
+        "key": "",
+        "id": "BASH",
+        "name": "Bash",
+        "upgraded": false,
+        "cost": 2,
+        "type": "Attack",
+        "rarity": "Basic",
+        "target": "AnyEnemy",
+        "description": "Deal 8 damage. Apply 2 Vulnerable.",
+        "keywords": []
+      },
+      {
+        "key": "",
+        "id": "POMMEL_STRIKE",
+        "name": "Pommel Strike",
+        "upgraded": true,
+        "cost": 1,
+        "type": "Attack",
+        "rarity": "Common",
+        "target": "AnyEnemy",
+        "description": "Deal 10 damage. Draw 2 cards.",
+        "keywords": []
+      },
+      {
+        "key": "",
+        "id": "INFLAME",
+        "name": "Inflame",
+        "upgraded": false,
+        "cost": 1,
+        "type": "Power",
+        "rarity": "Uncommon",
+        "target": "Self",
+        "description": "Gain 2 [gold]Strength[/gold].",
+        "keywords": []
+      }
+    ],
+    "deckCount": 12,
+    "companions": [],
+    "endedTurn": false,
+    "handCount": 5
+  },
+  "teammates": [
+    {
+      "netId": 76561198000000002,
+      "name": "Mika",
+      "characterId": "SILENT",
+      "characterName": "Silent",
+      "isLocal": false,
+      "isAiControlled": true,
+      "hasTeamLink": true,
+      "isAlive": true,
+      "hp": 31,
+      "maxHp": 70,
+      "block": 5,
+      "gold": 99,
+      "energy": 1,
+      "maxEnergy": 3,
+      "orbSlots": 0,
+      "orbs": [],
+      "powers": [
+        {
+          "id": "WEAK_POWER",
+          "name": "Weak",
+          "amount": 1,
+          "isDebuff": true,
+          "description": "Deals 25% less attack damage."
+        }
+      ],
+      "potionSlots": 3,
+      "potions": [
+        {
+          "slot": 0,
+          "id": "WEAK_POTION",
+          "name": "Weak Potion",
+          "description": "Apply 3 Weak.",
+          "target": "AnyEnemy",
+          "rarity": "Common",
+          "usableNow": true
+        }
+      ],
+      "relics": [
+        {
+          "id": "RING_OF_THE_SNAKE",
+          "name": "Ring of the Snake",
+          "description": "At the start of each combat, draw 2 additional cards."
+        }
+      ],
+      "deck": [],
+      "deckCount": 15,
+      "companions": [],
+      "endedTurn": false,
+      "handCount": 4
+    }
+  ]
+}

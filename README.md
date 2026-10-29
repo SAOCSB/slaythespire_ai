@@ -116,6 +116,15 @@ AI 失败时的保护：同一操作重复无效 / 连续失败 / API 配置错�
 | `GET /chat` / `POST /chat {"text":"...","to":"all"}` | 读取 / 发送队友消息 |
 | `GET /status` | 状态、token 统计、最近错误 |
 
+#### MCP
+
+`tools/mcp/` 里有一个 MCP 服务器，让 Claude Desktop、Claude Code、Cursor 等 MCP 客户端通过上面的接口直接玩游戏：
+先在“日志”页开启 HTTP 接口，再添加服务器，例如
+`claude mcp add spirepilot -- uv run --directory /path/to/SpirePilot/tools/mcp spirepilot-mcp`。
+外部模型看到的状态文本和操作菜单与内置 AI 完全相同；开始前用 `set_mode` 把模式设为关闭或顾问。详见 [tools/mcp/README.md](tools/mcp/README.md)。
+
+MCP: `tools/mcp/` has an MCP server so Claude Desktop, Claude Code, Cursor and other MCP clients can play through this API; see [tools/mcp/README.md](tools/mcp/README.md).
+
 ## 5. 文件位置
 
 配置与日志保存在游戏用户数据目录下的 `mod_configs/SpirePilot/`（不在 mods 文件夹里）：

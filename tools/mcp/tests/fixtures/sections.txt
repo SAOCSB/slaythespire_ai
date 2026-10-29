@@ -1,0 +1,56 @@
+Screen: Shop | Act 2 | Floor 23 | Ascension 0
+You: Ada (Defect) HP 12/75 Block 3 Energy 2/3 Stars 2 Gold 300
+  Powers: Poison 4(debuff), Doom 20(debuff), Barricade
+  Orbs [2/3]: Lightning (Passive: deal 3 damage to a random enemy.); Dark
+  Companion o0 Osty HP 10/15 Block 2 | Thorns 3
+  Companion o1 Pet HP 1/1
+  Potions [0/2]: none
+  Relics: Cracked Core (); Nunchaku (Every 10 Attacks, gain 1 energy.) [3]
+  Deck size: 30
+Teammate: Bo [DEAD] HP 0/60 Gold 5 Hand 0 (ended turn)
+  Potions [1/2]: #1 Fear Potion
+Combat: round 5 (your turn) | Elite
+Enemies:
+  e0 Sentry HP 30/40 | Intent: Attack 5x3 + Attack 99 → Bo + Attack 2 → ada
+  e1 Sentry HP 1/40 | Intent: Sleep
+Threat: incoming 17, unblocked 14, poison 4, doom 20 — ENDING THE TURN NOW WOULD KILL YOU
+Hand (3):
+  h0 Tempest+ [X] Skill, Self, Uncommon: Channel X Lightning.
+  h1 Starfall+ [0+2★] Attack, AllEnemies, Rare {Exhaust,Retain} (unplayable): 
+  Nameless [3] Curse
+Piles: draw 1, discard 2, exhaust 1
+  Draw pile (unordered): Zap
+  Discard pile: Zap+ x2
+  Exhausted: Dualcast
+Map: at start, rows 2
+  Next options: 0,0=Ancient, 9,9
+  row 0: 0,0:A->0,1
+  row 1: 0,1:?
+Rewards: Gold: 25 Gold; Potion: Swift Potion
+Card reward choices:
+  Ball Lightning [1] Attack, AnyEnemy, Common: Deal 7 damage. Channel 1 Lightning.
+Shop:
+  Card Ball Lightning — 37g (sale): Deal 7 damage.
+  Relic Anchor — 350g (can't afford): Start each combat with 10 Block.
+  Potion Fear Potion — 50g
+  Card removal: 75g (unavailable)
+Event: Big Fish
+  A man offers you food. Pick one [or not
+at all
+  - Heal 1/3 of your max HP
+  - : Max HP +5
+  - Box [locked]: Receive a relic. Become Cursed.
+Rest site options:
+  - Rest: Heal 30% of your max HP.
+  - Smith [disabled]: Upgrade a card.
+Selection: Upgrade — Choose up to 2 cards to upgrade. (pick 0-2) selected: c0,c1
+  c0 Zap [1] Skill, Self, Basic: Channel 1 Lightning.
+  c1 Dualcast [1] Skill, Basic: Evoke your next Orb twice.
+  - Take nothing
+Characters: Ironclad [IRONCLAD] (selected), Silent [SILENT], Regent [REGENT] (locked)
+Ascension: 3 (max 5)
+Lobby picks: Mika=SILENT, Bo=REGENT
+Run over: defeat at floor 23
+Note: Popup: Are you sure?
+Note: Unsupported screen hint
+Glossary: Artifact: About Artifact. | Block: About Block. | Channel: About Channel. | Dark: About Dark. | Dexterity: About Dexterity. | Doom: About Doom. | Ethereal: About Ethereal. | Evoke: About Evoke. | Exhaust: About Exhaust. | Focus: About Focus. | Frail: About Frail. | Innate: About Innate. | Intangible: About Intangible. | Lightning: About Lightning. | Plated Armor: About Plated Armor. | Poison: About Poison. | Retain: About Retain. | Ritual: About Ritual. | Scry: About Scry. | Strength: About Strength. | Thorns: About Thorns. | Vigor: About Vigor. | Vulnerable: About Vulnerable. | Weak: About Weak.

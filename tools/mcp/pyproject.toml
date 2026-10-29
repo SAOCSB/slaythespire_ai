@@ -1,0 +1,21 @@
+[project]
+name = "spirepilot-mcp"
+version = "0.1.0"
+description = "MCP server that plays Slay the Spire 2 through the SpirePilot mod's local HTTP API"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = ["mcp==1.30.0"]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.scripts]
+spirepilot-mcp = "spirepilot_mcp:main"
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["spirepilot_mcp"]

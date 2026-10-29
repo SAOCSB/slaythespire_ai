@@ -1,0 +1,16 @@
+Screen: Map | Act 1 (Overgrowth) | Floor 7 | Ascension 2 | Boss: Ceremonial Beast | Co-op
+You: Yang (Ironclad) HP 68/80 Energy 3/3 Gold 161
+  Potions [2/3]: #0 Fire Potion [AnyEnemy] Deal 20 damage to target enemy.; #1 Block Potion [Self] Gain 12 Block.
+  Relics: Burning Blood (At the end of combat, heal 6 HP.); Vajra (At the start of each combat, gain 1 Strength.); Pen Nib (Every 10th Attack you play deals double damage.) [7]
+  Deck (12): Bash, Defend x4, Inflame, Pommel Strike+, Strike x5
+Teammate: Mika (Silent) [AI] HP 31/70 Energy 3/3 Gold 99
+  Potions [1/3]: #0 Weak Potion
+  Relics: Ring of the Snake
+Map: at 2,6, rows 15
+  Next options: 1,7=Elite, 3,7=RestSite
+  Teammate votes: Mika→3,7
+  row 7: 1,7:E->1,8/2,8 3,7:R->3,8 5,7:M->4,8
+  row 8: 1,8:?->1,9 2,8:$->2,9 3,8:M->2,9/4,9 4,8:T->4,9
+  row 9: 1,9:M->2,10 2,9:E->2,10 4,9:?->3,10
+  row 10: 2,10:R 3,10:M
+  row 15: 3,15:BOSS
