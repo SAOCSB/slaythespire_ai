@@ -54,9 +54,12 @@ public static class FallbackPolicy
             }
 
             case ScreenKind.CombatRewards:
-                // Take everything except cards (cards need judgement), then leave.
-                return actions.FirstOrDefault(a => a.Kind == ActionKind.ClaimReward && !IsCardReward(a, s))
+            {
+                // Take everything except cards (cards need judgement) and potions that cannot fit (a full belt swallows the click).
+                bool beltFull = s.LocalPlayer is { } p && p.PotionSlots > 0 && p.Potions.Count >= p.PotionSlots;
+                return actions.FirstOrDefault(a => a.Kind == ActionKind.ClaimReward && !IsCardReward(a, s) && !(beltFull && IsKind(a, s, "Potion")))
                        ?? Of(ActionKind.Proceed) ?? actions[0];
+            }
 
             case ScreenKind.CardReward:
                 return Of(ActionKind.SkipCardReward) ?? Of(ActionKind.Proceed) ?? actions[0];
@@ -104,50 +107,54 @@ public static class FallbackPolicy
     /// </summary>
     private static ActionOption? SafeEventOption(GameSnapshot s)
     {
+        EventOptionInfo? Info(ActionOption a) => s.Event?.Options.FirstOrDefault(o => a.IntArg(ActionArgs.Index) == o.Index);
         var options = s.Actions.Where(a => a.Kind == ActionKind.ChooseEventOption && a.Arg("lethal") != "true" &&
+                                           Info(a) is not { WillKill: true } &&
                                            !a.Label.Contains("LETHAL", StringComparison.OrdinalIgnoreCase)).ToList();
         if (options.Count == 0) return null;
-        string Text(ActionOption a)
-        {
-            var info = s.Event?.Options.FirstOrDefault(o => a.IntArg(ActionArgs.Index) == o.Index);
-            return (a.Label + " " + info?.Description).ToLowerInvariant();
-        }
+        string Text(ActionOption a) => (a.Label + " " + Info(a)?.Description).ToLowerInvariant();
         var me = s.LocalPlayer;
         bool hurt = me is { MaxHp: > 0 } && me.Hp < me.MaxHp * 0.5;
         if (!hurt) return options[0];
-        return options.FirstOrDefault(a => LeaveWords.Any(w => Text(a).Contains(w)))
+        return options.FirstOrDefault(a => Info(a) is { IsProceed: true })
+               ?? options.FirstOrDefault(a => LeaveWords.Any(w => Text(a).Contains(w)))
                ?? options.FirstOrDefault(a => !CostWords.Any(w => Text(a).Contains(w)))
                ?? options[^1];
     }
 
-    private static bool IsCardReward(ActionOption a, GameSnapshot s)
+    private static bool IsCardReward(ActionOption a, GameSnapshot s) => IsKind(a, s, "Card");
+
+    private static bool IsKind(ActionOption a, GameSnapshot s, string kind)
     {
         var idx = a.IntArg(ActionArgs.Index);
         var item = s.Rewards?.Items.FirstOrDefault(i => i.Index == idx);
-        return item != null && item.Kind.Contains("Card", StringComparison.OrdinalIgnoreCase);
+        return item != null && item.Kind.Contains(kind, StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>Cards a blind policy must not play: they give you Doom, kill your Osty or end your turn (StS2 0.111 ids).</summary>
+    private static readonly HashSet<string> SelfHarm = new(StringComparer.OrdinalIgnoreCase)
+        { "BORROWED_TIME", "NEUROSURGE", "SACRIFICE", "BONE_SHARDS", "VOID_FORM" };
 
     /// <summary>Very small combat heuristic: lethal/cheap attacks on the weakest enemy, then block if attacked, then powers.</summary>
     private static ActionOption? ChooseCombat(GameSnapshot s)
     {
         var c = s.Combat;
         if (c == null || !c.IsPlayerTurn) return null;
-        var plays = s.Actions.Where(a => a.Kind == ActionKind.PlayCard).ToList();
-        if (plays.Count == 0) return null;
-
         CardInfo? CardOf(ActionOption a) =>
             a.IntArg(ActionArgs.Index) is { } i && i >= 0 && i < c.Hand.Count ? c.Hand[i] : null;
+        var plays = s.Actions.Where(a => a.Kind == ActionKind.PlayCard && !(CardOf(a) is { } card && SelfHarm.Contains(card.Id))).ToList();
+        if (plays.Count == 0) return null;
         CreatureInfo? TargetOf(ActionOption a) => c.Enemies.FirstOrDefault(e => e.Key == a.Arg(ActionArgs.Target));
 
         int incoming = c.Enemies.Where(e => e.IsAlive).SelectMany(e => e.Intents).Sum(i => (i.Damage ?? 0) * Math.Max(1, i.Hits ?? 1));
         int block = s.LocalPlayer?.Block ?? 0;
 
         var powers = plays.Where(a => CardOf(a)?.Type == "Power").ToList();
-        if (powers.Count > 0 && c.Round <= 2) return powers[0];
+        if (powers.Count > 0 && c.Round <= 2 && incoming <= block) return powers[0];
 
         if (incoming > block)
         {
-            static bool GivesBlock(CardInfo card) =>
+            static bool GivesBlock(CardInfo card) => card.GainsBlock ||
                 card.Type == "Skill" &&
                 (card.Description.Contains("Block", StringComparison.OrdinalIgnoreCase) || card.Description.Contains("格挡"));
             var blockCard = plays.FirstOrDefault(a => CardOf(a) is { } card && GivesBlock(card));

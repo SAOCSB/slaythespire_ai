@@ -73,6 +73,9 @@ public static class RoutePlanner
         if (map.Nodes.Count == 0 || map.Reachable.Count == 0) return new();
         var weights = WeightsFor(settings);
         var byKey = map.Nodes.GroupBy(n => n.Key).ToDictionary(g => g.Key, g => g.First());
+        // StS2 normally puts a rest site on every node of the row before the boss; then it is on every path and needs no bonus.
+        var lastRow = map.Nodes.Where(n => n.Row == map.Rows - 1).ToList();
+        bool preBossRestOnEveryPath = lastRow.Count > 0 && lastRow.All(n => n.Type == MapNodeType.RestSite);
         int k = Math.Max(1, maxPaths);
         var memo = new Dictionary<string, List<(double score, List<string> path)>>();
 
@@ -85,7 +88,7 @@ public static class RoutePlanner
                 memo[key] = result;
                 return result;
             }
-            double own = NodeValue(node, weights, hpRatio, gold, map.Rows);
+            double own = NodeValue(node, weights, hpRatio, gold, map.Rows, preBossRestOnEveryPath);
             var children = node.Children.Where(byKey.ContainsKey).Distinct().ToList();
             if (children.Count == 0)
             {
@@ -130,24 +133,28 @@ public static class RoutePlanner
         return settings.PinnedPath.FirstOrDefault(key => map.Reachable.Contains(key));
     }
 
-    private static double NodeValue(MapNodeInfo node, Dictionary<MapNodeType, double> weights, double hpRatio, int gold, int rows)
+    private static double NodeValue(MapNodeInfo node, Dictionary<MapNodeType, double> weights, double hpRatio, int gold, int rows, bool preBossRestOnEveryPath)
     {
         double w = weights.TryGetValue(node.Type, out var v) ? v : 1.0;
         hpRatio = Math.Clamp(hpRatio, 0, 1);
         switch (node.Type)
         {
             case MapNodeType.Elite:
-                // Elites are much worse when low on HP.
-                if (hpRatio < 0.5) w -= (0.5 - hpRatio) * 6;
+                // Elites are worth it above ~65-70% HP (CoreSystem); scale the penalty from there and never let a preset
+                // weight walk a badly hurt player into one.
+                if (hpRatio < 0.7) w -= (0.7 - hpRatio) * 6;
+                if (hpRatio < 0.4) w = Math.Min(w, -1.0);
                 break;
             case MapNodeType.RestSite:
-                if (hpRatio < 0.5) w += (0.5 - hpRatio) * 3;
-                // A rest right before the boss is valuable.
-                if (rows > 0 && node.Row >= rows - 2) w += 0.5;
+                if (hpRatio < 0.6) w += (0.6 - hpRatio) * 3;
+                // A late rest is worth more than an early one, unless the pre-boss row already gives every path one
+                // (then boosting the row before it only rewards two rests in a row).
+                if (!preBossRestOnEveryPath && rows > 0 && node.Row >= rows - 2) w += 0.5;
                 break;
             case MapNodeType.Shop:
-                if (gold >= 250) w += 0.6;
-                else if (gold < 75) w -= 0.6;
+                if (gold >= 250) w += 0.8;          // removal plus a purchase
+                else if (gold >= 150) w += 0.3;     // one meaningful purchase
+                else if (gold < 75) w -= 0.8;
                 break;
         }
         return w;

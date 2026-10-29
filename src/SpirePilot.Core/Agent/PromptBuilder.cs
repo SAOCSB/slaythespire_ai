@@ -236,44 +236,48 @@ public static class PromptBuilder
       previous memo, or "" to keep it. Never put menu ids in the memo.
 
     ## How to decide
+    These are Slay the Spire 2 rules: trust the Glossary line and card text over memory of the first game.
     Combat, in this order:
-    1. If ending the turn would kill you (see the Threat line: incoming damage, poison, Doom), do not end the turn: block,
-       kill, or use a potion.
-    2. Take a kill that removes the biggest incoming damage, or a lethal on the last enemy. A dead attacker blocks better
-       than Defend and also stops next turn's hit.
-    3. Otherwise minimise unblocked damage, then add damage and setup. Non-attack intents (buff, debuff, sleep) are turns
+    1. If the Threat line says ending the turn kills you, don't end it. Block or kill attackers; against Poison or Doom
+       block is useless: heal, win the fight this turn, or use a potion.
+    2. Timing: Doom is checked when its owner's turn ends (dies if Doom >= HP); Poison ticks when its owner's turn starts.
+       A Poison-lethal enemy dies before it acts; a Doom-lethal enemy dies only after it has attacked.
+    3. Take a kill that removes the biggest incoming damage, or a lethal on the last enemy. A dead attacker blocks better
+       than Defend and stops all its later hits.
+    4. Otherwise minimise unblocked damage, then add damage and setup. Non-attack intents (buff, debuff, sleep) are turns
        to attack or set up, not to block.
-    4. Sequence: 0-cost and setup/buff cards and Vulnerable/Weak first, then attacks (multi-hit after Strength or
+    5. Sequence: draw, 0-cost and setup/buff cards and Vulnerable/Weak first, then attacks (multi-hit after Strength or
        Vulnerable), then block with what is left. Use buff potions before the cards they boost.
-    5. Kill the leader when enemies are its minions. Avoid many small hits into Thorns.
-    6. Spend potions on elites, bosses and fights you are losing; an unused potion at the end of the run is worthless.
-       Don't drink healing above ~80% HP. Potions cost no energy.
-    7. Co-op: before ending your turn, look at teammates' HP and the enemies' intents. Potions that can target players
-       (heal, block, energy, Strength ...) appear in the MENU as "→ <teammate>"; give one to a teammate in danger.
+    6. Minions (Minion power) need not die: kill the leader. Avoid many small hits into Thorns (it triggers per hit).
+    7. Spend potions on elites, bosses and losing fights; unused potions are worthless at the end of the run. Don't drink
+       healing above ~80% HP. Potions cost no energy.
     Out of combat:
     - Map: HP is the budget. Elites are worth it above ~65-70% HP with a deck that can win them; below ~45% prefer rest or
-      safe nodes. A rest site right before the boss is worth more than an early one. Shops pay off with ~150+ gold (~250+
-      to also remove a card). Prefer paths that keep options open. Follow the owner's route style.
-    - Card rewards: compare every card with skipping. Take a card only if it improves the next fights, fills a missing role
-      (damage, block, draw, energy, scaling) or advances a coherent plan. Skipping is often right; a lean deck draws its
-      best cards more often. Avoid bloating past ~25-30 cards.
-    - Rest: heal when the coming fights or the boss would be dangerous at current HP (roughly below 50%, or below ~70%
-      right before a boss without strong potions); otherwise upgrade a core card (cards you play every fight).
+      safe nodes. The row before the boss is normally all rest sites; take earlier rests when you need the HP now.
+      Shops pay off with ~150+ gold (~250+ to also remove a card). Prefer paths that keep options open. Follow the
+      owner's route style.
+    - Card rewards: compare every card with skipping. Take one only if it improves the next fights, fills a missing role
+      (damage, block, draw, energy, scaling) or advances a coherent plan. A lean deck draws its best cards more often.
+    - Rest: heal when the coming fights or the boss would be dangerous at current HP (roughly below 50%, or below ~70% at
+      the pre-boss rest without strong potions); otherwise upgrade a core card (one you play every fight).
     - Shop: card removal first if you carry a curse or weak starter cards; relics before cards once the deck works;
       potions only into empty slots; keep ~75 gold unless the purchase is decisive. A sale is not a reason.
     - Events: never choose an option that would kill you. Read the cost before the reward; Max HP loss is permanent, gold
       usually isn't; a curse "reward" is a cost. Leaving is a valid choice.
     - Act-start Ancient choices: prefer consistency over big drawbacks before you have seen the map.
     Co-op:
-    - Map travel is a group vote: follow an existing vote unless yours is clearly better; a split vote stalls the run.
-    - Focus fire with teammates and respect a teammate's announced target. The healthier player kills threats; the hurt
-      player defends.
-    - Potions cannot be handed over. To "give" a potion, use a potion that can target a player on that teammate — the
-      MENU shows "potion → teammate" options for those. Heal or protect the lowest-HP teammate.
+    - Map travel is a vote: the party moves once everyone has voted; a split is settled at random. Follow an existing
+      vote unless yours is clearly better.
+    - Enemies have more HP in co-op: focus fire and respect a teammate's announced target. The healthier player kills
+      threats; the hurt player defends.
+    - Potions can't be handed over, but player-target potions (block, heal, energy, draw, Strength...) can be used on a
+      teammate via the MENU's "potion → teammate" options. Protect the lowest-HP teammate; buff whoever has the big turn.
+      Before ending your turn, look at teammates' HP and the intents aimed at them.
     - To fulfil a debuff request, play cards that apply that debuff to the named enemy if you reasonably can.
-    - Don't spend a big resource the teammate already spent on the same threat. Ending the turn is a vote: don't stall.
+    - Don't spend a big resource the teammate already spent on the same threat. Ending your turn marks you ready; enemies
+      act once every living player is ready. Don't stall.
     - Speak rarely and concretely; answer direct questions; ask for help when it matters (low HP before a big attack, a
-      teammate holds a potion you need, an enemy should be debuffed before a big attack).
+      teammate's potion or debuff you need).
     If the STATE looks inconsistent or the MENU lacks what you expect, pick the safest legal action and explain briefly.
     """;
 }

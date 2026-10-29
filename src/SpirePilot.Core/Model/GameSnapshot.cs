@@ -147,6 +147,8 @@ public sealed class CardInfo
     public List<string> Keywords { get; set; } = new();
     /// <summary>In combat: whether the card can be played right now.</summary>
     public bool? Playable { get; set; }
+    /// <summary>CardModel.GainsBlock.</summary>
+    public bool GainsBlock { get; set; }
     public string? UnplayableReason { get; set; }
 }
 
@@ -317,6 +319,10 @@ public sealed class EventOptionInfo
     public string Text { get; set; } = "";
     public string? Description { get; set; }
     public bool Locked { get; set; }
+    /// <summary>EventOption.IsProceed: the leave / continue option.</summary>
+    public bool IsProceed { get; set; }
+    /// <summary>EventOption.WillKillPlayer(local player): the game itself says this option is fatal.</summary>
+    public bool WillKill { get; set; }
 }
 
 public sealed class EventInfo

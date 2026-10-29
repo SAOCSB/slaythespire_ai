@@ -13,6 +13,7 @@ public sealed class StateFormatter
     public string Format(GameSnapshot s)
     {
         _local = s.LocalPlayer;
+        _coop = s.IsMultiplayer;
         var sb = new StringBuilder();
         sb.Append("Screen: ").Append(s.Screen);
         if (s.Run is { } run)
@@ -112,8 +113,18 @@ public sealed class StateFormatter
     }
 
     private PlayerInfo? _local;
+    private bool _coop;
 
-    /// <summary>Incoming damage summary: what will hit you if you end the turn now.</summary>
+    /// <summary>
+    /// What ending the turn now does to you, in StS2 order:
+    /// (1) Doom on you is checked as your turn ends: you die if Doom >= HP (block is irrelevant);
+    /// (2) Constrict hits as your turn ends (block absorbs it first);
+    /// (3) enemy attacks hit your remaining block; Osty (Necrobinder) takes the unblocked attack damage up to his HP and
+    ///     the rest reaches you; Magic Bomb lands after your turn (ignores block);
+    /// (4) Poison ticks at the start of your next turn (ignores block), before you can play a card.
+    /// Sandpit (owned by the enemy) kills the player it targets when it runs out.
+    /// End-of-turn block (Frost orbs, Plating) and caps such as Intangible are not counted, so the line errs on the safe side.
+    /// </summary>
     private void AppendThreat(StringBuilder sb, CombatInfo c, PlayerInfo? me)
     {
         me ??= _local;
@@ -127,29 +138,47 @@ public sealed class StateFormatter
                 if (!string.IsNullOrEmpty(i.TargetName) && !string.Equals(i.TargetName, me.Name, StringComparison.OrdinalIgnoreCase)) continue;
                 incoming += d * Math.Max(1, i.Hits ?? 1);
             }
-        int unblocked = Math.Max(0, incoming - me.Block);
         int Mine(string id) => me.Powers.Where(p => p.Id.Contains(id, StringComparison.OrdinalIgnoreCase)).Sum(p => p.Amount);
-        int poison = Mine("POISON");
-        int doom = Mine("DOOM");
-        // Constrict hits at the end of your turn and is blocked by whatever block the attacks left over.
-        int constrict = Mine("CONSTRICT");
-        int constrictHit = Math.Max(0, constrict - Math.Max(0, me.Block - incoming));
-        // Magic Bomb goes off after the turn and ignores block.
-        int bomb = Mine("MAGIC_BOMB");
-        // Sandpit belongs to the enemy and counts down to an instant kill, whatever HP or block you have.
+        int poison = Mine("POISON"), doom = Mine("DOOM"), constrict = Mine("CONSTRICT"), bomb = Mine("MAGIC_BOMB");
+        int doomGrowth = Mine("NEUROSURGE"); // Neurosurge adds that much Doom at the start of each of your turns
+        int block = Math.Max(0, me.Block);
+        int constrictHit = Math.Max(0, constrict - block);
+        int unblocked = Math.Max(0, incoming - Math.Max(0, block - constrict));
+        // Osty carries DieForYouPower: unblocked attack damage aimed at his owner goes to him first (overflow assumed to reach you).
+        int osty = me.Companions.Where(x => x.IsAlive && (x.Id.Contains("OSTY", StringComparison.OrdinalIgnoreCase) ||
+                                                          x.Powers.Any(p => p.Id.Contains("DIE_FOR_YOU", StringComparison.OrdinalIgnoreCase))))
+                                .Sum(x => Math.Max(0, x.Hp));
+        int attacksToYou = Math.Max(0, unblocked - osty);
+        int beforeNextTurn = constrictHit + attacksToYou + bomb + poison;
+        // In co-op Sandpit only threatens the player it targets.
         int? sandpit = c.Enemies.Where(e => e.IsAlive).SelectMany(e => e.Powers)
-            .Where(p => p.Id.Contains("SANDPIT", StringComparison.OrdinalIgnoreCase) && (p.TargetNetId == null || p.TargetNetId == me.NetId))
+            .Where(p => p.Id.Contains("SANDPIT", StringComparison.OrdinalIgnoreCase) &&
+                        (p.TargetNetId == me.NetId || p.TargetNetId == null && !_coop))
             .Select(p => (int?)p.Amount).Min();
+
         sb.Append("Threat: incoming ").Append(incoming).Append(", unblocked ").Append(unblocked);
-        if (constrict > 0) sb.Append(", constrict ").Append(constrictHit);
+        if (osty > 0 && unblocked > 0) sb.Append(" (Osty takes up to ").Append(osty).Append(", you take ").Append(attacksToYou).Append(')');
+        if (constrict > 0) sb.Append(", constrict ").Append(constrict).Append(" at your turn end");
         if (bomb > 0) sb.Append(", magic bomb ").Append(bomb);
-        if (poison > 0) sb.Append(", poison ").Append(poison);
-        if (doom > 0) sb.Append(", doom ").Append(doom);
+        if (poison > 0) sb.Append(", poison ").Append(poison).Append(" at your next turn start");
+        if (doom > 0) sb.Append(", doom ").Append(doom).Append(doomGrowth > 0 ? $" (+{doomGrowth}/turn)" : "");
+        var handHurts = c.Hand.Where(h => EndOfTurnHandIds.Contains(h.Id)).Select(h => h.Name).Distinct().ToList();
+        if (handHurts.Count > 0) sb.Append(", end-of-turn hand effects: ").Append(string.Join("/", handHurts));
         if (sandpit is { } sp) sb.Append(", sandpit ").Append(sp);
-        int damage = unblocked + constrictHit + bomb;
-        bool lethal = damage + poison >= me.Hp || doom > 0 && doom >= me.Hp - damage || sandpit is <= 1;
-        sb.Append(lethal ? " — ENDING THE TURN NOW WOULD KILL YOU" : "").AppendLine();
+
+        if (doom > 0 && doom >= me.Hp)
+            sb.Append(" — DOOM KILLS YOU WHEN THIS TURN ENDS (block does not help: heal above it or win now)");
+        else if (beforeNextTurn >= me.Hp)
+            sb.Append(" — ENDING THE TURN NOW WOULD KILL YOU");
+        else if (sandpit is <= 1)
+            sb.Append(" — SANDPIT KILLS YOU AT THE NEXT ENEMY TURN");
+        else if (doom + doomGrowth > 0 && doom + doomGrowth >= me.Hp - beforeNextTurn)
+            sb.Append(" — warning: after this damage, Doom kills you at the end of your next turn");
+        sb.AppendLine();
     }
+
+    /// <summary>Status/curse cards that hurt you when your turn ends while they are in hand (CardModel.HasTurnEndInHandEffect).</summary>
+    private static readonly HashSet<string> EndOfTurnHandIds = new(StringComparer.OrdinalIgnoreCase) { "BURN", "DECAY", "TOXIC", "INFECTION", "REGRET" };
 
     private void AppendCombat(StringBuilder sb, CombatInfo c)
     {

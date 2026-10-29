@@ -171,9 +171,16 @@ public class OwnerRuleTests
         me.Powers.Clear();
         me.Hp = 50;
         s.Combat.Enemies[0].Powers.Add(new PowerInfo { Id = "SANDPIT_POWER", Amount = 1 });
-        Assert.Contains("WOULD KILL YOU", new StateFormatter().Format(s));
+        Assert.Contains("SANDPIT KILLS YOU", new StateFormatter().Format(s));
         s.Combat.Enemies[0].Powers[0].Amount = 3;
-        Assert.DoesNotContain("WOULD KILL YOU", new StateFormatter().Format(s));
+        Assert.DoesNotContain("KILLS YOU", new StateFormatter().Format(s));
+        // In co-op Sandpit only threatens the player it targets.
+        s.IsMultiplayer = true;
+        s.Combat.Enemies[0].Powers[0].Amount = 1;
+        s.Combat.Enemies[0].Powers[0].TargetNetId = me.NetId + 1;
+        Assert.DoesNotContain("SANDPIT KILLS YOU", new StateFormatter().Format(s));
+        s.Combat.Enemies[0].Powers[0].TargetNetId = me.NetId;
+        Assert.Contains("SANDPIT KILLS YOU", new StateFormatter().Format(s));
     }
 
     [Fact]

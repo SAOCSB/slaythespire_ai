@@ -78,7 +78,7 @@ internal static class EventReader
         if (SafeBool(() => ev.IsFinished))
         {
             var proceedText = ProceedText(room);
-            info.Options.Add(new EventOptionInfo { Index = 0, Text = proceedText });
+            info.Options.Add(new EventOptionInfo { Index = 0, Text = proceedText, IsProceed = true });
             sink.Add(ActionKind.Proceed, R2Text.T("act.event_leave"), "proceed", ct => ProceedAsync(ev, ct), unpredictable: true);
             return;
         }
@@ -186,6 +186,8 @@ internal static class EventReader
                     Text = text,
                     Description = lethal ? (description + " " + R2Text.T("word.lethal")).Trim() : description,
                     Locked = SafeBool(() => o.IsLocked),
+                    IsProceed = SafeBool(() => o.IsProceed),
+                    WillKill = lethal,
                 };
                 info.Options.Add(oi);
                 result.Add((o, oi, lethal));

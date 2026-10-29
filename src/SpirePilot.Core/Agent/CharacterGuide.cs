@@ -15,30 +15,32 @@ public static class CharacterGuide
     private static readonly (string key, string text)[] Guides =
     {
         ("IRONCLAD", """
-            Ironclad: strength scaling, Exhaust synergies, cards that trade HP for power. Burning Blood heals after each
-            fight, so cheap chip damage in hallway fights is acceptable. Lead with Bash / Vulnerable, then attacks. Value
-            Strength multipliers and card draw. Remove Strikes first.
+            Ironclad: Strength scaling, Exhaust synergies, cards that trade HP for power. Burning Blood heals 6 HP after
+            each won combat, so small chip damage in hallway fights is fine. Lead with Bash (2 Vulnerable), then attacks.
+            Value Strength multipliers and card draw. Remove Strikes first.
             """),
         ("SILENT", """
-            Silent: Poison (ticks every turn and ignores block — great against high-HP bosses), Shivs (0-cost tokens),
-            discard synergies (Sly cards pay off when discarded). Weak on attackers is your main defense. Keep the deck
-            lean so key cards show up; draw and discard engines carry runs.
+            Silent: Poison ticks at the start of the victim's turn (enemies before they act), ignores block, then drops
+            by 1 - great against high-HP bosses. Shivs: 0-cost Exhaust attacks. Sly cards discarded by an effect during
+            your turn are played for free (not at end of turn): discard them rather than play them. Weak on attackers is
+            your main defense. Keep the deck lean.
             """),
         ("DEFECT", """
-            Defect: orbs — Lightning hits (random target passively), Frost blocks, Dark charges, Plasma gives energy. Focus
-            scales every orb; extra orb slots scale the engine. Plan exact lethal with evoke math and never count random
-            Lightning passives on a specific target. Zap+ (0 cost) is a strong early upgrade. Avoid bloating the deck.
+            Defect: orb passives fire at your turn end, before enemies act (Plasma: energy at turn start). Lightning hits a
+            random enemy, passive and evoke; Frost blocks; Dark grows; Glass hits all enemies, weaker each turn. Shown orb
+            values include Focus (mostly temporary). Orb slots scale the engine. Count Lightning toward lethal only on the
+            last enemy. Zap+ (0 cost) is a strong early upgrade.
             """),
         ("NECROBINDER", """
-            Necrobinder: your companion Osty takes unblocked damage aimed at you; Summon grows it. Treat Osty's HP as extra
-            block and don't let it die needlessly; "your Osty deals N" cards scale with it alive. Doom: an enemy dies at
-            the end of its turn when HP <= Doom — stack it on big targets and count it in lethal math. Play Ethereal cards
-            the turn you draw them.
+            Necrobinder: Osty takes attack damage that gets past your block, up to his HP (not Poison or Doom). His HP
+            stays between turns; Summon revives him or raises his Max HP for the fight; Osty attack cards need him alive.
+            Doom >= HP kills a creature when its own turn ends, ignoring block - enemies still attack first; your own Doom
+            (Borrowed Time, Neurosurge) can kill you. Play Ethereal cards the turn you draw them.
             """),
         ("REGENT", """
-            Regent: Stars are a second resource for star-cost cards — spend them, don't hoard. Forge creates / empowers the
-            Sovereign Blade (retained); keep forging and swing it on high-value turns. Falling Star (Weak + Vulnerable)
-            is a strong opener.
+            Regent: Stars carry over between turns but not between fights: bank them for a big star card, never end a
+            fight holding them. Forge creates or grows the Sovereign Blade (Retain) for the whole combat: forge early,
+            swing it on high-value turns. Falling Star (0 energy, 2 Stars; Weak + Vulnerable) is a strong opener.
             """),
     };
 }
