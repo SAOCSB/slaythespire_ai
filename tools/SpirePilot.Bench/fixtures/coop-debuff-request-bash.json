@@ -1,0 +1,77 @@
+{
+  "id": "coop-debuff-request-bash",
+  "rationale": "Mira asks for Vulnerable on Snapping Jaxfruit before she attacks it this turn; Bash on that enemy first (not the other one) and accept.",
+  "tags": ["coop", "debuff", "team_request", "vulnerable", "ironclad", "en"],
+  "language": "en",
+  "inbox": [
+    {
+      "id": "m7", "kind": "request_debuff", "from": 2, "to": 1, "fromName": "Mira", "fromAi": true,
+      "text": "Can you put Vulnerable on Snapping Jaxfruit? I'm dumping all my attacks into it this turn.",
+      "debuff": "Vulnerable", "target": "Snapping Jaxfruit"
+    }
+  ],
+  "expect_any": ["play:BASH+0@E:SNAPPING_JAXFRUIT#0"],
+  "forbid": ["play:BASH+0@E:VINE_SHAMBLER#0", "end_turn"],
+  "expect_message_kind": "accept",
+  "expect_reply_to": "m7",
+  "snapshot": {
+    "sequence": 1966,
+    "screen": "Combat",
+    "inRun": true,
+    "isMultiplayer": true,
+    "localPlayerId": 1,
+    "canAct": true,
+    "run": { "act": 1, "actName": "Overgrowth", "floor": 7, "ascensionLevel": 1, "bossName": "Vantom" },
+    "players": [
+      {
+        "netId": 1, "name": "Ann", "characterId": "IRONCLAD", "characterName": "Ironclad", "isLocal": true, "hasTeamLink": true,
+        "hp": 58, "maxHp": 80, "block": 0, "gold": 120, "energy": 3, "maxEnergy": 3,
+        "potionSlots": 3, "potions": [],
+        "relics": [ { "id": "BURNING_BLOOD", "name": "Burning Blood", "description": "At the end of combat, heal 6 HP." } ],
+        "deckCount": 13
+      },
+      {
+        "netId": 2, "name": "Mira", "characterId": "SILENT", "characterName": "Silent", "isLocal": false, "isAiControlled": true, "hasTeamLink": true,
+        "hp": 49, "maxHp": 70, "block": 0, "gold": 96, "energy": 3, "maxEnergy": 3,
+        "potionSlots": 3, "potions": [],
+        "relics": [ { "id": "RING_OF_THE_SNAKE", "name": "Ring of the Snake", "description": "At the start of each combat, draw 2 additional cards." } ],
+        "handCount": 6
+      }
+    ],
+    "combat": {
+      "round": 2,
+      "isPlayerTurn": true,
+      "encounterType": "Normal",
+      "encounterName": "Vine Shambler + Snapping Jaxfruit",
+      "hand": [
+        { "key": "h0", "id": "BASH", "name": "Bash", "cost": 2, "type": "Attack", "rarity": "Basic", "target": "AnyEnemy", "description": "Deal 8 damage. Apply 2 Vulnerable.", "keywords": ["Vulnerable"], "playable": true },
+        { "key": "h1", "id": "STRIKE_IRONCLAD", "name": "Strike", "cost": 1, "type": "Attack", "rarity": "Basic", "target": "AnyEnemy", "description": "Deal 6 damage.", "playable": true },
+        { "key": "h2", "id": "DEFEND_IRONCLAD", "name": "Defend", "cost": 1, "type": "Skill", "rarity": "Basic", "target": "Self", "description": "Gain 5 Block.", "playable": true },
+        { "key": "h3", "id": "DEFEND_IRONCLAD", "name": "Defend", "cost": 1, "type": "Skill", "rarity": "Basic", "target": "Self", "description": "Gain 5 Block.", "playable": true },
+        { "key": "h4", "id": "STRIKE_IRONCLAD", "name": "Strike", "cost": 1, "type": "Attack", "rarity": "Basic", "target": "AnyEnemy", "description": "Deal 6 damage.", "playable": true }
+      ],
+      "drawPileCount": 3,
+      "discardPileCount": 5,
+      "exhaustPileCount": 0,
+      "enemies": [
+        {
+          "key": "e0", "id": "VINE_SHAMBLER", "name": "Vine Shambler", "hp": 38, "maxHp": 52, "block": 0,
+          "intents": [ { "type": "Attack", "damage": 8, "hits": 1, "targetName": "Ann" } ]
+        },
+        {
+          "key": "e1", "id": "SNAPPING_JAXFRUIT", "name": "Snapping Jaxfruit", "hp": 41, "maxHp": 41, "block": 0,
+          "intents": [ { "type": "Buff" } ]
+        }
+      ]
+    },
+    "actions": [
+      { "id": "a0", "kind": "PlayCard", "label": "Play Bash → Vine Shambler (8 dmg, +2 Vulnerable)", "semanticKey": "play:BASH+0@E:VINE_SHAMBLER#0", "args": { "index": "0", "target": "e0" } },
+      { "id": "a1", "kind": "PlayCard", "label": "Play Bash → Snapping Jaxfruit (8 dmg, +2 Vulnerable)", "semanticKey": "play:BASH+0@E:SNAPPING_JAXFRUIT#0", "args": { "index": "0", "target": "e1" } },
+      { "id": "a2", "kind": "PlayCard", "label": "Play Strike → Vine Shambler (6 dmg)", "semanticKey": "play:STRIKE_IRONCLAD+0@E:VINE_SHAMBLER#0", "args": { "index": "1", "target": "e0" } },
+      { "id": "a3", "kind": "PlayCard", "label": "Play Strike → Snapping Jaxfruit (6 dmg)", "semanticKey": "play:STRIKE_IRONCLAD+0@E:SNAPPING_JAXFRUIT#0", "args": { "index": "1", "target": "e1" } },
+      { "id": "a4", "kind": "PlayCard", "label": "Play Defend (5 block)", "semanticKey": "play:DEFEND_IRONCLAD+0@-", "args": { "index": "2" } },
+      { "id": "a5", "kind": "EndTurn", "label": "End turn", "semanticKey": "end_turn" }
+    ],
+    "glossary": { "Vulnerable": "Vulnerable creatures take 50% more damage from Attacks." }
+  }
+}

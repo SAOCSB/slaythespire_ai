@@ -1,0 +1,38 @@
+{
+  "id": "rule-character-policy",
+  "rationale": "Character choice is a hard owner rule: Ironclad is selected but only Silent/Defect are allowed (Defect still locked), so the engine selects Silent itself without an LLM call.",
+  "tags": ["menu", "rule", "character_select", "owner_settings", "en"],
+  "language": "en",
+  "settings": { "characters": { "allowed": ["SILENT", "DEFECT"], "policy": "First", "ascension": 0 } },
+  "expect_source": "Rule",
+  "expect_any": ["char:SILENT"],
+  "snapshot": {
+    "sequence": 12,
+    "screen": "CharacterSelect",
+    "inRun": false,
+    "isMultiplayer": false,
+    "localPlayerId": 1,
+    "canAct": true,
+    "players": [
+      { "netId": 1, "name": "Ann", "isLocal": true }
+    ],
+    "characterSelect": {
+      "characters": [
+        { "id": "IRONCLAD", "name": "Ironclad", "selected": true },
+        { "id": "SILENT", "name": "Silent" },
+        { "id": "REGENT", "name": "Regent" },
+        { "id": "NECROBINDER", "name": "Necrobinder" },
+        { "id": "DEFECT", "name": "Defect", "locked": true }
+      ],
+      "ascension": 0,
+      "maxAscension": 4
+    },
+    "actions": [
+      { "id": "a0", "kind": "SelectCharacter", "label": "Select character Ironclad", "semanticKey": "char:IRONCLAD", "args": { "character": "IRONCLAD" } },
+      { "id": "a1", "kind": "SelectCharacter", "label": "Select character Silent", "semanticKey": "char:SILENT", "args": { "character": "SILENT" } },
+      { "id": "a2", "kind": "SelectCharacter", "label": "Select character Regent", "semanticKey": "char:REGENT", "args": { "character": "REGENT" } },
+      { "id": "a3", "kind": "SelectCharacter", "label": "Select character Necrobinder", "semanticKey": "char:NECROBINDER", "args": { "character": "NECROBINDER" } },
+      { "id": "a4", "kind": "Embark", "label": "Embark", "semanticKey": "embark" }
+    ]
+  }
+}

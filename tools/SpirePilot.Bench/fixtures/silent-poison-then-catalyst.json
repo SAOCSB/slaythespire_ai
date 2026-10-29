@@ -1,0 +1,59 @@
+{
+  "id": "silent-poison-then-catalyst",
+  "rationale": "Poison before Catalyst: (18+5)x2 = 46 Poison vs 18x2+5 = 41 the other way, against a high-HP boss that is only buffing (no block needed).",
+  "tags": ["combat", "poison", "sequencing", "boss", "silent", "zh"],
+  "language": "zh",
+  "expect_any": ["play:DEADLY_POISON+0@E:KNOWLEDGE_DEMON#0"],
+  "forbid": ["play:DEFEND_SILENT+0@-", "end_turn"],
+  "snapshot": {
+    "sequence": 7120,
+    "screen": "Combat",
+    "inRun": true,
+    "isMultiplayer": false,
+    "localPlayerId": 1,
+    "canAct": true,
+    "run": { "act": 2, "actName": "蜂巢", "floor": 33, "ascensionLevel": 3, "bossName": "知识恶魔" },
+    "players": [
+      {
+        "netId": 1, "name": "小雨", "characterId": "SILENT", "characterName": "静默猎手", "isLocal": true,
+        "hp": 52, "maxHp": 70, "block": 0, "gold": 240, "energy": 2, "maxEnergy": 3,
+        "potionSlots": 3, "potions": [],
+        "relics": [ { "id": "RING_OF_THE_SNAKE", "name": "蛇之戒指", "description": "每场战斗开始时，额外抽 2 张牌。" } ],
+        "deckCount": 22
+      }
+    ],
+    "combat": {
+      "round": 4,
+      "isPlayerTurn": true,
+      "encounterType": "Boss",
+      "encounterName": "知识恶魔",
+      "hand": [
+        { "key": "h0", "id": "CATALYST", "name": "催化剂", "cost": 1, "type": "Skill", "rarity": "Uncommon", "target": "AnyEnemy", "description": "使一名敌人的中毒层数翻倍。消耗。", "keywords": ["中毒", "消耗"], "playable": true },
+        { "key": "h1", "id": "DEADLY_POISON", "name": "致命毒药", "cost": 1, "type": "Skill", "rarity": "Common", "target": "AnyEnemy", "description": "给予 5 层中毒。", "keywords": ["中毒"], "playable": true },
+        { "key": "h2", "id": "STRIKE_SILENT", "name": "打击", "cost": 1, "type": "Attack", "rarity": "Basic", "target": "AnyEnemy", "description": "造成 6 点伤害。", "playable": true },
+        { "key": "h3", "id": "DEFEND_SILENT", "name": "防御", "cost": 1, "type": "Skill", "rarity": "Basic", "target": "Self", "description": "获得 5 点格挡。", "playable": true }
+      ],
+      "drawPileCount": 8,
+      "discardPileCount": 9,
+      "exhaustPileCount": 0,
+      "enemies": [
+        {
+          "key": "e0", "id": "KNOWLEDGE_DEMON", "name": "知识恶魔", "hp": 160, "maxHp": 280, "block": 0,
+          "intents": [ { "type": "Buff", "description": "获得力量。" } ],
+          "powers": [ { "id": "POISON_POWER", "name": "中毒", "amount": 18, "isDebuff": true, "description": "回合开始时失去 18 点生命。" } ]
+        }
+      ]
+    },
+    "actions": [
+      { "id": "a0", "kind": "PlayCard", "label": "打出 催化剂 → 知识恶魔 (中毒 18→36)", "semanticKey": "play:CATALYST+0@E:KNOWLEDGE_DEMON#0", "args": { "index": "0", "target": "e0" } },
+      { "id": "a1", "kind": "PlayCard", "label": "打出 致命毒药 → 知识恶魔 (+5 中毒)", "semanticKey": "play:DEADLY_POISON+0@E:KNOWLEDGE_DEMON#0", "args": { "index": "1", "target": "e0" } },
+      { "id": "a2", "kind": "PlayCard", "label": "打出 打击 → 知识恶魔 (6 伤害)", "semanticKey": "play:STRIKE_SILENT+0@E:KNOWLEDGE_DEMON#0", "args": { "index": "2", "target": "e0" } },
+      { "id": "a3", "kind": "PlayCard", "label": "打出 防御 (5 格挡)", "semanticKey": "play:DEFEND_SILENT+0@-", "args": { "index": "3" } },
+      { "id": "a4", "kind": "EndTurn", "label": "结束回合", "semanticKey": "end_turn" }
+    ],
+    "glossary": {
+      "中毒": "回合开始时失去等同于中毒层数的生命，然后中毒层数减 1。",
+      "消耗": "打出后移出本场战斗。"
+    }
+  }
+}

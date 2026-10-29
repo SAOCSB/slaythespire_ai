@@ -1,0 +1,58 @@
+{
+  "id": "shop-remove-curse",
+  "rationale": "悔恨 (Regret) costs HP every turn; removing it (75g) is the best buy, and buying a card first (52g+) leaves too little gold for the removal.",
+  "tags": ["shop", "removal", "curse", "ironclad", "zh"],
+  "language": "zh",
+  "expect_any": ["shop:remove"],
+  "forbid": ["shop:leave"],
+  "snapshot": {
+    "sequence": 2604,
+    "screen": "Shop",
+    "inRun": true,
+    "isMultiplayer": false,
+    "localPlayerId": 1,
+    "canAct": true,
+    "run": { "act": 1, "actName": "密林", "floor": 9, "ascensionLevel": 1, "bossName": "仪式兽" },
+    "players": [
+      {
+        "netId": 1, "name": "阿杰", "characterId": "IRONCLAD", "characterName": "铁甲战士", "isLocal": true,
+        "hp": 55, "maxHp": 80, "block": 0, "gold": 118, "energy": 3, "maxEnergy": 3,
+        "potionSlots": 3, "potions": [],
+        "relics": [ { "id": "BURNING_BLOOD", "name": "燃烧之血", "description": "战斗结束时，回复 6 点生命。" } ],
+        "deck": [
+          { "key": "m0", "id": "STRIKE_IRONCLAD", "name": "打击", "cost": 1, "type": "Attack", "rarity": "Basic", "description": "造成 6 点伤害。" },
+          { "key": "m1", "id": "STRIKE_IRONCLAD", "name": "打击", "cost": 1, "type": "Attack", "rarity": "Basic", "description": "造成 6 点伤害。" },
+          { "key": "m2", "id": "STRIKE_IRONCLAD", "name": "打击", "cost": 1, "type": "Attack", "rarity": "Basic", "description": "造成 6 点伤害。" },
+          { "key": "m3", "id": "STRIKE_IRONCLAD", "name": "打击", "cost": 1, "type": "Attack", "rarity": "Basic", "description": "造成 6 点伤害。" },
+          { "key": "m4", "id": "DEFEND_IRONCLAD", "name": "防御", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "获得 5 点格挡。" },
+          { "key": "m5", "id": "DEFEND_IRONCLAD", "name": "防御", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "获得 5 点格挡。" },
+          { "key": "m6", "id": "DEFEND_IRONCLAD", "name": "防御", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "获得 5 点格挡。" },
+          { "key": "m7", "id": "DEFEND_IRONCLAD", "name": "防御", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "获得 5 点格挡。" },
+          { "key": "m8", "id": "BASH", "name": "痛击", "cost": 2, "type": "Attack", "rarity": "Basic", "description": "造成 8 点伤害。给予 2 层易伤。" },
+          { "key": "m9", "id": "SHRUG_IT_OFF", "name": "耸肩无视", "cost": 1, "type": "Skill", "rarity": "Common", "description": "获得 8 点格挡。抽 1 张牌。" },
+          { "key": "m10", "id": "UPPERCUT", "name": "上勾拳", "cost": 2, "type": "Attack", "rarity": "Uncommon", "description": "造成 13 点伤害。给予 1 层虚弱。给予 1 层易伤。" },
+          { "key": "m11", "id": "REGRET", "name": "悔恨", "type": "Curse", "rarity": "Curse", "description": "不能被打出。在你的回合结束时，你手牌中每有一张牌，失去 1 点生命。", "keywords": ["不能被打出"] }
+        ],
+        "deckCount": 12
+      }
+    ],
+    "shop": {
+      "items": [
+        { "index": 0, "kind": "Card", "name": "双重打击", "description": "造成 5 点伤害两次。", "price": 52, "affordable": true },
+        { "index": 1, "kind": "Card", "name": "剑柄打击", "description": "造成 9 点伤害。抽 1 张牌。", "price": 71, "affordable": true },
+        { "index": 2, "kind": "Card", "name": "恶魔形态", "description": "在你的回合开始时，获得 2 点力量。", "price": 161, "affordable": false },
+        { "index": 3, "kind": "Relic", "name": "锚", "description": "每场战斗开始时获得 10 点格挡。", "price": 165, "affordable": false },
+        { "index": 4, "kind": "Potion", "name": "力量药水", "description": "获得 2 点力量。", "price": 50, "affordable": true }
+      ],
+      "removalPrice": 75,
+      "removalAvailable": true
+    },
+    "actions": [
+      { "id": "a0", "kind": "BuyItem", "label": "购买 双重打击 (52 金币)", "semanticKey": "shop:card:TWIN_STRIKE", "args": { "index": "0" } },
+      { "id": "a1", "kind": "BuyItem", "label": "购买 剑柄打击 (71 金币)", "semanticKey": "shop:card:POMMEL_STRIKE", "args": { "index": "1" } },
+      { "id": "a2", "kind": "BuyItem", "label": "购买 力量药水 (50 金币)", "semanticKey": "shop:potion:STRENGTH_POTION", "args": { "index": "4" } },
+      { "id": "a3", "kind": "BuyCardRemoval", "label": "购买删牌服务 (75 金币)", "semanticKey": "shop:remove", "unpredictable": true },
+      { "id": "a4", "kind": "Proceed", "label": "继续/离开", "semanticKey": "shop:leave" }
+    ]
+  }
+}

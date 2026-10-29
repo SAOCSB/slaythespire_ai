@@ -1,0 +1,75 @@
+{
+  "id": "cardreward-skip-lean-deck",
+  "rationale": "A finished 27-card poison deck with no Shivs and few attacks: Accuracy and Finisher have no enablers and Sucker Punch only dilutes Catalyst draws, so skip.",
+  "tags": ["card_reward", "skip", "deck", "silent", "en"],
+  "language": "en",
+  "memo": "Poison plan: Noxious Fumes + Catalyst win long fights. Deck is complete; only take more block/draw or removal.",
+  "expect_any": ["cardreward:skip"],
+  "max_plan_len": 1,
+  "snapshot": {
+    "sequence": 5521,
+    "screen": "CardReward",
+    "inRun": true,
+    "isMultiplayer": false,
+    "localPlayerId": 1,
+    "canAct": true,
+    "run": { "act": 2, "actName": "Hive", "floor": 24, "ascensionLevel": 5, "bossName": "Knowledge Demon" },
+    "players": [
+      {
+        "netId": 1, "name": "Ann", "characterId": "SILENT", "characterName": "Silent", "isLocal": true,
+        "hp": 51, "maxHp": 74, "block": 0, "gold": 188, "energy": 3, "maxEnergy": 3,
+        "potionSlots": 3,
+        "potions": [ { "slot": 0, "id": "POISON_POTION", "name": "Poison Potion", "description": "Apply 6 Poison.", "target": "AnyEnemy", "rarity": "Common", "usableNow": false } ],
+        "relics": [
+          { "id": "RING_OF_THE_SNAKE", "name": "Ring of the Snake", "description": "At the start of each combat, draw 2 additional cards." },
+          { "id": "BAG_OF_MARBLES", "name": "Bag of Marbles", "description": "At the start of each combat, apply 1 Vulnerable to ALL enemies." }
+        ],
+        "deck": [
+          { "key": "m0", "id": "STRIKE_SILENT", "name": "Strike", "cost": 1, "type": "Attack", "rarity": "Basic", "description": "Deal 6 damage." },
+          { "key": "m1", "id": "STRIKE_SILENT", "name": "Strike", "cost": 1, "type": "Attack", "rarity": "Basic", "description": "Deal 6 damage." },
+          { "key": "m2", "id": "STRIKE_SILENT", "name": "Strike", "cost": 1, "type": "Attack", "rarity": "Basic", "description": "Deal 6 damage." },
+          { "key": "m3", "id": "DEFEND_SILENT", "name": "Defend", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "Gain 5 Block." },
+          { "key": "m4", "id": "DEFEND_SILENT", "name": "Defend", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "Gain 5 Block." },
+          { "key": "m5", "id": "DEFEND_SILENT", "name": "Defend", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "Gain 5 Block." },
+          { "key": "m6", "id": "DEFEND_SILENT", "name": "Defend", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "Gain 5 Block." },
+          { "key": "m7", "id": "NEUTRALIZE", "name": "Neutralize", "cost": 0, "type": "Attack", "rarity": "Basic", "description": "Deal 3 damage. Apply 1 Weak." },
+          { "key": "m8", "id": "SURVIVOR", "name": "Survivor", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "Gain 8 Block. Discard 1 card." },
+          { "key": "m9", "id": "DEADLY_POISON", "name": "Deadly Poison", "cost": 1, "type": "Skill", "rarity": "Common", "upgraded": true, "description": "Apply 7 Poison." },
+          { "key": "m10", "id": "DEADLY_POISON", "name": "Deadly Poison", "cost": 1, "type": "Skill", "rarity": "Common", "description": "Apply 5 Poison." },
+          { "key": "m11", "id": "DEADLY_POISON", "name": "Deadly Poison", "cost": 1, "type": "Skill", "rarity": "Common", "description": "Apply 5 Poison." },
+          { "key": "m12", "id": "BOUNCING_FLASK", "name": "Bouncing Flask", "cost": 2, "type": "Skill", "rarity": "Uncommon", "description": "Apply 3 Poison to a random enemy 3 times." },
+          { "key": "m13", "id": "BOUNCING_FLASK", "name": "Bouncing Flask", "cost": 2, "type": "Skill", "rarity": "Uncommon", "description": "Apply 3 Poison to a random enemy 3 times." },
+          { "key": "m14", "id": "NOXIOUS_FUMES", "name": "Noxious Fumes", "cost": 1, "type": "Power", "rarity": "Uncommon", "upgraded": true, "description": "At the start of your turn, apply 3 Poison to ALL enemies." },
+          { "key": "m15", "id": "NOXIOUS_FUMES", "name": "Noxious Fumes", "cost": 1, "type": "Power", "rarity": "Uncommon", "description": "At the start of your turn, apply 2 Poison to ALL enemies." },
+          { "key": "m16", "id": "CATALYST", "name": "Catalyst", "cost": 1, "type": "Skill", "rarity": "Uncommon", "upgraded": true, "description": "Triple an enemy's Poison. Exhaust." },
+          { "key": "m17", "id": "FOOTWORK", "name": "Footwork", "cost": 1, "type": "Power", "rarity": "Uncommon", "upgraded": true, "description": "Gain 3 Dexterity." },
+          { "key": "m18", "id": "FOOTWORK", "name": "Footwork", "cost": 1, "type": "Power", "rarity": "Uncommon", "description": "Gain 2 Dexterity." },
+          { "key": "m19", "id": "BACKFLIP", "name": "Backflip", "cost": 1, "type": "Skill", "rarity": "Common", "description": "Gain 5 Block. Draw 2 cards." },
+          { "key": "m20", "id": "BACKFLIP", "name": "Backflip", "cost": 1, "type": "Skill", "rarity": "Common", "description": "Gain 5 Block. Draw 2 cards." },
+          { "key": "m21", "id": "LEG_SWEEP", "name": "Leg Sweep", "cost": 2, "type": "Skill", "rarity": "Uncommon", "description": "Apply 2 Weak. Gain 11 Block." },
+          { "key": "m22", "id": "ACROBATICS", "name": "Acrobatics", "cost": 1, "type": "Skill", "rarity": "Common", "description": "Draw 3 cards. Discard 1 card." },
+          { "key": "m23", "id": "WELL_LAID_PLANS", "name": "Well-Laid Plans", "cost": 1, "type": "Power", "rarity": "Uncommon", "description": "At the end of your turn, Retain up to 1 card." },
+          { "key": "m24", "id": "PIERCING_WAIL", "name": "Piercing Wail", "cost": 1, "type": "Skill", "rarity": "Common", "description": "ALL enemies lose 6 Strength this turn. Exhaust." },
+          { "key": "m25", "id": "MALAISE", "name": "Malaise", "cost": -1, "type": "Skill", "rarity": "Rare", "description": "Enemy loses X Strength. Apply X Weak. Exhaust." },
+          { "key": "m26", "id": "BLUR", "name": "Blur", "cost": 1, "type": "Skill", "rarity": "Uncommon", "description": "Gain 5 Block. Block is not removed at the start of your next turn." }
+        ],
+        "deckCount": 27
+      }
+    ],
+    "rewards": {
+      "items": [],
+      "cardChoices": [
+        { "key": "r0", "id": "ACCURACY", "name": "Accuracy", "cost": 1, "type": "Power", "rarity": "Uncommon", "description": "Shivs deal 4 additional damage." },
+        { "key": "r1", "id": "FINISHER", "name": "Finisher", "cost": 1, "type": "Attack", "rarity": "Uncommon", "target": "AnyEnemy", "description": "Deal 6 damage for each Attack played this turn." },
+        { "key": "r2", "id": "SUCKER_PUNCH", "name": "Sucker Punch", "cost": 1, "type": "Attack", "rarity": "Common", "target": "AnyEnemy", "description": "Deal 7 damage. Apply 1 Weak." }
+      ],
+      "canSkipCards": true
+    },
+    "actions": [
+      { "id": "a0", "kind": "PickRewardCard", "label": "Take card Accuracy", "semanticKey": "cardreward:ACCURACY", "args": { "index": "0" } },
+      { "id": "a1", "kind": "PickRewardCard", "label": "Take card Finisher", "semanticKey": "cardreward:FINISHER", "args": { "index": "1" } },
+      { "id": "a2", "kind": "PickRewardCard", "label": "Take card Sucker Punch", "semanticKey": "cardreward:SUCKER_PUNCH", "args": { "index": "2" } },
+      { "id": "a3", "kind": "SkipCardReward", "label": "Skip card reward", "semanticKey": "cardreward:skip" }
+    ]
+  }
+}

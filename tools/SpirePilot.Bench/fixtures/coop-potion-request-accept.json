@@ -1,0 +1,72 @@
+{
+  "id": "coop-potion-request-accept",
+  "rationale": "小雨 takes 18 at 11 HP and asked for a Block Potion; ours targets any player, so throw it on her (she survives at 5) and accept her request.",
+  "tags": ["coop", "potion", "team_request", "ironclad", "zh"],
+  "language": "zh",
+  "inbox": [
+    {
+      "id": "m1", "kind": "request_potion", "from": 2, "to": 0, "fromName": "小雨", "fromAi": false,
+      "text": "伯多尼斯这回合打我 18，我只剩 11 血了！谁能给我扔个格挡药水？", "potion": "格挡药水"
+    }
+  ],
+  "expect_any": ["potion:BLOCK_POTION@P:2"],
+  "forbid": ["potion:BLOCK_POTION@P:1", "end_turn"],
+  "expect_message_kind": "accept",
+  "expect_reply_to": "m1",
+  "snapshot": {
+    "sequence": 2891,
+    "screen": "Combat",
+    "inRun": true,
+    "isMultiplayer": true,
+    "localPlayerId": 1,
+    "canAct": true,
+    "run": { "act": 1, "actName": "密林", "floor": 11, "ascensionLevel": 0, "bossName": "仪式兽" },
+    "players": [
+      {
+        "netId": 1, "name": "阿杰", "characterId": "IRONCLAD", "characterName": "铁甲战士", "isLocal": true, "hasTeamLink": true,
+        "hp": 48, "maxHp": 80, "block": 5, "gold": 160, "energy": 0, "maxEnergy": 3,
+        "potionSlots": 3,
+        "potions": [
+          { "slot": 0, "id": "BLOCK_POTION", "name": "格挡药水", "description": "获得 12 点格挡。", "target": "AnyPlayer", "rarity": "Common", "usableNow": true }
+        ],
+        "relics": [ { "id": "BURNING_BLOOD", "name": "燃烧之血", "description": "战斗结束时，回复 6 点生命。" } ],
+        "deckCount": 16
+      },
+      {
+        "netId": 2, "name": "小雨", "characterId": "SILENT", "characterName": "静默猎手", "isLocal": false, "hasTeamLink": true,
+        "hp": 11, "maxHp": 70, "block": 0, "gold": 140, "energy": 0, "maxEnergy": 3,
+        "potionSlots": 3, "potions": [],
+        "relics": [ { "id": "RING_OF_THE_SNAKE", "name": "蛇之戒指", "description": "每场战斗开始时，额外抽 2 张牌。" } ],
+        "handCount": 2
+      }
+    ],
+    "combat": {
+      "round": 4,
+      "isPlayerTurn": true,
+      "encounterType": "Elite",
+      "encounterName": "伯多尼斯",
+      "hand": [
+        { "key": "h0", "id": "STRIKE_IRONCLAD", "name": "打击", "cost": 1, "type": "Attack", "rarity": "Basic", "target": "AnyEnemy", "description": "造成 6 点伤害。", "playable": false, "unplayableReason": "能量不足" },
+        { "key": "h1", "id": "DEFEND_IRONCLAD", "name": "防御", "cost": 1, "type": "Skill", "rarity": "Basic", "target": "Self", "description": "获得 5 点格挡。", "playable": false, "unplayableReason": "能量不足" }
+      ],
+      "drawPileCount": 4,
+      "discardPileCount": 10,
+      "exhaustPileCount": 0,
+      "enemies": [
+        {
+          "key": "e0", "id": "BYRDONIS", "name": "伯多尼斯", "hp": 70, "maxHp": 120, "block": 0,
+          "intents": [ { "type": "Attack", "damage": 18, "hits": 1, "targetName": "小雨" } ]
+        },
+        {
+          "key": "e1", "id": "NIBBIT", "name": "小啃怪", "hp": 20, "maxHp": 44, "block": 0,
+          "intents": [ { "type": "Attack", "damage": 6, "hits": 1, "targetName": "阿杰" } ]
+        }
+      ]
+    },
+    "actions": [
+      { "id": "a0", "kind": "UsePotion", "label": "使用药水 格挡药水 → 阿杰 (自己, 12 格挡)", "semanticKey": "potion:BLOCK_POTION@P:1", "args": { "slot": "0", "target": "p0" } },
+      { "id": "a1", "kind": "UsePotion", "label": "使用药水 格挡药水 → 小雨 (12 格挡)", "semanticKey": "potion:BLOCK_POTION@P:2", "args": { "slot": "0", "target": "p1" } },
+      { "id": "a2", "kind": "EndTurn", "label": "结束回合", "semanticKey": "end_turn" }
+    ]
+  }
+}

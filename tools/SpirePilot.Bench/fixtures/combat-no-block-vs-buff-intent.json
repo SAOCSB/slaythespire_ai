@@ -1,0 +1,65 @@
+{
+  "id": "combat-no-block-vs-buff-intent",
+  "rationale": "Neither enemy attacks this turn (buff + debuff), so block is wasted; spend all energy on damage (Bash first).",
+  "tags": ["combat", "intent", "ironclad", "zh"],
+  "language": "zh",
+  "expect_any": ["play:BASH+0@*", "play:STRIKE_IRONCLAD+0@*"],
+  "forbid": ["play:DEFEND_IRONCLAD+0@-", "end_turn"],
+  "snapshot": {
+    "sequence": 1337,
+    "screen": "Combat",
+    "inRun": true,
+    "isMultiplayer": false,
+    "localPlayerId": 1,
+    "canAct": true,
+    "run": { "act": 1, "actName": "密林", "floor": 5, "ascensionLevel": 1, "bossName": "仪式兽" },
+    "players": [
+      {
+        "netId": 1, "name": "阿杰", "characterId": "IRONCLAD", "characterName": "铁甲战士", "isLocal": true,
+        "hp": 45, "maxHp": 80, "block": 0, "gold": 140, "energy": 3, "maxEnergy": 3,
+        "potionSlots": 3, "potions": [],
+        "relics": [ { "id": "BURNING_BLOOD", "name": "燃烧之血", "description": "战斗结束时，回复 6 点生命。" } ],
+        "deckCount": 12
+      }
+    ],
+    "combat": {
+      "round": 1,
+      "isPlayerTurn": true,
+      "encounterType": "Normal",
+      "encounterName": "藤蔓蹒跚者与小墨怪",
+      "hand": [
+        { "key": "h0", "id": "DEFEND_IRONCLAD", "name": "防御", "cost": 1, "type": "Skill", "rarity": "Basic", "target": "Self", "description": "获得 5 点格挡。", "playable": true },
+        { "key": "h1", "id": "STRIKE_IRONCLAD", "name": "打击", "cost": 1, "type": "Attack", "rarity": "Basic", "target": "AnyEnemy", "description": "造成 6 点伤害。", "playable": true },
+        { "key": "h2", "id": "BASH", "name": "痛击", "cost": 2, "type": "Attack", "rarity": "Basic", "target": "AnyEnemy", "description": "造成 8 点伤害。给予 2 层[gold]易伤[/gold]。", "keywords": ["易伤"], "playable": true },
+        { "key": "h3", "id": "DEFEND_IRONCLAD", "name": "防御", "cost": 1, "type": "Skill", "rarity": "Basic", "target": "Self", "description": "获得 5 点格挡。", "playable": true },
+        { "key": "h4", "id": "STRIKE_IRONCLAD", "name": "打击", "cost": 1, "type": "Attack", "rarity": "Basic", "target": "AnyEnemy", "description": "造成 6 点伤害。", "playable": true }
+      ],
+      "drawPileCount": 7,
+      "discardPileCount": 0,
+      "exhaustPileCount": 0,
+      "enemies": [
+        {
+          "key": "e0", "id": "VINE_SHAMBLER", "name": "藤蔓蹒跚者", "hp": 47, "maxHp": 47, "block": 0,
+          "intents": [ { "type": "Buff", "description": "获得力量。" } ]
+        },
+        {
+          "key": "e1", "id": "INKLET", "name": "小墨怪", "hp": 18, "maxHp": 18, "block": 0,
+          "intents": [ { "type": "Debuff", "description": "给予虚弱。" } ]
+        }
+      ]
+    },
+    "actions": [
+      { "id": "a0", "kind": "PlayCard", "label": "打出 防御 (5 格挡)", "semanticKey": "play:DEFEND_IRONCLAD+0@-", "args": { "index": "0" } },
+      { "id": "a1", "kind": "PlayCard", "label": "打出 打击 → 藤蔓蹒跚者 (6 伤害)", "semanticKey": "play:STRIKE_IRONCLAD+0@E:VINE_SHAMBLER#0", "args": { "index": "1", "target": "e0" } },
+      { "id": "a2", "kind": "PlayCard", "label": "打出 打击 → 小墨怪 (6 伤害)", "semanticKey": "play:STRIKE_IRONCLAD+0@E:INKLET#0", "args": { "index": "1", "target": "e1" } },
+      { "id": "a3", "kind": "PlayCard", "label": "打出 痛击 → 藤蔓蹒跚者 (8 伤害, +2 易伤)", "semanticKey": "play:BASH+0@E:VINE_SHAMBLER#0", "args": { "index": "2", "target": "e0" } },
+      { "id": "a4", "kind": "PlayCard", "label": "打出 痛击 → 小墨怪 (8 伤害, +2 易伤)", "semanticKey": "play:BASH+0@E:INKLET#0", "args": { "index": "2", "target": "e1" } },
+      { "id": "a5", "kind": "EndTurn", "label": "结束回合", "semanticKey": "end_turn" }
+    ],
+    "glossary": {
+      "易伤": "受到攻击伤害增加 50%。",
+      "虚弱": "攻击造成的伤害减少 25%。",
+      "力量": "提高攻击造成的伤害。"
+    }
+  }
+}

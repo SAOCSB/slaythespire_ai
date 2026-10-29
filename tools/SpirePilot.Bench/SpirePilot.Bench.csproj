@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Offline decision benchmark: replays hand-written snapshot fixtures through the real DecisionEngine,
+    PromptBuilder and LLM clients and scores the model's answers. No game needed.
+    Usage and fixture format: docs/BENCHMARK.md.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>SpirePilot.Bench</RootNamespace>
+    <AssemblyName>SpirePilot.Bench</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <!-- The game runs .NET 9; dev machines may only have a newer runtime. -->
+    <RollForward>Major</RollForward>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/SpirePilot.Core/SpirePilot.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Shipped next to the binary so the tool also finds its fixtures when run from elsewhere. -->
+    <None Update="fixtures/*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

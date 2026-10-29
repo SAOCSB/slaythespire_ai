@@ -1,0 +1,54 @@
+{
+  "id": "rule-pinned-route",
+  "rationale": "The owner pinned this act's route; with no live instruction or teammate request the engine follows it itself (Rule) without an LLM call.",
+  "tags": ["map", "rule", "pinned_route", "owner_settings", "en"],
+  "language": "en",
+  "settings": {
+    "route": { "pinnedPath": ["0,0", "1,1", "1,2", "1,3", "2,4", "2,5", "1,6"], "pinnedAct": 1 }
+  },
+  "expect_source": "Rule",
+  "expect_any": ["map:2,4"],
+  "snapshot": {
+    "sequence": 701,
+    "screen": "Map",
+    "inRun": true,
+    "isMultiplayer": false,
+    "localPlayerId": 1,
+    "canAct": true,
+    "run": { "act": 1, "actName": "Overgrowth", "floor": 4, "ascensionLevel": 0, "bossName": "The Kin" },
+    "players": [
+      {
+        "netId": 1, "name": "Ann", "characterId": "DEFECT", "characterName": "Defect", "isLocal": true,
+        "hp": 58, "maxHp": 75, "block": 0, "gold": 84, "energy": 3, "maxEnergy": 3,
+        "potionSlots": 3, "potions": [],
+        "relics": [ { "id": "CRACKED_CORE", "name": "Cracked Core", "description": "At the start of each combat, Channel 1 Lightning." } ],
+        "deckCount": 12
+      }
+    ],
+    "map": {
+      "current": "1,3",
+      "rows": 15,
+      "reachable": ["0,4", "2,4", "3,4"],
+      "nodes": [
+        { "key": "1,3", "col": 1, "row": 3, "type": "Monster", "typeName": "Monster", "children": ["0,4", "2,4", "3,4"], "visited": true },
+        { "key": "0,4", "col": 0, "row": 4, "type": "Elite", "typeName": "Elite", "children": ["0,5"] },
+        { "key": "2,4", "col": 2, "row": 4, "type": "RestSite", "typeName": "RestSite", "children": ["2,5"] },
+        { "key": "3,4", "col": 3, "row": 4, "type": "Monster", "typeName": "Monster", "children": ["2,5", "3,5"] },
+        { "key": "0,5", "col": 0, "row": 5, "type": "Monster", "typeName": "Monster", "children": ["1,6"] },
+        { "key": "2,5", "col": 2, "row": 5, "type": "Event", "typeName": "Event", "children": ["1,6"] },
+        { "key": "3,5", "col": 3, "row": 5, "type": "Shop", "typeName": "Shop", "children": ["3,6"] },
+        { "key": "1,6", "col": 1, "row": 6, "type": "Monster", "typeName": "Monster", "children": ["2,7"] },
+        { "key": "3,6", "col": 3, "row": 6, "type": "Elite", "typeName": "Elite", "children": ["2,7"] },
+        { "key": "2,7", "col": 2, "row": 7, "type": "Treasure", "typeName": "Treasure", "children": ["2,8"] },
+        { "key": "2,8", "col": 2, "row": 8, "type": "Monster", "typeName": "Monster", "children": ["2,9"] },
+        { "key": "2,9", "col": 2, "row": 9, "type": "RestSite", "typeName": "RestSite", "children": ["2,15"] },
+        { "key": "2,15", "col": 2, "row": 15, "type": "Boss", "typeName": "Boss", "children": [] }
+      ]
+    },
+    "actions": [
+      { "id": "a0", "kind": "ChooseMapNode", "label": "Travel to 0,4 (Elite)", "semanticKey": "map:0,4", "args": { "node": "0,4" } },
+      { "id": "a1", "kind": "ChooseMapNode", "label": "Travel to 2,4 (Rest site)", "semanticKey": "map:2,4", "args": { "node": "2,4" } },
+      { "id": "a2", "kind": "ChooseMapNode", "label": "Travel to 3,4 (Monster)", "semanticKey": "map:3,4", "args": { "node": "3,4" } }
+    ]
+  }
+}

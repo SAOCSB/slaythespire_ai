@@ -1,0 +1,61 @@
+{
+  "id": "combat-keep-heal-potion-high-hp",
+  "rationale": "At 64/70 HP in a hallway fight a heal potion mostly overflows; keep it for an elite or the boss and just play the turn.",
+  "tags": ["combat", "potion", "silent", "en"],
+  "language": "en",
+  "forbid": ["potion:BLOOD_POTION@-", "end_turn"],
+  "snapshot": {
+    "sequence": 640,
+    "screen": "Combat",
+    "inRun": true,
+    "isMultiplayer": false,
+    "localPlayerId": 1,
+    "canAct": true,
+    "run": { "act": 1, "actName": "Overgrowth", "floor": 4, "ascensionLevel": 0, "bossName": "Vantom" },
+    "players": [
+      {
+        "netId": 1, "name": "Ann", "characterId": "SILENT", "characterName": "Silent", "isLocal": true,
+        "hp": 64, "maxHp": 70, "block": 0, "gold": 121, "energy": 3, "maxEnergy": 3,
+        "potionSlots": 3,
+        "potions": [
+          { "slot": 0, "id": "BLOOD_POTION", "name": "Blood Potion", "description": "Heal for 20% of your Max HP.", "target": "AnyPlayer", "rarity": "Common", "usableNow": true }
+        ],
+        "relics": [ { "id": "RING_OF_THE_SNAKE", "name": "Ring of the Snake", "description": "At the start of each combat, draw 2 additional cards." } ],
+        "deckCount": 13
+      }
+    ],
+    "combat": {
+      "round": 1,
+      "isPlayerTurn": true,
+      "encounterType": "Normal",
+      "encounterName": "Fuzzy Wurm Crawler",
+      "hand": [
+        { "key": "h0", "id": "NEUTRALIZE", "name": "Neutralize", "cost": 0, "type": "Attack", "rarity": "Basic", "target": "AnyEnemy", "description": "Deal 3 damage. Apply 1 Weak.", "keywords": ["Weak"], "playable": true },
+        { "key": "h1", "id": "STRIKE_SILENT", "name": "Strike", "cost": 1, "type": "Attack", "rarity": "Basic", "target": "AnyEnemy", "description": "Deal 6 damage.", "playable": true },
+        { "key": "h2", "id": "STRIKE_SILENT", "name": "Strike", "cost": 1, "type": "Attack", "rarity": "Basic", "target": "AnyEnemy", "description": "Deal 6 damage.", "playable": true },
+        { "key": "h3", "id": "DEFEND_SILENT", "name": "Defend", "cost": 1, "type": "Skill", "rarity": "Basic", "target": "Self", "description": "Gain 5 Block.", "playable": true },
+        { "key": "h4", "id": "DEFEND_SILENT", "name": "Defend", "cost": 1, "type": "Skill", "rarity": "Basic", "target": "Self", "description": "Gain 5 Block.", "playable": true },
+        { "key": "h5", "id": "SURVIVOR", "name": "Survivor", "cost": 1, "type": "Skill", "rarity": "Basic", "target": "Self", "description": "Gain 8 Block. Discard 1 card.", "playable": true },
+        { "key": "h6", "id": "STRIKE_SILENT", "name": "Strike", "cost": 1, "type": "Attack", "rarity": "Basic", "target": "AnyEnemy", "description": "Deal 6 damage.", "playable": true }
+      ],
+      "drawPileCount": 6,
+      "discardPileCount": 0,
+      "exhaustPileCount": 0,
+      "enemies": [
+        {
+          "key": "e0", "id": "FUZZY_WURM_CRAWLER", "name": "Fuzzy Wurm Crawler", "hp": 41, "maxHp": 41, "block": 0,
+          "intents": [ { "type": "Attack", "damage": 9, "hits": 1 } ]
+        }
+      ]
+    },
+    "actions": [
+      { "id": "a0", "kind": "PlayCard", "label": "Play Neutralize → Fuzzy Wurm Crawler (3 dmg, +1 Weak)", "semanticKey": "play:NEUTRALIZE+0@E:FUZZY_WURM_CRAWLER#0", "args": { "index": "0", "target": "e0" } },
+      { "id": "a1", "kind": "PlayCard", "label": "Play Strike → Fuzzy Wurm Crawler (6 dmg)", "semanticKey": "play:STRIKE_SILENT+0@E:FUZZY_WURM_CRAWLER#0", "args": { "index": "1", "target": "e0" } },
+      { "id": "a2", "kind": "PlayCard", "label": "Play Defend (5 block)", "semanticKey": "play:DEFEND_SILENT+0@-", "args": { "index": "3" } },
+      { "id": "a3", "kind": "PlayCard", "label": "Play Survivor (8 block, discard 1)", "semanticKey": "play:SURVIVOR+0@-", "args": { "index": "5" }, "unpredictable": true },
+      { "id": "a4", "kind": "UsePotion", "label": "Use potion Blood Potion (heal 14)", "semanticKey": "potion:BLOOD_POTION@-", "args": { "slot": "0" } },
+      { "id": "a5", "kind": "EndTurn", "label": "End turn", "semanticKey": "end_turn" }
+    ],
+    "glossary": { "Weak": "Weakened creatures deal 25% less damage with Attacks." }
+  }
+}

@@ -1,0 +1,79 @@
+{
+  "id": "map-aggressive-take-elite",
+  "rationale": "The owner's route style is aggressive and the AI sits at 76/80 HP with three potions and a strength deck: take the elite for its relic.",
+  "tags": ["map", "route", "owner_settings", "elite", "ironclad", "en"],
+  "language": "en",
+  "settings": { "route": { "preset": "Aggressive" } },
+  "expect_any": ["map:4,9"],
+  "snapshot": {
+    "sequence": 2210,
+    "screen": "Map",
+    "inRun": true,
+    "isMultiplayer": false,
+    "localPlayerId": 1,
+    "canAct": true,
+    "run": { "act": 1, "actName": "Overgrowth", "floor": 9, "ascensionLevel": 2, "bossName": "Vantom" },
+    "players": [
+      {
+        "netId": 1, "name": "Ann", "characterId": "IRONCLAD", "characterName": "Ironclad", "isLocal": true,
+        "hp": 76, "maxHp": 80, "block": 0, "gold": 143, "energy": 3, "maxEnergy": 3,
+        "potionSlots": 3,
+        "potions": [
+          { "slot": 0, "id": "FIRE_POTION", "name": "Fire Potion", "description": "Deal 20 damage to an enemy.", "target": "AnyEnemy", "rarity": "Common", "usableNow": false },
+          { "slot": 1, "id": "STRENGTH_POTION", "name": "Strength Potion", "description": "Gain 2 Strength.", "target": "AnyPlayer", "rarity": "Common", "usableNow": false },
+          { "slot": 2, "id": "BLOCK_POTION", "name": "Block Potion", "description": "Gain 12 Block.", "target": "AnyPlayer", "rarity": "Common", "usableNow": false }
+        ],
+        "relics": [
+          { "id": "BURNING_BLOOD", "name": "Burning Blood", "description": "At the end of combat, heal 6 HP." },
+          { "id": "VAJRA", "name": "Vajra", "description": "At the start of each combat, gain 1 Strength." }
+        ],
+        "deck": [
+          { "key": "m0", "id": "STRIKE_IRONCLAD", "name": "Strike", "cost": 1, "type": "Attack", "rarity": "Basic", "description": "Deal 6 damage." },
+          { "key": "m1", "id": "STRIKE_IRONCLAD", "name": "Strike", "cost": 1, "type": "Attack", "rarity": "Basic", "description": "Deal 6 damage." },
+          { "key": "m2", "id": "STRIKE_IRONCLAD", "name": "Strike", "cost": 1, "type": "Attack", "rarity": "Basic", "description": "Deal 6 damage." },
+          { "key": "m3", "id": "DEFEND_IRONCLAD", "name": "Defend", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "Gain 5 Block." },
+          { "key": "m4", "id": "DEFEND_IRONCLAD", "name": "Defend", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "Gain 5 Block." },
+          { "key": "m5", "id": "DEFEND_IRONCLAD", "name": "Defend", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "Gain 5 Block." },
+          { "key": "m6", "id": "DEFEND_IRONCLAD", "name": "Defend", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "Gain 5 Block." },
+          { "key": "m7", "id": "BASH", "name": "Bash", "cost": 2, "type": "Attack", "rarity": "Basic", "upgraded": true, "description": "Deal 10 damage. Apply 3 Vulnerable." },
+          { "key": "m8", "id": "INFLAME", "name": "Inflame", "cost": 1, "type": "Power", "rarity": "Uncommon", "description": "Gain 2 Strength." },
+          { "key": "m9", "id": "TWIN_STRIKE", "name": "Twin Strike", "cost": 1, "type": "Attack", "rarity": "Common", "description": "Deal 5 damage twice." },
+          { "key": "m10", "id": "SHRUG_IT_OFF", "name": "Shrug It Off", "cost": 1, "type": "Skill", "rarity": "Common", "description": "Gain 8 Block. Draw 1 card." },
+          { "key": "m11", "id": "POMMEL_STRIKE", "name": "Pommel Strike", "cost": 1, "type": "Attack", "rarity": "Common", "description": "Deal 9 damage. Draw 1 card." },
+          { "key": "m12", "id": "THUNDERCLAP", "name": "Thunderclap", "cost": 1, "type": "Attack", "rarity": "Common", "description": "Deal 4 damage and apply 1 Vulnerable to ALL enemies." },
+          { "key": "m13", "id": "UPPERCUT", "name": "Uppercut", "cost": 2, "type": "Attack", "rarity": "Uncommon", "description": "Deal 13 damage. Apply 1 Weak. Apply 1 Vulnerable." }
+        ],
+        "deckCount": 14
+      }
+    ],
+    "map": {
+      "current": "2,8",
+      "rows": 15,
+      "reachable": ["1,9", "2,9", "4,9"],
+      "nodes": [
+        { "key": "2,8", "col": 2, "row": 8, "type": "Treasure", "typeName": "Treasure", "children": ["1,9", "2,9", "4,9"], "visited": true },
+        { "key": "1,9", "col": 1, "row": 9, "type": "Monster", "typeName": "Monster", "children": ["1,10"] },
+        { "key": "2,9", "col": 2, "row": 9, "type": "Event", "typeName": "Event", "children": ["2,10"] },
+        { "key": "4,9", "col": 4, "row": 9, "type": "Elite", "typeName": "Elite", "children": ["3,10"] },
+        { "key": "1,10", "col": 1, "row": 10, "type": "RestSite", "typeName": "RestSite", "children": ["1,11"] },
+        { "key": "2,10", "col": 2, "row": 10, "type": "Event", "typeName": "Event", "children": ["2,11"] },
+        { "key": "3,10", "col": 3, "row": 10, "type": "Monster", "typeName": "Monster", "children": ["2,11", "3,11"] },
+        { "key": "1,11", "col": 1, "row": 11, "type": "Monster", "typeName": "Monster", "children": ["1,12"] },
+        { "key": "2,11", "col": 2, "row": 11, "type": "Elite", "typeName": "Elite", "children": ["2,12"] },
+        { "key": "3,11", "col": 3, "row": 11, "type": "Shop", "typeName": "Shop", "children": ["3,12"] },
+        { "key": "1,12", "col": 1, "row": 12, "type": "Treasure", "typeName": "Treasure", "children": ["1,13"] },
+        { "key": "2,12", "col": 2, "row": 12, "type": "Monster", "typeName": "Monster", "children": ["2,13"] },
+        { "key": "3,12", "col": 3, "row": 12, "type": "Event", "typeName": "Event", "children": ["2,13"] },
+        { "key": "1,13", "col": 1, "row": 13, "type": "Elite", "typeName": "Elite", "children": ["2,14"] },
+        { "key": "2,13", "col": 2, "row": 13, "type": "Monster", "typeName": "Monster", "children": ["2,14"] },
+        { "key": "2,14", "col": 2, "row": 14, "type": "RestSite", "typeName": "RestSite", "children": ["2,15"] },
+        { "key": "2,15", "col": 2, "row": 15, "type": "Boss", "typeName": "Boss", "children": [] }
+      ]
+    },
+    "actions": [
+      { "id": "a0", "kind": "ChooseMapNode", "label": "Travel to 1,9 (Monster)", "semanticKey": "map:1,9", "args": { "node": "1,9" } },
+      { "id": "a1", "kind": "ChooseMapNode", "label": "Travel to 2,9 (Unknown / event)", "semanticKey": "map:2,9", "args": { "node": "2,9" } },
+      { "id": "a2", "kind": "ChooseMapNode", "label": "Travel to 4,9 (Elite)", "semanticKey": "map:4,9", "args": { "node": "4,9" } }
+    ]
+  }
+}

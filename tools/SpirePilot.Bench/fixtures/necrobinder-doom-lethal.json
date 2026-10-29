@@ -1,0 +1,63 @@
+{
+  "id": "necrobinder-doom-lethal",
+  "rationale": "The elite has 34 HP and 22 Doom: Scourge (+13) makes Doom 35 >= HP, so it dies at the end of its turn; no damage card gets its HP under 22 with 1 energy.",
+  "tags": ["combat", "doom", "lethal", "elite", "necrobinder", "en"],
+  "language": "en",
+  "expect_any": ["play:SCOURGE+0@E:BYGONE_EFFIGY#0"],
+  "forbid": ["play:DEFEND_NECROBINDER+0@-", "end_turn"],
+  "snapshot": {
+    "sequence": 2333,
+    "screen": "Combat",
+    "inRun": true,
+    "isMultiplayer": false,
+    "localPlayerId": 1,
+    "canAct": true,
+    "run": { "act": 1, "actName": "Overgrowth", "floor": 11, "ascensionLevel": 1, "bossName": "The Kin" },
+    "players": [
+      {
+        "netId": 1, "name": "Ann", "characterId": "NECROBINDER", "characterName": "Necrobinder", "isLocal": true,
+        "hp": 40, "maxHp": 66, "block": 0, "gold": 158, "energy": 1, "maxEnergy": 3,
+        "potionSlots": 3, "potions": [],
+        "relics": [ { "id": "BOUND_PHYLACTERY", "name": "Bound Phylactery", "description": "At the start of each combat and each turn, Summon 1." } ],
+        "companions": [
+          { "key": "o0", "id": "OSTY", "name": "Osty", "hp": 7, "maxHp": 7, "block": 0 }
+        ],
+        "deckCount": 16
+      }
+    ],
+    "combat": {
+      "round": 4,
+      "isPlayerTurn": true,
+      "encounterType": "Elite",
+      "encounterName": "Bygone Effigy",
+      "hand": [
+        { "key": "h0", "id": "STRIKE_NECROBINDER", "name": "Strike", "cost": 1, "type": "Attack", "rarity": "Basic", "target": "AnyEnemy", "description": "Deal 6 damage.", "playable": true },
+        { "key": "h1", "id": "DEFEND_NECROBINDER", "name": "Defend", "cost": 1, "type": "Skill", "rarity": "Basic", "target": "Self", "description": "Gain 5 Block.", "playable": true },
+        { "key": "h2", "id": "SCOURGE", "name": "Scourge", "cost": 1, "type": "Skill", "rarity": "Uncommon", "target": "AnyEnemy", "description": "Apply 13 Doom.", "keywords": ["Doom"], "playable": true },
+        { "key": "h3", "id": "UNLEASH", "name": "Unleash", "cost": 1, "type": "Attack", "rarity": "Basic", "target": "AnyEnemy", "description": "Osty deals 9 damage.", "playable": true }
+      ],
+      "drawPileCount": 4,
+      "discardPileCount": 8,
+      "exhaustPileCount": 0,
+      "enemies": [
+        {
+          "key": "e0", "id": "BYGONE_EFFIGY", "name": "Bygone Effigy", "hp": 34, "maxHp": 120, "block": 0,
+          "intents": [ { "type": "Attack", "damage": 12, "hits": 1 } ],
+          "powers": [ { "id": "DOOM_POWER", "name": "Doom", "amount": 22, "isDebuff": true, "description": "At the end of its turn, if its HP is at or below 22, it dies." } ]
+        }
+      ]
+    },
+    "actions": [
+      { "id": "a0", "kind": "PlayCard", "label": "Play Strike → Bygone Effigy (6 dmg)", "semanticKey": "play:STRIKE_NECROBINDER+0@E:BYGONE_EFFIGY#0", "args": { "index": "0", "target": "e0" } },
+      { "id": "a1", "kind": "PlayCard", "label": "Play Defend (5 block)", "semanticKey": "play:DEFEND_NECROBINDER+0@-", "args": { "index": "1" } },
+      { "id": "a2", "kind": "PlayCard", "label": "Play Scourge → Bygone Effigy (+13 Doom)", "semanticKey": "play:SCOURGE+0@E:BYGONE_EFFIGY#0", "args": { "index": "2", "target": "e0" } },
+      { "id": "a3", "kind": "PlayCard", "label": "Play Unleash → Bygone Effigy (Osty deals 9)", "semanticKey": "play:UNLEASH+0@E:BYGONE_EFFIGY#0", "args": { "index": "3", "target": "e0" } },
+      { "id": "a4", "kind": "EndTurn", "label": "End turn", "semanticKey": "end_turn" }
+    ],
+    "glossary": {
+      "Doom": "At the end of its turn, if a creature's HP is at or below its Doom, it dies.",
+      "Summon": "Summon N: Osty gains N Max HP (summons Osty if it is not on the battlefield).",
+      "Osty": "Your companion. Takes unblocked attack damage aimed at you before you do."
+    }
+  }
+}

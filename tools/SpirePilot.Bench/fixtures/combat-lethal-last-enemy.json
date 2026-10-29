@@ -1,0 +1,57 @@
+{
+  "id": "combat-lethal-last-enemy",
+  "rationale": "Two Strikes (12) kill the last Nibbit (11 HP, no block) and end the fight; Defend first spends the energy the lethal needs.",
+  "tags": ["combat", "lethal", "ironclad", "en"],
+  "language": "en",
+  "history": [
+    "F3 R2: Play Bash → Nibbit (8 dmg, +2 Vulnerable)",
+    "F3 R2: Play Strike → Nibbit (9 dmg, kills)"
+  ],
+  "expect_any": ["play:STRIKE_IRONCLAD+0@E:NIBBIT#1"],
+  "forbid": ["play:DEFEND_IRONCLAD+0@-", "end_turn"],
+  "snapshot": {
+    "sequence": 188,
+    "screen": "Combat",
+    "inRun": true,
+    "isMultiplayer": false,
+    "localPlayerId": 1,
+    "canAct": true,
+    "run": { "act": 1, "actName": "Overgrowth", "floor": 3, "ascensionLevel": 0, "bossName": "The Kin" },
+    "players": [
+      {
+        "netId": 1, "name": "Ann", "characterId": "IRONCLAD", "characterName": "Ironclad", "isLocal": true,
+        "hp": 31, "maxHp": 80, "block": 0, "gold": 112, "energy": 2, "maxEnergy": 3,
+        "potionSlots": 3, "potions": [],
+        "relics": [ { "id": "BURNING_BLOOD", "name": "Burning Blood", "description": "At the end of combat, heal 6 HP." } ],
+        "deckCount": 11
+      }
+    ],
+    "combat": {
+      "round": 3,
+      "isPlayerTurn": true,
+      "encounterType": "Normal",
+      "encounterName": "Nibbits",
+      "hand": [
+        { "key": "h0", "id": "DEFEND_IRONCLAD", "name": "Defend", "cost": 1, "type": "Skill", "rarity": "Basic", "target": "Self", "description": "Gain 5 Block.", "playable": true },
+        { "key": "h1", "id": "STRIKE_IRONCLAD", "name": "Strike", "cost": 1, "type": "Attack", "rarity": "Basic", "target": "AnyEnemy", "description": "Deal 6 damage.", "playable": true },
+        { "key": "h2", "id": "DEFEND_IRONCLAD", "name": "Defend", "cost": 1, "type": "Skill", "rarity": "Basic", "target": "Self", "description": "Gain 5 Block.", "playable": true },
+        { "key": "h3", "id": "STRIKE_IRONCLAD", "name": "Strike", "cost": 1, "type": "Attack", "rarity": "Basic", "target": "AnyEnemy", "description": "Deal 6 damage.", "playable": true }
+      ],
+      "drawPileCount": 2,
+      "discardPileCount": 5,
+      "exhaustPileCount": 0,
+      "enemies": [
+        { "key": "e0", "id": "NIBBIT", "name": "Nibbit", "hp": 0, "maxHp": 44, "isAlive": false },
+        {
+          "key": "e1", "id": "NIBBIT", "name": "Nibbit", "hp": 11, "maxHp": 44, "block": 0,
+          "intents": [ { "type": "Attack", "damage": 12, "hits": 1 } ]
+        }
+      ]
+    },
+    "actions": [
+      { "id": "a0", "kind": "PlayCard", "label": "Play Defend (5 block)", "semanticKey": "play:DEFEND_IRONCLAD+0@-", "args": { "index": "0" } },
+      { "id": "a1", "kind": "PlayCard", "label": "Play Strike → Nibbit (6 dmg)", "semanticKey": "play:STRIKE_IRONCLAD+0@E:NIBBIT#1", "args": { "index": "1", "target": "e1" } },
+      { "id": "a2", "kind": "EndTurn", "label": "End turn", "semanticKey": "end_turn" }
+    ]
+  }
+}

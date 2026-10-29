@@ -1,0 +1,54 @@
+{
+  "id": "cardreward-clear-pick",
+  "rationale": "Floor 2 starter deck lacks damage and scaling: Inflame improves every Strike and Bash; Clash is rarely playable with four Defends and Havoc is random.",
+  "tags": ["card_reward", "pick", "ironclad", "zh"],
+  "language": "zh",
+  "expect_any": ["cardreward:INFLAME"],
+  "forbid": ["cardreward:skip"],
+  "snapshot": {
+    "sequence": 96,
+    "screen": "CardReward",
+    "inRun": true,
+    "isMultiplayer": false,
+    "localPlayerId": 1,
+    "canAct": true,
+    "run": { "act": 1, "actName": "密林", "floor": 2, "ascensionLevel": 0, "bossName": "仪式兽" },
+    "players": [
+      {
+        "netId": 1, "name": "阿杰", "characterId": "IRONCLAD", "characterName": "铁甲战士", "isLocal": true,
+        "hp": 70, "maxHp": 80, "block": 0, "gold": 117, "energy": 3, "maxEnergy": 3,
+        "potionSlots": 3, "potions": [],
+        "relics": [ { "id": "BURNING_BLOOD", "name": "燃烧之血", "description": "战斗结束时，回复 6 点生命。" } ],
+        "deck": [
+          { "key": "m0", "id": "STRIKE_IRONCLAD", "name": "打击", "cost": 1, "type": "Attack", "rarity": "Basic", "description": "造成 6 点伤害。" },
+          { "key": "m1", "id": "STRIKE_IRONCLAD", "name": "打击", "cost": 1, "type": "Attack", "rarity": "Basic", "description": "造成 6 点伤害。" },
+          { "key": "m2", "id": "STRIKE_IRONCLAD", "name": "打击", "cost": 1, "type": "Attack", "rarity": "Basic", "description": "造成 6 点伤害。" },
+          { "key": "m3", "id": "STRIKE_IRONCLAD", "name": "打击", "cost": 1, "type": "Attack", "rarity": "Basic", "description": "造成 6 点伤害。" },
+          { "key": "m4", "id": "STRIKE_IRONCLAD", "name": "打击", "cost": 1, "type": "Attack", "rarity": "Basic", "description": "造成 6 点伤害。" },
+          { "key": "m5", "id": "DEFEND_IRONCLAD", "name": "防御", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "获得 5 点格挡。" },
+          { "key": "m6", "id": "DEFEND_IRONCLAD", "name": "防御", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "获得 5 点格挡。" },
+          { "key": "m7", "id": "DEFEND_IRONCLAD", "name": "防御", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "获得 5 点格挡。" },
+          { "key": "m8", "id": "DEFEND_IRONCLAD", "name": "防御", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "获得 5 点格挡。" },
+          { "key": "m9", "id": "BASH", "name": "痛击", "cost": 2, "type": "Attack", "rarity": "Basic", "description": "造成 8 点伤害。给予 2 层易伤。" }
+        ],
+        "deckCount": 10
+      }
+    ],
+    "rewards": {
+      "items": [],
+      "cardChoices": [
+        { "key": "r0", "id": "CLASH", "name": "交锋", "cost": 0, "type": "Attack", "rarity": "Common", "target": "AnyEnemy", "description": "只有手牌中全是攻击牌时才能打出。造成 14 点伤害。" },
+        { "key": "r1", "id": "HAVOC", "name": "破灭", "cost": 1, "type": "Skill", "rarity": "Common", "target": "None", "description": "打出抽牌堆顶部的牌并将其消耗。" },
+        { "key": "r2", "id": "INFLAME", "name": "燃烧", "cost": 1, "type": "Power", "rarity": "Uncommon", "target": "Self", "description": "获得 2 点力量。" }
+      ],
+      "canSkipCards": true
+    },
+    "actions": [
+      { "id": "a0", "kind": "PickRewardCard", "label": "拿取卡牌 交锋", "semanticKey": "cardreward:CLASH", "args": { "index": "0" } },
+      { "id": "a1", "kind": "PickRewardCard", "label": "拿取卡牌 破灭", "semanticKey": "cardreward:HAVOC", "args": { "index": "1" } },
+      { "id": "a2", "kind": "PickRewardCard", "label": "拿取卡牌 燃烧", "semanticKey": "cardreward:INFLAME", "args": { "index": "2" } },
+      { "id": "a3", "kind": "SkipCardReward", "label": "跳过卡牌奖励", "semanticKey": "cardreward:skip" }
+    ],
+    "glossary": { "力量": "提高攻击造成的伤害。", "消耗": "打出后移出本场战斗。" }
+  }
+}

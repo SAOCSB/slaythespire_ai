@@ -1,0 +1,52 @@
+{
+  "id": "rest-heal-before-boss",
+  "rationale": "31/75 HP with the boss on the next floor and no potions: resting (+22 HP) is worth far more than one upgrade.",
+  "tags": ["rest_site", "heal", "boss", "defect", "en"],
+  "language": "en",
+  "expect_any": ["rest:HEAL"],
+  "forbid": ["rest:SMITH"],
+  "snapshot": {
+    "sequence": 4012,
+    "screen": "RestSite",
+    "inRun": true,
+    "isMultiplayer": false,
+    "localPlayerId": 1,
+    "canAct": true,
+    "run": { "act": 1, "actName": "Overgrowth", "floor": 15, "ascensionLevel": 1, "bossName": "Ceremonial Beast" },
+    "players": [
+      {
+        "netId": 1, "name": "Ann", "characterId": "DEFECT", "characterName": "Defect", "isLocal": true,
+        "hp": 31, "maxHp": 75, "block": 0, "gold": 63, "energy": 3, "maxEnergy": 3,
+        "potionSlots": 3, "potions": [],
+        "relics": [ { "id": "CRACKED_CORE", "name": "Cracked Core", "description": "At the start of each combat, Channel 1 Lightning." } ],
+        "deck": [
+          { "key": "m0", "id": "STRIKE_DEFECT", "name": "Strike", "cost": 1, "type": "Attack", "rarity": "Basic", "description": "Deal 6 damage." },
+          { "key": "m1", "id": "STRIKE_DEFECT", "name": "Strike", "cost": 1, "type": "Attack", "rarity": "Basic", "description": "Deal 6 damage." },
+          { "key": "m2", "id": "STRIKE_DEFECT", "name": "Strike", "cost": 1, "type": "Attack", "rarity": "Basic", "description": "Deal 6 damage." },
+          { "key": "m3", "id": "DEFEND_DEFECT", "name": "Defend", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "Gain 5 Block." },
+          { "key": "m4", "id": "DEFEND_DEFECT", "name": "Defend", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "Gain 5 Block." },
+          { "key": "m5", "id": "DEFEND_DEFECT", "name": "Defend", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "Gain 5 Block." },
+          { "key": "m6", "id": "DEFEND_DEFECT", "name": "Defend", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "Gain 5 Block." },
+          { "key": "m7", "id": "ZAP", "name": "Zap", "cost": 1, "type": "Skill", "rarity": "Basic", "upgraded": true, "description": "Channel 1 Lightning." },
+          { "key": "m8", "id": "DUALCAST", "name": "Dualcast", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "Evoke your next Orb twice." },
+          { "key": "m9", "id": "BALL_LIGHTNING", "name": "Ball Lightning", "cost": 1, "type": "Attack", "rarity": "Common", "description": "Deal 7 damage. Channel 1 Lightning." },
+          { "key": "m10", "id": "COLD_SNAP", "name": "Cold Snap", "cost": 1, "type": "Attack", "rarity": "Common", "description": "Deal 6 damage. Channel 1 Frost." },
+          { "key": "m11", "id": "GLACIER", "name": "Glacier", "cost": 2, "type": "Skill", "rarity": "Uncommon", "description": "Gain 7 Block. Channel 2 Frost." },
+          { "key": "m12", "id": "DEFRAGMENT", "name": "Defragment", "cost": 1, "type": "Power", "rarity": "Uncommon", "description": "Gain 1 Focus." },
+          { "key": "m13", "id": "COOLHEADED", "name": "Coolheaded", "cost": 1, "type": "Skill", "rarity": "Common", "description": "Channel 1 Frost. Draw 1 card." }
+        ],
+        "deckCount": 14
+      }
+    ],
+    "restSite": {
+      "options": [
+        { "index": 0, "id": "HEAL", "name": "Rest", "description": "Heal for 30% of your Max HP (22).", "enabled": true },
+        { "index": 1, "id": "SMITH", "name": "Smith", "description": "Upgrade a card in your deck.", "enabled": true }
+      ]
+    },
+    "actions": [
+      { "id": "a0", "kind": "ChooseRestOption", "label": "Rest site: Rest (heal 22)", "semanticKey": "rest:HEAL", "args": { "index": "0" } },
+      { "id": "a1", "kind": "ChooseRestOption", "label": "Rest site: Smith", "semanticKey": "rest:SMITH", "args": { "index": "1" }, "unpredictable": true }
+    ]
+  }
+}
