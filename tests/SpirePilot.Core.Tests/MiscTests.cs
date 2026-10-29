@@ -24,11 +24,24 @@ public class StateFormatterTests
     }
 
     [Fact]
+    public void Threat_line_flags_lethal_end_turn()
+    {
+        var snap = TestData.Combat();
+        snap.LocalPlayer!.Hp = 8;
+        var text = new StateFormatter().Format(snap);
+        Assert.Contains("Threat: incoming 9, unblocked 9", text);
+        Assert.Contains("WOULD KILL YOU", text);
+        snap.LocalPlayer.Hp = 50;
+        Assert.DoesNotContain("WOULD KILL YOU", new StateFormatter().Format(snap));
+    }
+
+    [Fact]
     public void User_prompt_lists_every_action()
     {
         var snap = TestData.Combat();
         var prompt = PromptBuilder.BuildUser(snap, new DecisionContext(), new StateFormatter());
-        foreach (var a in snap.Actions) Assert.Contains($"{a.Id}: {a.Label}", prompt);
+        foreach (var a in snap.Actions) Assert.Contains($"{a.Id} | {a.Label}", prompt);
+        Assert.EndsWith("Reply with the JSON object only.", prompt);
     }
 
     [Fact]
@@ -38,11 +51,12 @@ public class StateFormatterTests
         settings.Strategy.Instruction = "Build around poison.";
         settings.Characters.Allowed.Add("SILENT");
         settings.Team.AllowGivingPotions = false;
-        var sys = PromptBuilder.BuildSystem(settings, "English");
-        Assert.Contains("Build around poison.", sys);
-        Assert.Contains("SILENT", sys);
-        Assert.Contains("Do NOT use your potions on teammates", sys);
-        Assert.DoesNotContain("{LANG}", sys);
+        var block = PromptBuilder.BuildOwnerBlock(settings, "English", CharacterGuide.For("SILENT"));
+        Assert.Contains("Build around poison.", block);
+        Assert.Contains("SILENT", block);
+        Assert.Contains("Never use your potions on teammates", block);
+        Assert.Contains("Poison", block);
+        Assert.DoesNotContain("\r", block);
     }
 }
 

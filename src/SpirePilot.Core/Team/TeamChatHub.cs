@@ -34,6 +34,7 @@ public sealed class TeamChatHub
     private readonly Queue<string> _seenOrder = new();
     private readonly List<TeamMessage> _aiInbox = new();
     private readonly Queue<DateTime> _aiSendTimes = new();
+    private readonly Queue<(DateTime time, string key)> _recentAiTexts = new();
     private readonly Func<DateTime> _clock;
 
     public ITeamTransport? Transport { get; set; }
@@ -66,8 +67,10 @@ public sealed class TeamChatHub
 
         lock (_lock)
         {
+            if (fromAi && IsRecentAiDuplicate(message)) return null;
             if (fromAi && !TryConsumeAiBudget()) return null;
             Remember(message.Id);
+            if (fromAi) _recentAiTexts.Enqueue((_clock(), message.Kind + "|" + message.Text.Trim()));
         }
 
         bool delivered = false;
@@ -132,6 +135,15 @@ public sealed class TeamChatHub
     /// <summary>Adds a local-only system line to the visible log (e.g. "team link unavailable").</summary>
     public void AddSystemNote(string text) =>
         Append(new ChatEntry { Message = new TeamMessage { Kind = TeamMessageKind.Chat, Text = text, FromName = "SpirePilot" }, Incoming = true, Delivered = false });
+
+    /// <summary>The AI repeating the same message within a few minutes is noise.</summary>
+    private bool IsRecentAiDuplicate(TeamMessage message)
+    {
+        var now = _clock();
+        while (_recentAiTexts.Count > 0 && now - _recentAiTexts.Peek().time > TimeSpan.FromMinutes(3)) _recentAiTexts.Dequeue();
+        var key = message.Kind + "|" + message.Text.Trim();
+        return _recentAiTexts.Any(t => t.key == key);
+    }
 
     private bool TryConsumeAiBudget()
     {

@@ -35,6 +35,10 @@ public static class LlmPresets
         Model = preset.Model,
         // Local servers rarely support JSON mode reliably; the decision parser tolerates prose around JSON anyway.
         JsonMode = preset.Id is not ("ollama" or "lmstudio" or "custom"),
+        // Claude: think more on route / reward / shop decisions, less on routine combat turns.
+        ReasoningEffort = preset.Provider == LlmProvider.Anthropic ? "medium" : "",
+        CombatReasoningEffort = preset.Provider == LlmProvider.Anthropic ? "low" : "",
+        MaxTokens = preset.Provider == LlmProvider.Anthropic ? 16000 : 4096,
     };
 
     public static LlmProfile Default() => FromPreset(All[0], "default");

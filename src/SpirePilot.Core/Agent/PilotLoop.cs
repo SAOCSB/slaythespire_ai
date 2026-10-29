@@ -59,6 +59,8 @@ public sealed class PilotLoop : IDisposable
     private string? _liveInstruction;
     private TaskCompletionSource<bool> _stepSignal = NewSignal();
     private int _consecutiveFailures;
+    private string? _lastExecutedKey;
+    private int _sameActionRepeats;
     private bool _runEndedSinceEnabled;
     private PilotMode _lastMode = PilotMode.Off;
 
@@ -136,6 +138,14 @@ public sealed class PilotLoop : IDisposable
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 break;
+            }
+            catch (PilotConfigException ex)
+            {
+                // Bad key / URL / model: retrying cannot help. Pause and tell the user what to fix.
+                Paused = true;
+                _log.Warn("AI settings problem: " + ex.Message);
+                SetStatus(PilotState.Error, L10n.T("status.config_error", ex.Message));
+                Emit(PilotEventKind.Error, L10n.T("status.config_error", ex.Message));
             }
             catch (Exception ex)
             {
@@ -239,9 +249,24 @@ public sealed class PilotLoop : IDisposable
             try { _bridge.PingMapNode(node); } catch (Exception ex) { _log.Warn("map ping failed: " + ex.Message); }
         }
 
+        // No-progress guard: the same action on an unchanged state three times means we are stuck.
+        var repeatKey = Fingerprint(fresh) + "#" + (target.SemanticKey.Length > 0 ? target.SemanticKey : target.Label);
+        _sameActionRepeats = repeatKey == _lastExecutedKey ? _sameActionRepeats + 1 : 0;
+        _lastExecutedKey = repeatKey;
+        if (_sameActionRepeats >= 2)
+        {
+            Paused = true;
+            _sameActionRepeats = 0;
+            _lastExecutedKey = null;
+            _engine.Memory.ClearPlan();
+            SetStatus(PilotState.Error, L10n.T("status.stuck", target.Label));
+            Emit(PilotEventKind.Error, L10n.T("status.stuck", target.Label));
+            return;
+        }
+
         SetStatus(PilotState.Acting, L10n.T("status.acting", target.Label));
         var result = await _bridge.ExecuteAsync(target, ct).ConfigureAwait(false);
-        _engine.Memory.AddHistory(HistoryLine(fresh, target, result));
+        _engine.Memory.AddHistory(HistoryLine(fresh, target, result, decision.Source));
         _team.MarkRead(decision.HandledInboxIds);
         if (instruction != null)
         {
@@ -397,10 +422,17 @@ public sealed class PilotLoop : IDisposable
         return byCharacter?.NetId ?? 0;
     }
 
-    private static string HistoryLine(GameSnapshot s, ActionOption a, ActionResult r)
+    private static string HistoryLine(GameSnapshot s, ActionOption a, ActionResult r, DecisionSource source)
     {
         var where = s.Combat != null ? $"F{s.Run?.Floor} R{s.Combat.Round}" : $"F{s.Run?.Floor} {s.Screen}";
-        return $"{where}: {a.Label}" + (r.Success ? "" : $" (FAILED: {r.Message})");
+        var who = source switch
+        {
+            DecisionSource.Fallback => " [fallback]",
+            DecisionSource.Rule => " [owner rule]",
+            DecisionSource.Trivial => " [auto]",
+            _ => "",
+        };
+        return $"{where}: {a.Label}{who}" + (r.Success ? "" : $" (FAILED: {r.Message})");
     }
 
     private static string DescribeDecision(AgentDecision d, ActionOption a)

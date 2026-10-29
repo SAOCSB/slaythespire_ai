@@ -60,6 +60,11 @@ public sealed class ActionOption
     public string Label { get; set; } = "";
     public Dictionary<string, string> Args { get; set; } = new();
     public string SemanticKey { get; set; } = "";
+    /// <summary>
+    /// The outcome cannot be foreseen (draws / random / choices / screen changes): a multi-step plan ends after it.
+    /// Set by the game layer; <see cref="PlanSafety"/> also detects common cases from the label and card text.
+    /// </summary>
+    public bool Unpredictable { get; set; }
 
     public string? Arg(string name) => Args.TryGetValue(name, out var v) ? v : null;
 
@@ -96,4 +101,29 @@ public sealed class ActionResult
 
     public static ActionResult Ok(string message = "") => new() { Success = true, Message = message };
     public static ActionResult Fail(string message) => new() { Success = false, Message = message };
+}
+
+/// <summary>Decides where a multi-action plan has to stop because later steps cannot be foreseen.</summary>
+public static class PlanSafety
+{
+    private static readonly string[] Markers =
+    {
+        "draw", "random", "choose", "discard", "exhaust a", "exhaust 1", "scry", "discover", "transform", "shuffle",
+        "抽", "随机", "选择", "丢弃", "消耗一", "消耗1", "预见", "发现", "变化", "洗入",
+    };
+
+    public static bool IsBoundary(ActionOption action, GameSnapshot? snapshot = null)
+    {
+        if (action.Unpredictable) return true;
+        if (action.Kind is ActionKind.EndTurn or ActionKind.UsePotion or ActionKind.DiscardPotion) return true;
+        if (action.Kind != ActionKind.PlayCard) return true; // outside card play everything changes the screen
+        var card = snapshot?.Combat != null && action.IntArg(ActionArgs.Index) is { } i && i >= 0 && i < snapshot.Combat.Hand.Count
+            ? snapshot.Combat.Hand[i]
+            : null;
+        if (card?.Cost == -1) return true; // X cost spends everything
+        var text = (card?.Description ?? "") + " " + action.Label;
+        foreach (var m in Markers)
+            if (text.Contains(m, StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
 }

@@ -1,3 +1,4 @@
+using SpirePilot.Core.Model;
 using SpirePilot.Core.Route;
 using SpirePilot.Core.Team;
 
@@ -11,28 +12,59 @@ public sealed class DecisionContext
     public List<TeamMessage> Inbox { get; set; } = new();
     public List<TeamMessage> OpenRequests { get; set; } = new();
     public List<string> History { get; set; } = new();
-    public List<string> Memos { get; set; } = new();
+    public string? Memo { get; set; }
     public List<RoutePath> RouteSuggestions { get; set; } = new();
     public string? PinnedNext { get; set; }
-    /// <summary>Set when re-asking after an invalid answer.</summary>
-    public string? Feedback { get; set; }
+    /// <summary>Team messages already answered or informational (accept / decline / AI chat): context only.</summary>
+    public List<TeamMessage> InboxInfo { get; set; } = new();
 }
 
 /// <summary>
-/// Run-scoped memory of the agent: recent action history, memos the model asked to keep, accepted requests,
+/// What the state looked like when a plan was made. A plan step is only executed while reality still matches:
+/// no HP lost, no cards drawn beyond the plan, no new enemies.
+/// </summary>
+public sealed class PlanGuard
+{
+    public int Hp { get; init; }
+    public int HandCount { get; init; }
+    public int AliveEnemies { get; init; }
+    public int CardsPlayed { get; set; }
+
+    public static PlanGuard? From(GameSnapshot s) => s.Combat == null ? null : new PlanGuard
+    {
+        Hp = s.LocalPlayer?.Hp ?? 0,
+        HandCount = s.Combat.Hand.Count,
+        AliveEnemies = s.Combat.Enemies.Count(e => e.IsAlive),
+    };
+
+    /// <summary>Null when the plan may continue, otherwise the reason it must stop.</summary>
+    public string? Violation(GameSnapshot s)
+    {
+        if (s.Combat == null) return "combat ended";
+        if ((s.LocalPlayer?.Hp ?? 0) < Hp) return "took damage";
+        if (s.Combat.Hand.Count > HandCount - CardsPlayed) return "new cards in hand";
+        if (s.Combat.Enemies.Count(e => e.IsAlive) > AliveEnemies) return "new enemy";
+        return null;
+    }
+}
+
+/// <summary>
+/// Run-scoped memory of the agent: recent action history, the model's memo, accepted team requests,
 /// and the pending multi-step plan. Thread-safe.
 /// </summary>
 public sealed class AgentMemory
 {
+    public const int MaxMemoLength = 400;
+
     private readonly object _lock = new();
     private readonly List<string> _history = new();
-    private readonly List<string> _memos = new();
     private readonly List<Team.TeamMessage> _openRequests = new();
     private readonly List<string> _plan = new();
     private string? _planScope;
+    private PlanGuard? _planGuard;
+    private string? _memo;
 
     public int MaxHistory { get; set; } = 12;
-    public int MaxMemos { get; set; } = 8;
 
     public void AddHistory(string line)
     {
@@ -43,18 +75,19 @@ public sealed class AgentMemory
         }
     }
 
-    public void AddMemo(string memo)
+    /// <summary>
+    /// Replaces the memo (the model sends its whole memo each time; null/empty keeps the current one).
+    /// Menu ids like "a3" are stripped: they are only valid for one snapshot.
+    /// </summary>
+    public void SetMemo(string? memo)
     {
-        memo = memo.Trim();
-        if (memo.Length == 0) return;
-        if (memo.Length > 300) memo = memo[..300];
-        lock (_lock)
-        {
-            _memos.Remove(memo);
-            _memos.Add(memo);
-            while (_memos.Count > MaxMemos) _memos.RemoveAt(0);
-        }
+        if (string.IsNullOrWhiteSpace(memo)) return;
+        memo = System.Text.RegularExpressions.Regex.Replace(memo.Trim(), @"\ba\d{1,3}\b", "").Trim();
+        if (memo.Length > MaxMemoLength) memo = memo[..MaxMemoLength];
+        lock (_lock) _memo = memo;
     }
+
+    public string? Memo { get { lock (_lock) return _memo; } }
 
     public void TrackAccepted(Team.TeamMessage request)
     {
@@ -74,33 +107,40 @@ public sealed class AgentMemory
     }
 
     public List<string> History { get { lock (_lock) return _history.ToList(); } }
-    public List<string> Memos { get { lock (_lock) return _memos.ToList(); } }
     public List<Team.TeamMessage> OpenRequests { get { lock (_lock) return _openRequests.ToList(); } }
 
-    /// <summary>Stores the remaining plan steps; <paramref name="scope"/> identifies when the plan is valid (e.g. "combat:r3").</summary>
-    public void SetPlan(IEnumerable<string> semanticKeys, string scope)
+    /// <summary>Stores the remaining plan steps; <paramref name="scope"/> identifies when the plan is valid (e.g. "combat:7:3").</summary>
+    public void SetPlan(IEnumerable<string> semanticKeys, string scope, PlanGuard? guard)
     {
         lock (_lock)
         {
             _plan.Clear();
             _plan.AddRange(semanticKeys);
             _planScope = scope;
+            _planGuard = guard;
+            if (_planGuard != null) _planGuard.CardsPlayed = 1; // the first action (executed now) is a card play or ends the plan
         }
     }
 
-    /// <summary>Takes the next plan step if the plan is still valid for <paramref name="scope"/>.</summary>
-    public string? TakePlanStep(string scope)
+    /// <summary>
+    /// Takes the next plan step if the plan is still valid for <paramref name="scope"/> and the current state.
+    /// Returns null (and clears the plan) otherwise; <paramref name="abortReason"/> says why.
+    /// </summary>
+    public string? TakePlanStep(string scope, GameSnapshot snapshot, out string? abortReason)
     {
+        abortReason = null;
         lock (_lock)
         {
             if (_plan.Count == 0) return null;
-            if (_planScope != scope)
+            abortReason = _planScope != scope ? "situation changed" : _planGuard?.Violation(snapshot);
+            if (abortReason != null)
             {
                 _plan.Clear();
                 return null;
             }
             var next = _plan[0];
             _plan.RemoveAt(0);
+            if (_planGuard != null && next.StartsWith("play", StringComparison.Ordinal)) _planGuard.CardsPlayed++;
             return next;
         }
     }
@@ -111,6 +151,7 @@ public sealed class AgentMemory
         {
             _plan.Clear();
             _planScope = null;
+            _planGuard = null;
         }
     }
 
@@ -122,10 +163,11 @@ public sealed class AgentMemory
         lock (_lock)
         {
             _history.Clear();
-            _memos.Clear();
+            _memo = null;
             _openRequests.Clear();
             _plan.Clear();
             _planScope = null;
+            _planGuard = null;
         }
     }
 }

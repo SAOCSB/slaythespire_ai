@@ -90,12 +90,17 @@ public sealed class AnthropicClient : ILlmClient
             ["max_tokens"] = request.MaxTokens ?? _profile.MaxTokens,
         };
 
-        if (!string.IsNullOrEmpty(request.System))
+        // Two system blocks, each a cache breakpoint: the never-changing core prompt, then the rarely-changing
+        // owner settings / character guide. Editing settings then only re-writes the second block.
+        var systemBlocks = new JsonArray();
+        foreach (var text in new[] { request.System, request.SystemSuffix })
         {
-            var block = new JsonObject { ["type"] = "text", ["text"] = request.System };
+            if (string.IsNullOrEmpty(text)) continue;
+            var block = new JsonObject { ["type"] = "text", ["text"] = text };
             if (_profile.PromptCaching) block["cache_control"] = new JsonObject { ["type"] = "ephemeral" };
-            body["system"] = new JsonArray(block);
+            systemBlocks.Add(block);
         }
+        if (systemBlocks.Count > 0) body["system"] = systemBlocks;
 
         var messages = new JsonArray();
         foreach (var m in MergeConsecutive(request.Messages))
@@ -103,8 +108,9 @@ public sealed class AnthropicClient : ILlmClient
         body["messages"] = messages;
 
         var outputConfig = new JsonObject();
-        if (!string.IsNullOrWhiteSpace(_profile.ReasoningEffort) && !_dropEffort)
-            outputConfig["effort"] = _profile.ReasoningEffort.Trim().ToLowerInvariant();
+        var effort = string.IsNullOrWhiteSpace(request.Effort) ? _profile.ReasoningEffort : request.Effort;
+        if (!string.IsNullOrWhiteSpace(effort) && !_dropEffort)
+            outputConfig["effort"] = effort!.Trim().ToLowerInvariant();
         if (_profile.JsonMode && request.JsonSchema != null && !_dropStructuredOutput)
             outputConfig["format"] = new JsonObject { ["type"] = "json_schema", ["schema"] = JsonNode.Parse(request.JsonSchema) };
         if (outputConfig.Count > 0) body["output_config"] = outputConfig;

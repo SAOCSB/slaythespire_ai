@@ -146,16 +146,36 @@ public class PilotLoopTests
     public async Task Pauses_after_repeated_failures()
     {
         var (loop, bridge, _, _) = Make(PilotMode.FullAuto);
+        int hp = 50;
         bridge.OnExecute = _ =>
         {
-            bridge.Set(TestData.Combat());
+            var s = TestData.Combat();
+            s.LocalPlayer!.Hp = --hp; // the state changes, so this is not the "stuck" guard
+            bridge.Set(s);
             return ActionResult.Fail("nope");
         };
         bridge.Set(TestData.Combat());
         loop.Start();
         await Until(() => loop.Paused);
+        Assert.Equal(PilotState.Error, loop.Status.State);
         loop.Stop();
         Assert.Equal(3, bridge.Executed.Count);
+    }
+
+    [Fact]
+    public async Task Pauses_when_the_same_action_changes_nothing()
+    {
+        var (loop, bridge, _, _) = Make(PilotMode.FullAuto);
+        bridge.OnExecute = _ =>
+        {
+            bridge.Set(TestData.Combat());
+            return ActionResult.Ok();
+        };
+        bridge.Set(TestData.Combat());
+        loop.Start();
+        await Until(() => loop.Paused);
+        loop.Stop();
+        Assert.Equal(2, bridge.Executed.Count);
     }
 
     [Fact]

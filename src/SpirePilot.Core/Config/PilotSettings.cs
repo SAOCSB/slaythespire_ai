@@ -67,6 +67,8 @@ public sealed class LlmProfile
     public double? Temperature { get; set; }
     /// <summary>Reasoning effort: OpenAI-compatible "reasoning_effort" / Anthropic "output_config.effort" (low, medium, high, ...). Empty = provider default.</summary>
     public string ReasoningEffort { get; set; } = "";
+    /// <summary>Effort for routine combat turns (often lower than <see cref="ReasoningEffort"/> to save time). Empty = same.</summary>
+    public string CombatReasoningEffort { get; set; } = "";
     /// <summary>Ask the server for JSON-only output (OpenAI response_format / Anthropic structured outputs).</summary>
     public bool JsonMode { get; set; } = true;
     /// <summary>Additional HTTP headers sent with every request.</summary>
@@ -230,6 +232,7 @@ public sealed class PilotSettings
             p.Model = (p.Model ?? "").Trim();
             p.ApiKey = (p.ApiKey ?? "").Trim();
             p.ReasoningEffort ??= "";
+            p.CombatReasoningEffort ??= "";
             p.ExtraBodyJson ??= "";
             p.AnthropicVersion = string.IsNullOrWhiteSpace(p.AnthropicVersion) ? "2026-10-21" : p.AnthropicVersion.Trim();
             p.MaxTokens = Math.Clamp(p.MaxTokens, 256, 128000);

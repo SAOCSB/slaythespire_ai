@@ -11,6 +11,7 @@ public sealed class StateFormatter
 
     public string Format(GameSnapshot s)
     {
+        _local = s.LocalPlayer;
         var sb = new StringBuilder();
         sb.Append("Screen: ").Append(s.Screen);
         if (s.Run is { } run)
@@ -101,6 +102,32 @@ public sealed class StateFormatter
         }
     }
 
+    private PlayerInfo? _local;
+
+    /// <summary>Incoming damage summary: what will hit you if you end the turn now.</summary>
+    private void AppendThreat(StringBuilder sb, CombatInfo c, PlayerInfo? me)
+    {
+        me ??= _local;
+        if (me == null || !c.IsPlayerTurn) return;
+        int incoming = 0;
+        foreach (var e in c.Enemies.Where(e => e.IsAlive))
+            foreach (var i in e.Intents)
+            {
+                if (i.Damage is not { } d) continue;
+                // In co-op an intent may name its target; only count the ones aimed at us (or unnamed).
+                if (!string.IsNullOrEmpty(i.TargetName) && !string.Equals(i.TargetName, me.Name, StringComparison.OrdinalIgnoreCase)) continue;
+                incoming += d * Math.Max(1, i.Hits ?? 1);
+            }
+        int unblocked = Math.Max(0, incoming - me.Block);
+        int poison = me.Powers.Where(p => p.Id.Contains("POISON", StringComparison.OrdinalIgnoreCase)).Sum(p => p.Amount);
+        int doom = me.Powers.Where(p => p.Id.Contains("DOOM", StringComparison.OrdinalIgnoreCase)).Sum(p => p.Amount);
+        sb.Append("Threat: incoming ").Append(incoming).Append(", unblocked ").Append(unblocked);
+        if (poison > 0) sb.Append(", poison ").Append(poison);
+        if (doom > 0) sb.Append(", doom ").Append(doom);
+        bool lethal = unblocked + poison >= me.Hp || doom > 0 && doom >= me.Hp - unblocked;
+        sb.Append(lethal ? " — ENDING THE TURN NOW WOULD KILL YOU" : "").AppendLine();
+    }
+
     private void AppendCombat(StringBuilder sb, CombatInfo c)
     {
         sb.Append("Combat: round ").Append(c.Round).Append(c.IsPlayerTurn ? " (your turn)" : " (enemy turn)");
@@ -116,6 +143,7 @@ public sealed class StateFormatter
             if (e.Powers.Count > 0) sb.Append(" | ").Append(Powers(e.Powers));
             sb.AppendLine();
         }
+        AppendThreat(sb, c, me: null);
         sb.Append("Hand (").Append(c.Hand.Count).AppendLine("):");
         foreach (var card in c.Hand) sb.Append("  ").AppendLine(Card(card, withKey: true));
         sb.Append("Piles: draw ").Append(c.DrawPileCount).Append(", discard ").Append(c.DiscardPileCount).Append(", exhaust ").Append(c.ExhaustPileCount).AppendLine();

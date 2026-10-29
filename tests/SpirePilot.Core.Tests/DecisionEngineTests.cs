@@ -59,6 +59,7 @@ public class DecisionEngineTests
         // After playing Defend the ids shift; the plan follows semantic keys.
         var next = TestData.Combat();
         next.Sequence = 8;
+        next.Combat!.Hand.RemoveAt(1);
         next.Actions.RemoveAll(a => a.Kind == ActionKind.PlayCard && a.Label.Contains("Defend"));
         next.Actions[0].Id = "a5";
         var second = await engine.DecideAsync(next, null, CancellationToken.None);
@@ -73,9 +74,13 @@ public class DecisionEngineTests
         var (engine, client, hub) = Make(Settings(),
             _ => "{\"thought\":\"t\",\"actions\":[\"a2\",\"a0\"]}",
             _ => "{\"thought\":\"answer\",\"actions\":[\"a3\"]}");
-        await engine.DecideAsync(TestData.Combat(), null, CancellationToken.None);
+        var first = TestData.Combat();
+        first.IsMultiplayer = true;
+        await engine.DecideAsync(first, null, CancellationToken.None);
         hub.Receive(new TeamMessage { From = 2, Kind = TeamMessageKind.RequestPotion, Text = "potion pls", Time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
-        var d = await engine.DecideAsync(TestData.Combat(), null, CancellationToken.None);
+        var second = TestData.Combat();
+        second.IsMultiplayer = true;
+        var d = await engine.DecideAsync(second, null, CancellationToken.None);
         Assert.Equal(DecisionSource.Llm, d!.Source);
         Assert.Equal(2, client.Requests.Count);
         Assert.Contains("potion pls", client.Requests[1].Messages[0].Content);
@@ -87,10 +92,12 @@ public class DecisionEngineTests
     {
         var (engine, client, _) = Make(Settings(),
             _ => "{\"thought\":\"t\",\"actions\":[\"a42\"]}",
-            req => req.Messages[0].Content.Contains("Problem with your previous answer") ? "{\"thought\":\"t\",\"actions\":[\"a1\"]}" : "{}");
+            req => req.Messages.Count == 3 && req.Messages[2].Content.Contains("Invalid answer") ? "{\"thought\":\"t\",\"actions\":[\"a1\"]}" : "{}");
         var d = await engine.DecideAsync(TestData.Combat(), null, CancellationToken.None);
         Assert.Equal("a1", d!.FirstActionId);
         Assert.Equal(2, client.Requests.Count);
+        // The repair turn keeps the original prompt first (cache-friendly) and adds the bad answer.
+        Assert.Equal(LlmRole.Assistant, client.Requests[1].Messages[1].Role);
     }
 
     [Fact]
@@ -101,6 +108,105 @@ public class DecisionEngineTests
         Assert.Equal(DecisionSource.Fallback, d!.Source);
         // The fallback blocks because 9 damage is incoming and we have 0 block.
         Assert.Equal("a2", d.FirstActionId);
+    }
+
+    [Fact]
+    public async Task Config_errors_stop_instead_of_falling_back()
+    {
+        var (engine, _, _) = Make(Settings(), _ => throw new LlmException("HTTP 401: invalid x-api-key", 401));
+        await Assert.ThrowsAsync<PilotConfigException>(() => engine.DecideAsync(TestData.Combat(), null, CancellationToken.None));
+        Assert.NotNull(engine.LastLlmError);
+    }
+
+    [Fact]
+    public async Task Circuit_breaker_skips_the_llm_after_repeated_failures()
+    {
+        var now = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        int calls = 0;
+        var client = new ScriptedClient(Enumerable.Range(0, 10).Select<int, Func<LlmRequest, string>>(_ => r => { calls++; throw new LlmException("down", 503, retryable: false); }).ToArray());
+        var settings = Settings();
+        var engine = new DecisionEngine(() => settings, new TeamChatHub(), new NullLog(), _ => client, () => now);
+        for (int i = 0; i < 3; i++) Assert.Equal(DecisionSource.Fallback, (await engine.DecideAsync(TestData.Combat(), null, CancellationToken.None))!.Source);
+        Assert.Equal(3, calls);
+        Assert.Equal(DecisionSource.Fallback, (await engine.DecideAsync(TestData.Combat(), null, CancellationToken.None))!.Source);
+        Assert.Equal(3, calls); // cooling down: no request
+        now = now.AddMinutes(2);
+        await engine.DecideAsync(TestData.Combat(), null, CancellationToken.None);
+        Assert.Equal(4, calls);
+    }
+
+    [Fact]
+    public async Task Plan_aborts_when_the_player_takes_damage()
+    {
+        var (engine, client, _) = Make(Settings(),
+            _ => "{\"thought\":\"t\",\"actions\":[\"a2\",\"a0\"]}",
+            _ => "{\"thought\":\"re\",\"actions\":[\"a3\"]}");
+        await engine.DecideAsync(TestData.Combat(), null, CancellationToken.None);
+        var hurt = TestData.Combat();
+        hurt.Sequence = 9;
+        hurt.LocalPlayer!.Hp -= 5;
+        hurt.Combat!.Hand.RemoveAt(1);
+        var d = await engine.DecideAsync(hurt, null, CancellationToken.None);
+        Assert.Equal(DecisionSource.Llm, d!.Source);
+        Assert.Equal(2, client.Requests.Count);
+        Assert.Contains(engine.Memory.History, h => h.Contains("took damage"));
+    }
+
+    [Fact]
+    public async Task Plan_aborts_when_cards_were_drawn()
+    {
+        var (engine, client, _) = Make(Settings(),
+            _ => "{\"thought\":\"t\",\"actions\":[\"a2\",\"a0\"]}",
+            _ => "{\"thought\":\"re\",\"actions\":[\"a3\"]}");
+        await engine.DecideAsync(TestData.Combat(), null, CancellationToken.None);
+        var drew = TestData.Combat(); // still 3 cards in hand after playing one => something was drawn
+        drew.Sequence = 9;
+        await engine.DecideAsync(drew, null, CancellationToken.None);
+        Assert.Equal(2, client.Requests.Count);
+    }
+
+    [Fact]
+    public async Task Answers_from_other_ais_do_not_trigger_a_call_or_break_the_plan()
+    {
+        var (engine, client, hub) = Make(Settings(), _ => "{\"thought\":\"t\",\"actions\":[\"a2\",\"a0\"]}");
+        var snap = TestData.Combat();
+        snap.IsMultiplayer = true;
+        await engine.DecideAsync(snap, null, CancellationToken.None);
+        hub.Receive(new TeamMessage { From = 2, Kind = TeamMessageKind.Accept, FromAi = true, Text = "ok", Time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
+        var next = TestData.Combat();
+        next.IsMultiplayer = true;
+        next.Sequence = 8;
+        next.Combat!.Hand.RemoveAt(1);
+        next.Actions.RemoveAll(a => a.Label.Contains("Defend"));
+        var d = await engine.DecideAsync(next, null, CancellationToken.None);
+        Assert.Equal(DecisionSource.Plan, d!.Source);
+        Assert.Single(client.Requests);
+        Assert.Single(d.HandledInboxIds);
+    }
+
+    [Fact]
+    public async Task Ai_character_choice_only_sees_allowed_characters()
+    {
+        var settings = Settings();
+        settings.Characters.Allowed = new() { "SILENT" };
+        settings.Characters.Policy = CharacterPickPolicy.AiChoice;
+        string? prompt = null;
+        var (engine, _, _) = Make(settings, req => { prompt = req.Messages[0].Content; return "{\"thought\":\"t\",\"actions\":[\"a1\"]}"; });
+        var snap = new GameSnapshot
+        {
+            Screen = ScreenKind.CharacterSelect,
+            CharacterSelect = new CharacterSelectInfo { Characters = { new CharacterOption { Id = "IRONCLAD", Selected = true }, new CharacterOption { Id = "SILENT" } } },
+            Actions =
+            {
+                new ActionOption { Id = "a0", Kind = ActionKind.SelectCharacter, Label = "Pick Ironclad", Args = { [ActionArgs.Character] = "IRONCLAD" } },
+                new ActionOption { Id = "a1", Kind = ActionKind.SelectCharacter, Label = "Pick Silent", Args = { [ActionArgs.Character] = "SILENT" } },
+                new ActionOption { Id = "a2", Kind = ActionKind.Embark, Label = "Embark" },
+            },
+        };
+        var d = await engine.DecideAsync(snap, null, CancellationToken.None);
+        Assert.Equal("a1", d!.FirstActionId);
+        Assert.DoesNotContain("Pick Ironclad", prompt);
+        Assert.DoesNotContain("Embark", prompt);
     }
 
     [Fact]

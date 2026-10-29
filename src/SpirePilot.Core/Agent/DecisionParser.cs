@@ -57,7 +57,7 @@ public static class DecisionParser
 
     public static ParseResult Parse(string text, GameSnapshot snapshot)
     {
-        var json = ExtractJsonObject(text);
+        var json = ExtractJsonObject(StripReasoning(text));
         if (json == null) return new ParseResult { Error = "no JSON object found in the answer" };
 
         JsonDocument doc;
@@ -89,12 +89,14 @@ public static class DecisionParser
             if (raw.Count == 0 && TryGet(root, out var single, "action", "action_id", "id")) AddRawId(raw, single);
             if (raw.Count == 0) return new ParseResult { Error = "no action chosen (\"actions\" is empty)" };
 
-            // The first id must be legal. A plan is only trusted up to its first unknown id (order matters).
+            // The first id must be legal. A plan is only trusted up to its first unknown id (order matters),
+            // and it ends after any step whose outcome cannot be foreseen (draws, random effects, end turn ...).
             foreach (var r in raw)
             {
                 var id = NormalizeId(r, snapshot);
                 if (id == null) break;
                 decision.ActionIds.Add(id);
+                if (snapshot.FindAction(id) is { } chosen && PlanSafety.IsBoundary(chosen, snapshot)) break;
             }
             if (decision.ActionIds.Count == 0)
                 return new ParseResult { Error = $"unknown action id \"{raw[0]}\"; choose ids from the legal action list" };
@@ -127,6 +129,23 @@ public static class DecisionParser
             }
             return new ParseResult { Decision = decision };
         }
+    }
+
+    /// <summary>Removes &lt;think&gt; / &lt;thinking&gt; blocks that local reasoning models put into the answer text.</summary>
+    public static string StripReasoning(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return text;
+        foreach (var tag in new[] { "think", "thinking", "reasoning" })
+        {
+            while (true)
+            {
+                int start = text.IndexOf("<" + tag + ">", StringComparison.OrdinalIgnoreCase);
+                if (start < 0) break;
+                int end = text.IndexOf("</" + tag + ">", start, StringComparison.OrdinalIgnoreCase);
+                text = end < 0 ? text[..start] : text[..start] + text[(end + tag.Length + 3)..];
+            }
+        }
+        return text;
     }
 
     /// <summary>Maps "a3", "A3", "3", "a3: Play Strike" to a menu id that exists, or null.</summary>

@@ -1,0 +1,79 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    SpirePilot — Slay the Spire 2 AI pilot mod.
+
+    Game references come from one of two places (property Sts2RefSource):
+      game  : the DLLs of a local Slay the Spire 2 install (default when one is found). Point at it with
+              -p:Sts2Dir="C:/Program Files (x86)/Steam/steamapps/common/Slay the Spire 2" or a local.props file.
+      nuget : community reference assemblies for game v0.111 (no install needed; used by CI).
+    The build never copies game assemblies into the output.
+
+    Build + install into the game's mods folder:  dotnet build -c Release -p:DeployToGame=true
+  -->
+  <Import Project="local.props" Condition="Exists('local.props')" />
+
+  <PropertyGroup>
+    <AssemblyName>SpirePilot</AssemblyName>
+    <RootNamespace>SpirePilot</RootNamespace>
+    <Version>$(SpirePilotVersion)</Version>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!-- The game references nullable-unaware assemblies; keep warnings readable. -->
+    <NoWarn>$(NoWarn);CS8618;CS8600;CS8602;CS8603;CS8604;CS8625</NoWarn>
+  </PropertyGroup>
+
+  <!-- ===== locate the game ===== -->
+  <PropertyGroup Condition="'$(Sts2Dir)' == '' and $([MSBuild]::IsOSPlatform('Windows'))">
+    <Sts2Dir Condition="Exists('C:/Program Files (x86)/Steam/steamapps/common/Slay the Spire 2')">C:/Program Files (x86)/Steam/steamapps/common/Slay the Spire 2</Sts2Dir>
+    <Sts2Dir Condition="'$(Sts2Dir)' == '' and Exists('D:/SteamLibrary/steamapps/common/Slay the Spire 2')">D:/SteamLibrary/steamapps/common/Slay the Spire 2</Sts2Dir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Sts2Dir)' == '' and $([MSBuild]::IsOSPlatform('Linux'))">
+    <Sts2Dir Condition="Exists('$(HOME)/.local/share/Steam/steamapps/common/Slay the Spire 2')">$(HOME)/.local/share/Steam/steamapps/common/Slay the Spire 2</Sts2Dir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Sts2Dir)' == '' and $([MSBuild]::IsOSPlatform('OSX'))">
+    <Sts2Dir Condition="Exists('$(HOME)/Library/Application Support/Steam/steamapps/common/Slay the Spire 2')">$(HOME)/Library/Application Support/Steam/steamapps/common/Slay the Spire 2</Sts2Dir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Sts2DataDir)' == '' and '$(Sts2Dir)' != ''">
+    <Sts2DataDir Condition="Exists('$(Sts2Dir)/data_sts2_windows_x86_64/sts2.dll')">$(Sts2Dir)/data_sts2_windows_x86_64</Sts2DataDir>
+    <Sts2DataDir Condition="'$(Sts2DataDir)' == '' and Exists('$(Sts2Dir)/data_sts2_linuxbsd_x86_64/sts2.dll')">$(Sts2Dir)/data_sts2_linuxbsd_x86_64</Sts2DataDir>
+    <Sts2DataDir Condition="'$(Sts2DataDir)' == '' and Exists('$(Sts2Dir)/SlayTheSpire2.app/Contents/Resources/data_sts2_macos_arm64/sts2.dll')">$(Sts2Dir)/SlayTheSpire2.app/Contents/Resources/data_sts2_macos_arm64</Sts2DataDir>
+    <Sts2DataDir Condition="'$(Sts2DataDir)' == '' and Exists('$(Sts2Dir)/SlayTheSpire2.app/Contents/Resources/data_sts2_macos_x86_64/sts2.dll')">$(Sts2Dir)/SlayTheSpire2.app/Contents/Resources/data_sts2_macos_x86_64</Sts2DataDir>
+  </PropertyGroup>
+  <PropertyGroup>
+    <Sts2RefSource Condition="'$(Sts2RefSource)' == '' and '$(Sts2DataDir)' != '' and Exists('$(Sts2DataDir)/sts2.dll')">game</Sts2RefSource>
+    <Sts2RefSource Condition="'$(Sts2RefSource)' == ''">nuget</Sts2RefSource>
+    <Sts2ModsDir Condition="'$(Sts2ModsDir)' == '' and '$(Sts2Dir)' != ''">$(Sts2Dir)/mods</Sts2ModsDir>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(Sts2RefSource)' == 'game'">
+    <Reference Include="sts2"><HintPath>$(Sts2DataDir)/sts2.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="GodotSharp"><HintPath>$(Sts2DataDir)/GodotSharp.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>$(Sts2DataDir)/0Harmony.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+  <ItemGroup Condition="'$(Sts2RefSource)' == 'nuget'">
+    <PackageReference Include="FuYnAloft.Sts2.References" Version="0.111.0-beta" ExcludeAssets="runtime" PrivateAssets="all" />
+    <PackageReference Include="GodotSharp" Version="4.5.1" ExcludeAssets="runtime" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- Game-independent core, compiled into this assembly (the game loads one DLL per mod). -->
+  <ItemGroup>
+    <Compile Include="../SpirePilot.Core/**/*.cs" Exclude="../SpirePilot.Core/obj/**;../SpirePilot.Core/bin/**" LinkBase="Core" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="mod_manifest.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <Target Name="ReportReferenceSource" BeforeTargets="ResolveAssemblyReferences">
+    <Message Importance="high" Text="SpirePilot: compiling against game references from '$(Sts2RefSource)' $(Sts2DataDir)" />
+  </Target>
+
+  <!-- Copy the built mod into <game>/mods/SpirePilot when -p:DeployToGame=true. -->
+  <Target Name="DeployToGame" AfterTargets="Build" Condition="'$(DeployToGame)' == 'true'">
+    <Error Condition="'$(Sts2ModsDir)' == ''" Text="Cannot deploy: set -p:Sts2Dir=&quot;path to Slay the Spire 2&quot;." />
+    <MakeDir Directories="$(Sts2ModsDir)/SpirePilot" />
+    <Copy SourceFiles="$(TargetDir)$(AssemblyName).dll;$(TargetDir)mod_manifest.json" DestinationFolder="$(Sts2ModsDir)/SpirePilot" />
+    <Message Importance="high" Text="SpirePilot deployed to $(Sts2ModsDir)/SpirePilot" />
+  </Target>
+</Project>

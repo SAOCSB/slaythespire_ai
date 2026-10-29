@@ -88,8 +88,9 @@ public sealed class OpenAiCompatibleClient : ILlmClient
     internal HttpRequestMessage BuildHttpRequest(LlmRequest request)
     {
         var messages = new JsonArray();
-        if (!string.IsNullOrEmpty(request.System))
-            messages.Add(new JsonObject { ["role"] = "system", ["content"] = request.System });
+        var system = request.FullSystem;
+        if (!string.IsNullOrEmpty(system))
+            messages.Add(new JsonObject { ["role"] = "system", ["content"] = system });
         foreach (var m in request.Messages)
             messages.Add(new JsonObject { ["role"] = m.Role == LlmRole.User ? "user" : "assistant", ["content"] = m.Content });
 
@@ -105,8 +106,10 @@ public sealed class OpenAiCompatibleClient : ILlmClient
         if (_profile.Temperature is { } t && !_dropTemperature) body["temperature"] = t;
         if (_profile.JsonMode && request.JsonSchema != null && !_dropResponseFormat)
             body["response_format"] = new JsonObject { ["type"] = "json_object" };
-        if (!string.IsNullOrWhiteSpace(_profile.ReasoningEffort) && !_dropReasoningEffort)
-            body["reasoning_effort"] = _profile.ReasoningEffort.Trim();
+        var effort = string.IsNullOrWhiteSpace(request.Effort) ? _profile.ReasoningEffort : request.Effort;
+        // Only send reasoning_effort when the user configured one: many servers reject the field.
+        if (!string.IsNullOrWhiteSpace(_profile.ReasoningEffort) && !string.IsNullOrWhiteSpace(effort) && !_dropReasoningEffort)
+            body["reasoning_effort"] = effort!.Trim();
         LlmHttp.MergeExtraBody(body, _profile.ExtraBodyJson);
 
         var http = new HttpRequestMessage(HttpMethod.Post, LlmHttp.JoinUrl(_profile.BaseUrl, "chat/completions"))

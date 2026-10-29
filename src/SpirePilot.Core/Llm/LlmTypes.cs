@@ -11,13 +11,20 @@ public sealed record LlmMessage(LlmRole Role, string Content);
 /// <summary>A provider-neutral completion request.</summary>
 public sealed class LlmRequest
 {
-    /// <summary>Stable system prompt (rules, output format, standing instructions). Cacheable.</summary>
+    /// <summary>Stable system prompt (rules, output format, game knowledge). Cacheable; never changes.</summary>
     public string System { get; set; } = "";
+    /// <summary>Second system part that changes rarely (owner settings, current character guide). Cached separately.</summary>
+    public string SystemSuffix { get; set; } = "";
     public List<LlmMessage> Messages { get; set; } = new();
     /// <summary>JSON schema the answer must follow, when the provider supports structured output. Null = free text.</summary>
     public string? JsonSchema { get; set; }
     /// <summary>Overrides the profile's max tokens for this request.</summary>
     public int? MaxTokens { get; set; }
+    /// <summary>Overrides the profile's reasoning effort for this request (e.g. "low" for routine combat turns).</summary>
+    public string? Effort { get; set; }
+
+    /// <summary>System prompt as one string, for providers without separate system blocks.</summary>
+    public string FullSystem => string.IsNullOrEmpty(SystemSuffix) ? System : System + "\n\n" + SystemSuffix;
 }
 
 public sealed class LlmResponse
@@ -46,6 +53,16 @@ public sealed class LlmException : Exception
         Retryable = retryable;
         RetryAfter = retryAfter;
     }
+
+    /// <summary>
+    /// The request can never succeed until the user fixes the settings (bad key, wrong URL, unknown model).
+    /// The pilot stops instead of retrying or silently falling back.
+    /// </summary>
+    public bool IsConfigError =>
+        StatusCode is 401 or 403 or 404 ||
+        StatusCode is 400 or 422 && Message.Contains("model", StringComparison.OrdinalIgnoreCase) &&
+        (Message.Contains("not found", StringComparison.OrdinalIgnoreCase) || Message.Contains("does not exist", StringComparison.OrdinalIgnoreCase) ||
+         Message.Contains("invalid model", StringComparison.OrdinalIgnoreCase) || Message.Contains("unknown model", StringComparison.OrdinalIgnoreCase));
 }
 
 public interface ILlmClient

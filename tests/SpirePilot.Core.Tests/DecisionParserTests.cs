@@ -75,6 +75,26 @@ public class DecisionParserTests
     }
 
     [Fact]
+    public void Strips_reasoning_tags_from_local_models()
+    {
+        var r = DecisionParser.Parse("<think>maybe {\"actions\":[\"a9\"]}</think>{\"thought\":\"x\",\"actions\":[\"a1\"]}", TestData.Combat());
+        Assert.True(r.Ok, r.Error);
+        Assert.Equal("a1", r.Decision!.FirstActionId);
+    }
+
+    [Fact]
+    public void Plan_ends_after_unpredictable_steps()
+    {
+        var snap = TestData.Combat();
+        snap.Combat!.Hand[1].Description = "Gain 5 Block. Draw 1 card.";
+        var r = DecisionParser.Parse("{\"thought\":\"\",\"actions\":[\"a2\",\"a0\",\"a3\"]}", snap);
+        Assert.Equal(new[] { "a2" }, r.Decision!.ActionIds);
+        snap.Actions[0].Unpredictable = true;
+        r = DecisionParser.Parse("{\"thought\":\"\",\"actions\":[\"a1\",\"a0\"]}", snap);
+        Assert.Equal(new[] { "a1", "a0" }, r.Decision!.ActionIds);
+    }
+
+    [Fact]
     public void Reports_missing_json()
     {
         var r = DecisionParser.Parse("I would play Strike.", TestData.Combat());
