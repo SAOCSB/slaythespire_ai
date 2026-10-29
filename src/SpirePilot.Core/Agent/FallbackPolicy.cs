@@ -10,7 +10,7 @@ namespace SpirePilot.Core.Agent;
 /// </summary>
 public static class FallbackPolicy
 {
-    public static ActionOption? Choose(GameSnapshot s, PilotSettings settings)
+    public static ActionOption? Choose(GameSnapshot s, PilotSettings settings, CharacterPickMemory? picks = null)
     {
         // Taking back an ended turn is only ever done for a teammate, which needs the LLM.
         var actions = s.Actions.Where(a => a.Kind != ActionKind.UndoEndTurn).ToList();
@@ -97,7 +97,7 @@ public static class FallbackPolicy
                 return Of(ActionKind.ContinueRun) ?? Of(ActionKind.StartNewRun) ?? actions[0];
 
             case ScreenKind.CharacterSelect:
-                return CharacterPicker.Choose(s, settings) ?? Of(ActionKind.Embark) ?? actions[0];
+                return CharacterPicker.Choose(s, settings, picks) ?? Of(ActionKind.Embark) ?? actions[0];
 
             default:
                 return Of(ActionKind.Proceed) ?? Of(ActionKind.DismissPopup) ?? actions[0];
@@ -179,6 +179,19 @@ public static class FallbackPolicy
     }
 }
 
+/// <summary>The random character rolled for the current visit of the character select screen.</summary>
+public sealed class CharacterPickMemory
+{
+    internal string? Pick;
+    internal string Pool = "";
+
+    /// <summary>Forget the roll (the screen was left: the next visit rolls again).</summary>
+    public void Reset()
+    {
+        lock (this) Pick = null;
+    }
+}
+
 /// <summary>Applies the user's character restriction and pick policy on the character select screen.</summary>
 public static class CharacterPicker
 {
@@ -188,7 +201,7 @@ public static class CharacterPicker
     /// Returns the SelectCharacter action that the policy wants (or Embark / SetAscension once the right character
     /// is selected). Returns null when no allowed character can be selected.
     /// </summary>
-    public static ActionOption? Choose(GameSnapshot s, PilotSettings settings)
+    public static ActionOption? Choose(GameSnapshot s, PilotSettings settings, CharacterPickMemory? picks = null)
     {
         var cs = s.CharacterSelect;
         var selects = s.Actions.Where(a => a.Kind == ActionKind.SelectCharacter).ToList();
@@ -197,7 +210,7 @@ public static class CharacterPicker
         var allowed = AllowedIds(cs, settings);
         var current = cs.Characters.FirstOrDefault(ch => ch.Selected);
         // The lobby usually starts with some character selected: the pick policy still decides which one plays.
-        var wantedId = PickId(allowed, settings);
+        var wantedId = PickId(allowed, settings, picks ?? Shared);
         if (wantedId != null && current != null && !string.Equals(current.Id, wantedId, StringComparison.OrdinalIgnoreCase) &&
             selects.FirstOrDefault(a => string.Equals(a.Arg(ActionArgs.Character), wantedId, StringComparison.OrdinalIgnoreCase)) is { } switchTo)
             return switchTo;
@@ -230,16 +243,13 @@ public static class CharacterPicker
     public static int DesiredAscension(CharacterSelectInfo cs, PilotSettings settings) =>
         settings.Characters.Ascension < 0 ? cs.MaxAscension : Math.Min(settings.Characters.Ascension, cs.MaxAscension);
 
-    private static string? _randomPick;
-    private static string _randomPickPool = "";
+    /// <summary>Used when the caller keeps no memory of its own (direct calls, tests).</summary>
+    private static readonly CharacterPickMemory Shared = new();
 
-    /// <summary>Forget the random roll (called when the character select screen is left, so each visit rolls once).</summary>
-    public static void ResetVisit()
-    {
-        lock (Rng) _randomPick = null;
-    }
+    /// <summary>Forget the shared random roll.</summary>
+    public static void ResetVisit() => Shared.Reset();
 
-    private static string? PickId(List<string> allowed, PilotSettings settings)
+    private static string? PickId(List<string> allowed, PilotSettings settings, CharacterPickMemory memory)
     {
         if (allowed.Count == 0) return null;
         switch (settings.Characters.Policy)
@@ -257,14 +267,14 @@ public static class CharacterPicker
             {
                 // One roll per visit: re-rolling every tick would flip between characters forever.
                 var pool = string.Join(",", allowed);
-                lock (Rng)
+                lock (memory)
                 {
-                    if (_randomPick == null || _randomPickPool != pool || !allowed.Contains(_randomPick))
+                    if (memory.Pick == null || memory.Pool != pool || !allowed.Contains(memory.Pick))
                     {
-                        _randomPick = allowed[Rng.Next(allowed.Count)];
-                        _randomPickPool = pool;
+                        lock (Rng) memory.Pick = allowed[Rng.Next(allowed.Count)];
+                        memory.Pool = pool;
                     }
-                    return _randomPick;
+                    return memory.Pick;
                 }
             }
         }

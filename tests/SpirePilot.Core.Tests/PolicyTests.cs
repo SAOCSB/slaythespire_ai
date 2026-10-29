@@ -161,12 +161,12 @@ public class CharacterPickerTests
     public void Random_rolls_once_per_visit()
     {
         var settings = new PilotSettings { Characters = { Policy = CharacterPickPolicy.Random } };
-        CharacterPicker.ResetVisit();
-        var first = CharacterPicker.Choose(Select(), settings)!.Arg(ActionArgs.Character);
+        var picks = new CharacterPickMemory();
+        var first = CharacterPicker.Choose(Select(), settings, picks)!.Arg(ActionArgs.Character);
         for (int i = 0; i < 20; i++)
-            Assert.Equal(first, CharacterPicker.Choose(Select(), settings)!.Arg(ActionArgs.Character));
+            Assert.Equal(first, CharacterPicker.Choose(Select(), settings, picks)!.Arg(ActionArgs.Character));
         // Once selected it embarks (after ascension) instead of re-rolling.
-        Assert.NotEqual(ActionKind.SelectCharacter, CharacterPicker.Choose(Select(first), settings)!.Kind);
+        Assert.NotEqual(ActionKind.SelectCharacter, CharacterPicker.Choose(Select(first), settings, picks)!.Kind);
     }
 
     [Fact]

@@ -44,6 +44,7 @@ public sealed class DecisionEngine
     private TimeSpan _cooldown = TimeSpan.FromSeconds(60);
 
     public AgentMemory Memory { get; } = new();
+    private readonly CharacterPickMemory _picks = new();
     /// <summary>Language name used for team messages ("Simplified Chinese" / "English").</summary>
     public Func<string> MessageLanguage { get; set; } = () => L10n.IsChinese ? "Simplified Chinese" : "English";
     /// <summary>Compact strategy notes for the local character (set by the mod per run); goes into the cached system suffix.</summary>
@@ -258,7 +259,7 @@ public sealed class DecisionEngine
     private AgentDecision? Fallback(GameSnapshot snapshot, PilotSettings settings, string why)
     {
         Memory.ClearPlan();
-        var fb = FallbackPolicy.Choose(snapshot, settings);
+        var fb = FallbackPolicy.Choose(snapshot, settings, _picks);
         if (fb == null) return null; // nothing the rules would do here (e.g. only "undo end turn"): wait
         return new AgentDecision
         {
@@ -268,10 +269,10 @@ public sealed class DecisionEngine
         };
     }
 
-    private static AgentDecision? RuleDecision(GameSnapshot s, PilotSettings settings, bool softRules)
+    private AgentDecision? RuleDecision(GameSnapshot s, PilotSettings settings, bool softRules)
     {
-        if (s.Screen != ScreenKind.CharacterSelect) CharacterPicker.ResetVisit();
-        if (s.Screen == ScreenKind.CharacterSelect && CharacterRules(s, settings) is { } characterRule)
+        if (s.Screen != ScreenKind.CharacterSelect) _picks.Reset();
+        if (s.Screen == ScreenKind.CharacterSelect && CharacterRules(s, settings, _picks) is { } characterRule)
             return characterRule;
         if (s.Screen == ScreenKind.MainMenu && settings.Characters.Allowed.Count > 0 && s.SavedRun is { CharacterId.Length: > 0 } saved &&
             !settings.Characters.Allowed.Contains(saved.CharacterId, StringComparer.OrdinalIgnoreCase))
@@ -307,7 +308,7 @@ public sealed class DecisionEngine
     /// embarking needs an allowed character, and the ascension setting is applied before embarking. Returns the
     /// rule's action, or null with the menu filtered.
     /// </summary>
-    private static AgentDecision? CharacterRules(GameSnapshot s, PilotSettings settings)
+    private static AgentDecision? CharacterRules(GameSnapshot s, PilotSettings settings, CharacterPickMemory picks)
     {
         AgentDecision Rule(ActionOption a, string why) => new() { Source = DecisionSource.Rule, ActionIds = { a.Id }, Thought = why };
         if (s.CharacterSelect is not { Characters.Count: > 0 } cs)
@@ -336,7 +337,7 @@ public sealed class DecisionEngine
             // The owner sets the ascension; the model does not change it.
             s.Actions.RemoveAll(a => a.Kind == ActionKind.SetAscension);
         }
-        if (settings.Characters.Policy != CharacterPickPolicy.AiChoice && CharacterPicker.Choose(s, settings) is { } pick)
+        if (settings.Characters.Policy != CharacterPickPolicy.AiChoice && CharacterPicker.Choose(s, settings, picks) is { } pick)
             return Rule(pick, "(character policy)");
         return null;
     }
