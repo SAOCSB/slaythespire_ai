@@ -82,9 +82,13 @@ public sealed class PilotLoop : IDisposable
     private string? _liveInstruction;
     private TaskCompletionSource<bool> _stepSignal = NewSignal();
     private int _consecutiveFailures;
-    private string? _lastExecutedKey;
-    private int _sameActionRepeats;
+    /// <summary>Recent "state fingerprint # action" pairs: the same pair three times among them means no progress.</summary>
+    private readonly Queue<string> _recentSteps = new();
     private bool _runEndedSinceEnabled;
+    /// <summary>The last run ended without a game over (save &amp; quit, disconnect) or was a co-op run: never restart it automatically.</summary>
+    private bool _leftRunWithoutGameOver;
+    private bool _wasInRun;
+    private bool _lastRunMultiplayer;
     private PilotMode _lastMode = PilotMode.Off;
     private bool _wasPaused;
     private string? _runIdentity;
@@ -94,6 +98,8 @@ public sealed class PilotLoop : IDisposable
     public AgentDecision? Advice { get; private set; }
     public ActionOption? AdviceAction { get; private set; }
     public int RunsStarted { get; private set; }
+    /// <summary>Runs started automatically after a previous one ended (what MaxAutoRuns limits); reset when switched on.</summary>
+    public int AutoRunsStarted { get; private set; }
     public bool Paused { get; set; }
 
     /// <summary>Delays used by the loop; shortened by tests.</summary>
@@ -198,7 +204,12 @@ public sealed class PilotLoop : IDisposable
         if (mode != _lastMode)
         {
             // Turning the pilot on (again) re-arms the "start one run" allowance.
-            if (_lastMode == PilotMode.Off) _runEndedSinceEnabled = false;
+            if (_lastMode == PilotMode.Off)
+            {
+                _runEndedSinceEnabled = false;
+                _leftRunWithoutGameOver = false;
+                AutoRunsStarted = 0;
+            }
             _lastMode = mode;
             Advice = null;
             AdviceAction = null;
@@ -220,8 +231,7 @@ public sealed class PilotLoop : IDisposable
                 _wasPaused = true;
                 _engine.Memory.ClearPlan();
                 _consecutiveFailures = 0;
-                _sameActionRepeats = 0;
-                _lastExecutedKey = null;
+                _recentSteps.Clear();
             }
             // Keep showing why we stopped (error / stuck) until the user resumes.
             if (Status.State != PilotState.Error) SetStatus(PilotState.Paused, L10n.T("status.paused"));
@@ -231,6 +241,7 @@ public sealed class PilotLoop : IDisposable
         _wasPaused = false;
 
         var snap = await _bridge.CaptureAsync(ct).ConfigureAwait(false);
+        if (snap != null) TrackRunEnd(snap);
         if (snap == null || !snap.CanAct || snap.Actions.Count == 0)
         {
             SetStatus(PilotState.Waiting, L10n.T("status.waiting", snap?.WaitReason ?? "…"));
@@ -251,7 +262,6 @@ public sealed class PilotLoop : IDisposable
             }
             replyOnly = "you already ended your turn; teammates are still playing";
         }
-        if (snap.Screen == ScreenKind.GameOver) _runEndedSinceEnabled = true;
         DetectNewRun(snap);
         if (!ModeAllows(mode, snap) || !MenuAllowed(snap, settings))
         {
@@ -350,6 +360,14 @@ public sealed class PilotLoop : IDisposable
             return;
         }
 
+        if (target.Kind == ActionKind.ChooseMapNode && fresh.Map is { } map &&
+            Route.RoutePlanner.PinnedNext(map, settings.Route, fresh.Run?.Act ?? 0) is { } pinned && pinned != target.Arg(ActionArgs.Node) &&
+            fresh.Actions.FirstOrDefault(a => a.Kind == ActionKind.ChooseMapNode && a.Arg(ActionArgs.Node) == pinned) is { } pinnedMove)
+        {
+            // The owner pinned a route while the model was thinking: the pin wins.
+            Emit(PilotEventKind.Info, "pinned route overrides the model's map choice");
+            target = pinnedMove;
+        }
         var sentMessages = decision.Messages.Select(m => $"{DecisionParser.KindToWire(m.Kind)}→{m.To}: {m.Text}").ToList();
         SendMessages(decision, fresh, settings);
         if (target.Kind == ActionKind.ChooseMapNode && fresh.IsMultiplayer && settings.Route.PingChoiceToTeammates &&
@@ -358,15 +376,16 @@ public sealed class PilotLoop : IDisposable
             try { _bridge.PingMapNode(node); } catch (Exception ex) { _log.Warn("map ping failed: " + ex.Message); }
         }
 
-        // No-progress guard: the same action on an unchanged state three times means we are stuck.
+        // No-progress guard: the same action on the same state a third time within the last few steps means we are
+        // stuck, whether it repeats directly (A, A, A) or in a cycle (A, B, A, B, A).
         var repeatKey = Fingerprint(fresh) + "#" + (target.SemanticKey.Length > 0 ? target.SemanticKey : target.Label);
-        _sameActionRepeats = repeatKey == _lastExecutedKey ? _sameActionRepeats + 1 : 0;
-        _lastExecutedKey = repeatKey;
-        if (_sameActionRepeats >= 2)
+        int seen = _recentSteps.Count(k => k == repeatKey);
+        _recentSteps.Enqueue(repeatKey);
+        while (_recentSteps.Count > 8) _recentSteps.Dequeue();
+        if (seen >= 2)
         {
             Paused = true;
-            _sameActionRepeats = 0;
-            _lastExecutedKey = null;
+            _recentSteps.Clear();
             _engine.Memory.ClearPlan();
             SetStatus(PilotState.Error, L10n.T("status.stuck", target.Label));
             Emit(PilotEventKind.Error, L10n.T("status.stuck", target.Label));
@@ -404,6 +423,7 @@ public sealed class PilotLoop : IDisposable
             if (target.Kind == ActionKind.Embark)
             {
                 RunsStarted++;
+                if (_runEndedSinceEnabled) AutoRunsStarted++;
                 _runEndedSinceEnabled = false;
                 _engine.Memory.Reset();
                 RunStarted?.Invoke();
@@ -479,7 +499,7 @@ public sealed class PilotLoop : IDisposable
     public static bool ModeAllows(PilotMode mode, GameSnapshot s)
     {
         bool combatDecision = s.Screen is ScreenKind.Combat or ScreenKind.HandSelect ||
-                              s.Combat != null && s.Screen is ScreenKind.ChooseOne or ScreenKind.CardGridSelect;
+                              s.Combat != null && s.Screen is ScreenKind.ChooseOne or ScreenKind.CardGridSelect or ScreenKind.Popup;
         return mode switch
         {
             PilotMode.FullAuto or PilotMode.Advisor => true,
@@ -495,11 +515,37 @@ public sealed class PilotLoop : IDisposable
     /// </summary>
     private bool MenuAllowed(GameSnapshot s, PilotSettings settings)
     {
-        if (s.Screen is not (ScreenKind.MainMenu or ScreenKind.CharacterSelect)) return true;
+        // Popups outside a run (unlock reveals, tutorial questions at character select) belong to the menus too.
+        bool menu = s.Screen is ScreenKind.MainMenu or ScreenKind.CharacterSelect || s.Screen == ScreenKind.Popup && !s.InRun;
+        if (!menu) return true;
         if (settings.Control.Mode is not (PilotMode.FullAuto or PilotMode.Advisor)) return false;
         if (!_runEndedSinceEnabled) return true;
+        // The human quit or disconnected (or the run was co-op): starting or continuing a run is theirs to decide.
+        if (_leftRunWithoutGameOver) return false;
         if (!settings.Control.AutoStartNextRun) return false;
-        return settings.Control.MaxAutoRuns == 0 || RunsStarted < settings.Control.MaxAutoRuns;
+        return settings.Control.MaxAutoRuns == 0 || AutoRunsStarted < settings.Control.MaxAutoRuns;
+    }
+
+    /// <summary>Notices the end of a run on every capture, even while paused or when the screen offers nothing.</summary>
+    private void TrackRunEnd(GameSnapshot s)
+    {
+        if (s.InRun)
+        {
+            _wasInRun = true;
+            _lastRunMultiplayer = s.IsMultiplayer;
+        }
+        if (s.Screen == ScreenKind.GameOver || s.GameOver != null)
+        {
+            _runEndedSinceEnabled = true;
+            if (_lastRunMultiplayer || s.IsMultiplayer) _leftRunWithoutGameOver = true; // never follow a co-op run with a solo one
+        }
+        else if (_wasInRun && !s.InRun && s.Screen is ScreenKind.MainMenu or ScreenKind.CharacterSelect)
+        {
+            // Back at the menus without a game over screen: save & quit, a disconnect, or an abandoned run.
+            if (!_runEndedSinceEnabled) _leftRunWithoutGameOver = true;
+            _runEndedSinceEnabled = true;
+        }
+        if (!s.InRun && s.Screen is ScreenKind.MainMenu or ScreenKind.CharacterSelect) _wasInRun = false;
     }
 
     /// <summary>Finds the fresh-snapshot action that corresponds to <paramref name="action"/> from the old one.</summary>

@@ -270,8 +270,16 @@ public sealed class DecisionEngine
 
     private static AgentDecision? RuleDecision(GameSnapshot s, PilotSettings settings, bool softRules)
     {
+        if (s.Screen != ScreenKind.CharacterSelect) CharacterPicker.ResetVisit();
         if (s.Screen == ScreenKind.CharacterSelect && CharacterRules(s, settings) is { } characterRule)
             return characterRule;
+        if (s.Screen == ScreenKind.MainMenu && settings.Characters.Allowed.Count > 0 && s.SavedRun is { CharacterId.Length: > 0 } saved &&
+            !settings.Characters.Allowed.Contains(saved.CharacterId, StringComparer.OrdinalIgnoreCase))
+        {
+            // Continuing would play a character the owner did not allow; abandoning the save is the human's call.
+            if (s.Actions.RemoveAll(a => a.Kind == ActionKind.ContinueRun) > 0)
+                s.Notes.Add(L10n.T("status.saved_run_not_allowed", saved.CharacterName ?? saved.CharacterId));
+        }
         if (!settings.Team.AllowGivingPotions)
         {
             // Hard rule: no potion (or throw) aimed at a teammate when the owner said so.

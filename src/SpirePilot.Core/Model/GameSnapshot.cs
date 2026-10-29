@@ -58,6 +58,8 @@ public sealed class GameSnapshot
     public RestSiteInfo? RestSite { get; set; }
     public SelectionInfo? Selection { get; set; }
     public CharacterSelectInfo? CharacterSelect { get; set; }
+    /// <summary>Main menu: the saved run "Continue" would resume, when it can be read.</summary>
+    public SavedRunInfo? SavedRun { get; set; }
     public GameOverInfo? GameOver { get; set; }
 
     /// <summary>Legal actions for the local player, already validated by the game layer.</summary>
@@ -378,6 +380,15 @@ public sealed class CharacterSelectInfo
     /// <summary>In a multiplayer lobby: player name -> character id they picked.</summary>
     public Dictionary<string, string> LobbyPicks { get; set; } = new();
     public bool LocalReady { get; set; }
+}
+
+public sealed class SavedRunInfo
+{
+    /// <summary>Character model id of the local player in the saved run (e.g. "IRONCLAD").</summary>
+    public string CharacterId { get; set; } = "";
+    public string? CharacterName { get; set; }
+    public int? Ascension { get; set; }
+    public int? Floor { get; set; }
 }
 
 public sealed class GameOverInfo

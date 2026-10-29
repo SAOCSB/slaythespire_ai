@@ -134,6 +134,7 @@ public class CharacterPickerTests
     {
         var settings = new PilotSettings();
         settings.Characters.Ascension = 3;
+        settings.Characters.Policy = CharacterPickPolicy.First;
         var s = Select("IRONCLAD");
         var pick = CharacterPicker.Choose(s, settings)!;
         Assert.Equal(ActionKind.SetAscension, pick.Kind);
@@ -142,6 +143,30 @@ public class CharacterPickerTests
         Assert.Equal(ActionKind.Embark, CharacterPicker.Choose(s, settings)!.Kind);
         settings.Characters.Ascension = -1; // highest unlocked
         Assert.Equal(5, CharacterPicker.Choose(s, settings)!.IntArg(ActionArgs.Ascension));
+    }
+
+    [Fact]
+    public void The_policy_overrides_a_preselected_character()
+    {
+        var settings = new PilotSettings();
+        settings.Characters.Policy = CharacterPickPolicy.RoundRobin;
+        settings.Characters.RoundRobinCursor = 1; // SILENT
+        var pick = CharacterPicker.Choose(Select("IRONCLAD"), settings)!;
+        Assert.Equal(ActionKind.SelectCharacter, pick.Kind);
+        Assert.Equal("SILENT", pick.Arg(ActionArgs.Character));
+        Assert.NotEqual(ActionKind.SelectCharacter, CharacterPicker.Choose(Select("SILENT"), settings)!.Kind);
+    }
+
+    [Fact]
+    public void Random_rolls_once_per_visit()
+    {
+        var settings = new PilotSettings { Characters = { Policy = CharacterPickPolicy.Random } };
+        CharacterPicker.ResetVisit();
+        var first = CharacterPicker.Choose(Select(), settings)!.Arg(ActionArgs.Character);
+        for (int i = 0; i < 20; i++)
+            Assert.Equal(first, CharacterPicker.Choose(Select(), settings)!.Arg(ActionArgs.Character));
+        // Once selected it embarks (after ascension) instead of re-rolling.
+        Assert.NotEqual(ActionKind.SelectCharacter, CharacterPicker.Choose(Select(first), settings)!.Kind);
     }
 
     [Fact]

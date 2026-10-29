@@ -34,7 +34,9 @@ public static class FallbackPolicy
                 int min = sel?.MinSelect ?? 0;
                 if (selected >= Math.Max(1, min) || (min == 0 && Of(ActionKind.ConfirmSelection) != null && selected > 0))
                     return Of(ActionKind.ConfirmSelection) ?? Of(ActionKind.Proceed) ?? actions[0];
-                if (min == 0 && Of(ActionKind.CancelSelection) is { } cancel && sel?.Purpose is "Remove" or "Transform")
+                // Permanent deck changes the rules cannot judge: back out whenever the screen allows it.
+                if ((min == 0 || sel?.CanCancel == true) && Of(ActionKind.CancelSelection) is { } cancel &&
+                    sel?.Purpose is "Remove" or "Transform" or "DeckSelect" or "Enchant")
                     return cancel;
                 return Of(ActionKind.SelectCard) ?? Of(ActionKind.ChooseOption) ?? Of(ActionKind.ConfirmSelection) ?? actions[0];
             }
@@ -189,6 +191,11 @@ public static class CharacterPicker
 
         var allowed = AllowedIds(cs, settings);
         var current = cs.Characters.FirstOrDefault(ch => ch.Selected);
+        // The lobby usually starts with some character selected: the pick policy still decides which one plays.
+        var wantedId = PickId(allowed, settings);
+        if (wantedId != null && current != null && !string.Equals(current.Id, wantedId, StringComparison.OrdinalIgnoreCase) &&
+            selects.FirstOrDefault(a => string.Equals(a.Arg(ActionArgs.Character), wantedId, StringComparison.OrdinalIgnoreCase)) is { } switchTo)
+            return switchTo;
         if (current != null && allowed.Contains(current.Id, StringComparer.OrdinalIgnoreCase))
         {
             int wanted = DesiredAscension(cs, settings);
@@ -200,8 +207,7 @@ public static class CharacterPicker
             return s.Actions.FirstOrDefault(a => a.Kind == ActionKind.Embark);
         }
 
-        var target = PickId(allowed, settings);
-        return selects.FirstOrDefault(a => string.Equals(a.Arg(ActionArgs.Character), target, StringComparison.OrdinalIgnoreCase))
+        return selects.FirstOrDefault(a => string.Equals(a.Arg(ActionArgs.Character), wantedId, StringComparison.OrdinalIgnoreCase))
                ?? selects.FirstOrDefault(a => allowed.Contains(a.Arg(ActionArgs.Character) ?? "", StringComparer.OrdinalIgnoreCase));
     }
 
@@ -219,6 +225,15 @@ public static class CharacterPicker
     public static int DesiredAscension(CharacterSelectInfo cs, PilotSettings settings) =>
         settings.Characters.Ascension < 0 ? cs.MaxAscension : Math.Min(settings.Characters.Ascension, cs.MaxAscension);
 
+    private static string? _randomPick;
+    private static string _randomPickPool = "";
+
+    /// <summary>Forget the random roll (called when the character select screen is left, so each visit rolls once).</summary>
+    public static void ResetVisit()
+    {
+        lock (Rng) _randomPick = null;
+    }
+
     private static string? PickId(List<string> allowed, PilotSettings settings)
     {
         if (allowed.Count == 0) return null;
@@ -231,8 +246,22 @@ public static class CharacterPicker
                 int i = ((settings.Characters.RoundRobinCursor % allowed.Count) + allowed.Count) % allowed.Count;
                 return allowed[i];
             }
+            case CharacterPickPolicy.AiChoice:
+                return null;
             default:
-                lock (Rng) return allowed[Rng.Next(allowed.Count)];
+            {
+                // One roll per visit: re-rolling every tick would flip between characters forever.
+                var pool = string.Join(",", allowed);
+                lock (Rng)
+                {
+                    if (_randomPick == null || _randomPickPool != pool || !allowed.Contains(_randomPick))
+                    {
+                        _randomPick = allowed[Rng.Next(allowed.Count)];
+                        _randomPickPool = pool;
+                    }
+                    return _randomPick;
+                }
+            }
         }
     }
 }
