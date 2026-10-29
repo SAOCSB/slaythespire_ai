@@ -316,24 +316,38 @@ public sealed class StateFormatter
     };
 
     /// <summary>Strips rich-text markup (BBCode / [tags]) and collapses whitespace.</summary>
+    /// <summary>Godot's built-in BBCode tags plus the game's own text effects (MegaCrit.Sts2.Core.RichTextTags).</summary>
+    private static readonly HashSet<string> MarkupTags = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "b", "i", "u", "s", "code", "center", "left", "right", "fill", "indent", "url", "font", "font_size", "color",
+        "outline_size", "outline_color", "table", "cell", "ul", "ol", "p", "br", "hint", "bgcolor", "fgcolor", "wave",
+        "shake", "rainbow", "tornado", "fade", "pulse", "dropcap", "opentype_features", "lang", "char",
+        "aqua", "blue", "gold", "green", "jitter", "orange", "pink", "purple", "red", "scramble", "sine",
+        "thinkydots", "thinky_dots", "fadein", "fade_in", "flyin", "fly_in", "ancientbanner", "ancient_banner",
+    };
+
+    private static readonly System.Text.RegularExpressions.Regex Tag = new(
+        @"\[img[^\]]*\][^\[]*\[/img\]|\[(/?)([A-Za-z_][A-Za-z0-9_]*)((?:[= ][^\]]*)?)\]",
+        System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// Plain text from game text: removes markup tags and images, keeps literal brackets ("[Leave]"), turns
+    /// [lb]/[rb] into brackets and collapses whitespace.
+    /// </summary>
     public static string Clean(string text)
     {
         if (string.IsNullOrEmpty(text)) return "";
-        var sb = new StringBuilder(text.Length);
-        int tagStart = -1;
-        for (int i = 0; i < text.Length; i++)
+        var plain = Tag.Replace(text, m =>
         {
-            char ch = text[i];
-            if (tagStart < 0 && ch == '[') { tagStart = i; continue; }
-            if (tagStart >= 0)
-            {
-                if (ch == ']') tagStart = -1;
-                continue;
-            }
-            sb.Append(char.IsWhiteSpace(ch) ? ' ' : ch);
-        }
-        // An unterminated '[' is not markup: keep the rest of the text.
-        if (tagStart >= 0) sb.Append(text, tagStart, text.Length - tagStart);
+            if (m.Value.StartsWith("[img", StringComparison.OrdinalIgnoreCase)) return "";
+            var name = m.Groups[2].Value;
+            if (name.Equals("lb", StringComparison.OrdinalIgnoreCase)) return "[";
+            if (name.Equals("rb", StringComparison.OrdinalIgnoreCase)) return "]";
+            // Known markup, or anything with attributes ("[color=#fff]"), is formatting; other words are text.
+            return MarkupTags.Contains(name) || m.Groups[3].Value.StartsWith('=') ? "" : m.Value;
+        });
+        var sb = new StringBuilder(plain.Length);
+        foreach (var ch in plain) sb.Append(char.IsWhiteSpace(ch) ? ' ' : ch);
         return System.Text.RegularExpressions.Regex.Replace(sb.ToString(), " {2,}", " ").Trim();
     }
 }

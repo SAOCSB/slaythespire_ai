@@ -35,14 +35,8 @@ internal static class MainThread
     private static void Pump()
     {
         FrameCount++;
-        // Bounded work per frame so a burst of requests never stalls rendering.
-        var sw = Stopwatch.StartNew();
-        while (sw.ElapsedMilliseconds < 8 && Queue.TryDequeue(out var work))
-        {
-            try { work(); }
-            catch (Exception ex) { ModLog.Error("main-thread work failed: " + ex); }
-        }
-
+        // Only waiters registered before this frame complete now: a NextFrame() requested by work that runs below
+        // must wait for the following frame, or "wait a frame" would not let the game advance at all.
         List<TaskCompletionSource<bool>>? waiters = null;
         lock (FrameWaiters)
         {
@@ -52,6 +46,15 @@ internal static class MainThread
                 FrameWaiters.Clear();
             }
         }
+
+        // Bounded work per frame so a burst of requests never stalls rendering.
+        var sw = Stopwatch.StartNew();
+        while (sw.ElapsedMilliseconds < 8 && Queue.TryDequeue(out var work))
+        {
+            try { work(); }
+            catch (Exception ex) { ModLog.Error("main-thread work failed: " + ex); }
+        }
+
         if (waiters != null) foreach (var w in waiters) w.TrySetResult(true);
 
         try { Frame?.Invoke(); }

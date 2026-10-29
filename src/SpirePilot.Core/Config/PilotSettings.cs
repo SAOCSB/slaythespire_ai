@@ -225,9 +225,15 @@ public sealed class PilotSettings
         HttpApi ??= new();
         Ui ??= new();
         Profiles ??= new();
+        // Hand-edited files may contain nulls in lists; enums may hold undefined numbers.
+        Profiles.RemoveAll(p => p == null);
         if (Profiles.Count == 0) Profiles.Add(LlmPresets.Default());
+        if (!Enum.IsDefined(Control.Mode)) Control.Mode = PilotMode.Off;
+        if (!Enum.IsDefined(Route.Preset)) Route.Preset = RoutePreset.Balanced;
+        if (!Enum.IsDefined(Characters.Policy)) Characters.Policy = CharacterPickPolicy.Random;
         foreach (var p in Profiles)
         {
+            if (!Enum.IsDefined(p.Provider)) p.Provider = LlmProvider.OpenAiCompatible;
             p.ExtraHeaders ??= new();
             p.Name = string.IsNullOrWhiteSpace(p.Name) ? "default" : p.Name.Trim();
             p.BaseUrl = (p.BaseUrl ?? "").Trim();
@@ -245,8 +251,10 @@ public sealed class PilotSettings
         Control.MaxAutoRuns = Math.Max(0, Control.MaxAutoRuns);
         Route.CustomWeights ??= new();
         Route.PinnedPath ??= new();
+        Route.PinnedPath.RemoveAll(string.IsNullOrWhiteSpace);
         Route.Instruction ??= "";
         Characters.Allowed ??= new();
+        Characters.Allowed.RemoveAll(string.IsNullOrWhiteSpace);
         Characters.Ascension = Math.Clamp(Characters.Ascension, -1, 20);
         Team.MaxAiMessagesPerMinute = Math.Clamp(Team.MaxAiMessagesPerMinute, 0, 30);
         Team.MessageLanguage ??= "auto";

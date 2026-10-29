@@ -65,17 +65,19 @@ public sealed class TeamChatHub
         message.Time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         message = message.Sanitized();
 
+        var dedupeKey = DedupeKey(message);
         lock (_lock)
         {
-            if (fromAi && IsRecentAiDuplicate(message)) return null;
+            if (fromAi && IsRecentAiDuplicate(dedupeKey)) return null;
             if (fromAi && !TryConsumeAiBudget()) return null;
             Remember(message.Id);
-            if (fromAi) _recentAiTexts.Enqueue((_clock(), message.Kind + "|" + message.Text.Trim()));
         }
 
         bool delivered = false;
         try { delivered = Transport is { IsAvailable: true } t && t.Send(message); }
         catch (Exception) { delivered = false; }
+        // Only a delivered message counts as "said": a retry after the link comes back must not be suppressed.
+        if (fromAi && delivered) lock (_lock) _recentAiTexts.Enqueue((_clock(), dedupeKey));
 
         var entry = new ChatEntry { Message = message, Incoming = false, Delivered = delivered };
         Append(entry);
@@ -144,12 +146,14 @@ public sealed class TeamChatHub
     public void AddSystemNote(string text) =>
         Append(new ChatEntry { Message = new TeamMessage { Kind = TeamMessageKind.Chat, Text = text, FromName = "SpirePilot" }, Incoming = true, Delivered = false });
 
+    /// <summary>Same kind, text, recipient and answered message: "OK" to Bob and "OK" to Alice are different replies.</summary>
+    private static string DedupeKey(TeamMessage m) => $"{m.Kind}|{m.To}|{m.ReplyTo}|{m.Text.Trim()}";
+
     /// <summary>The AI repeating the same message within a few minutes is noise.</summary>
-    private bool IsRecentAiDuplicate(TeamMessage message)
+    private bool IsRecentAiDuplicate(string key)
     {
         var now = _clock();
         while (_recentAiTexts.Count > 0 && now - _recentAiTexts.Peek().time > TimeSpan.FromMinutes(3)) _recentAiTexts.Dequeue();
-        var key = message.Kind + "|" + message.Text.Trim();
         return _recentAiTexts.Any(t => t.key == key);
     }
 
@@ -178,6 +182,12 @@ public sealed class TeamChatHub
             _log.Add(entry);
             if (_log.Count > MaxLog) _log.RemoveRange(0, _log.Count - MaxLog);
         }
-        EntryAdded?.Invoke(entry);
+        // Subscribers (UI, bubbles) must never break the network receive path or a decision.
+        if (EntryAdded is { } handlers)
+            foreach (var h in handlers.GetInvocationList())
+            {
+                try { ((Action<ChatEntry>)h)(entry); }
+                catch (Exception) { /* a broken subscriber only loses its own update */ }
+            }
     }
 }

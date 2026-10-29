@@ -11,6 +11,11 @@ public class StateFormatterTests
     [InlineData("Gain  5\nBlock.", "Gain 5 Block.")]
     [InlineData("Weird [unterminated", "Weird [unterminated")]
     [InlineData("", "")]
+    [InlineData("[Leave] Walk away", "[Leave] Walk away")]
+    [InlineData("[离开]", "[离开]")]
+    [InlineData("Gain [color=#ffd700]7[/color] [img]res://ui/energy.png[/img] Block", "Gain 7 Block")]
+    [InlineData("[lb]1[rb]", "[1]")]
+    [InlineData("[thinky_dots]...[/thinky_dots]", "...")]
     public void Clean_strips_markup(string raw, string expected) => Assert.Equal(expected, StateFormatter.Clean(raw));
 
     [Fact]
@@ -151,5 +156,44 @@ public class L10nTests
         L10n.Configure("en", null);
         Assert.Equal("Play Strike → Cultist", L10n.T("act.play_target", "Strike", "Cultist"));
         Assert.Equal("no.such.key", L10n.T("no.such.key"));
+    }
+}
+
+public class SettingsRobustnessTests
+{
+    [Fact]
+    public void Hand_edited_nulls_and_undefined_enums_load_as_defaults()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "sp-settings-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var path = Path.Combine(dir, "settings.json");
+            File.WriteAllText(path, "{\"profiles\":[null],\"control\":{\"mode\":9},\"characters\":{\"allowed\":[null,\"SILENT\"]}}");
+            var store = new SpirePilot.Core.Config.SettingsStore(path);
+            var s = store.Load();
+            Assert.Null(store.LoadError);
+            Assert.Single(s.Profiles);
+            Assert.Equal(PilotMode.Off, s.Control.Mode);
+            Assert.Equal(new[] { "SILENT" }, s.Characters.Allowed);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void A_broken_file_is_kept_and_defaults_are_used()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "sp-settings-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var path = Path.Combine(dir, "settings.json");
+            File.WriteAllText(path, "{ not json");
+            var store = new SpirePilot.Core.Config.SettingsStore(path);
+            store.Load();
+            Assert.NotNull(store.LoadError);
+            Assert.True(File.Exists(path + ".broken"));
+        }
+        finally { Directory.Delete(dir, true); }
     }
 }
