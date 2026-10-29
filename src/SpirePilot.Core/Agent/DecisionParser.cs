@@ -144,6 +144,9 @@ public static class DecisionParser
                 int end = text.IndexOf("</" + tag + ">", start, StringComparison.OrdinalIgnoreCase);
                 text = end < 0 ? text[..start] : text[..start] + text[(end + tag.Length + 3)..];
             }
+            // Chat templates that put the opening tag into the prompt leave only "reasoning...</think>answer".
+            int orphan = text.LastIndexOf("</" + tag + ">", StringComparison.OrdinalIgnoreCase);
+            if (orphan >= 0) text = text[(orphan + tag.Length + 3)..];
         }
         return text;
     }

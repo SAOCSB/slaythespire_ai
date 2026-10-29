@@ -46,12 +46,16 @@ public sealed class LlmException : Exception
     public bool Retryable { get; }
     public TimeSpan? RetryAfter { get; }
 
-    public LlmException(string message, int? statusCode = null, bool retryable = false, TimeSpan? retryAfter = null, Exception? inner = null)
+    private readonly bool _configError;
+
+    public LlmException(string message, int? statusCode = null, bool retryable = false, TimeSpan? retryAfter = null, Exception? inner = null,
+        bool configError = false)
         : base(message, inner)
     {
         StatusCode = statusCode;
         Retryable = retryable;
         RetryAfter = retryAfter;
+        _configError = configError;
     }
 
     /// <summary>
@@ -59,6 +63,7 @@ public sealed class LlmException : Exception
     /// The pilot stops instead of retrying or silently falling back.
     /// </summary>
     public bool IsConfigError =>
+        _configError ||
         StatusCode is 401 or 403 or 404 ||
         StatusCode is 400 or 422 && Message.Contains("model", StringComparison.OrdinalIgnoreCase) &&
         (Message.Contains("not found", StringComparison.OrdinalIgnoreCase) || Message.Contains("does not exist", StringComparison.OrdinalIgnoreCase) ||

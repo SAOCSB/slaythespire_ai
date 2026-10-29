@@ -23,6 +23,7 @@ public sealed class AnthropicClient : ILlmClient
     private bool _dropFallbacks;
     private bool _dropStructuredOutput;
     private bool _dropEffort;
+    private bool _dropCacheControl;
 
     public AnthropicClient(LlmProfile profile)
     {
@@ -45,7 +46,7 @@ public sealed class AnthropicClient : ILlmClient
                 body = await LlmHttp.SendAsync(_profile, () => BuildHttpRequest(request), cancellationToken).ConfigureAwait(false);
                 break;
             }
-            catch (LlmException ex) when (ex.StatusCode == 400 && adapt < 3 && TryAdapt(ex.Message))
+            catch (LlmException ex) when (ex.StatusCode is 400 or 422 && adapt < 5 && TryAdapt(ex.Message))
             {
                 // retry once with the offending feature removed (older models / gateways)
             }
@@ -69,6 +70,17 @@ public sealed class AnthropicClient : ILlmClient
         if (!_dropEffort && e.Contains("effort"))
         {
             _dropEffort = true;
+            return true;
+        }
+        // A gateway that does not know output_config at all.
+        if (e.Contains("output_config") && (!_dropEffort || !_dropStructuredOutput))
+        {
+            _dropEffort = _dropStructuredOutput = true;
+            return true;
+        }
+        if (!_dropCacheControl && e.Contains("cache_control"))
+        {
+            _dropCacheControl = true;
             return true;
         }
         return false;
@@ -97,7 +109,7 @@ public sealed class AnthropicClient : ILlmClient
         {
             if (string.IsNullOrEmpty(text)) continue;
             var block = new JsonObject { ["type"] = "text", ["text"] = text };
-            if (_profile.PromptCaching) block["cache_control"] = new JsonObject { ["type"] = "ephemeral" };
+            if (_profile.PromptCaching && !_dropCacheControl) block["cache_control"] = new JsonObject { ["type"] = "ephemeral" };
             systemBlocks.Add(block);
         }
         if (systemBlocks.Count > 0) body["system"] = systemBlocks;
@@ -115,8 +127,7 @@ public sealed class AnthropicClient : ILlmClient
             outputConfig["format"] = new JsonObject { ["type"] = "json_schema", ["schema"] = JsonNode.Parse(request.JsonSchema) };
         if (outputConfig.Count > 0) body["output_config"] = outputConfig;
 
-        // Sampling parameters are rejected from API version 2026-10-21 on; only the legacy version accepts them.
-        if (_profile.Temperature is { } t && _profile.AnthropicVersion == "2023-06-01") body["temperature"] = t;
+        // No temperature: current Claude models reject non-default sampling parameters on every API version.
 
         if (!_dropFallbacks) body["fallbacks"] = "default";
         LlmHttp.MergeExtraBody(body, _profile.ExtraBodyJson);
@@ -154,6 +165,7 @@ public sealed class AnthropicClient : ILlmClient
         JsonNode? root;
         try { root = JsonNode.Parse(body); }
         catch (Exception ex) { throw new LlmException("Server returned non-JSON: " + Truncate(body), inner: ex); }
+        if (root is not JsonObject) throw new LlmException("Unexpected response: " + Truncate(body));
         if (root?["type"]?.ToString() == "error")
             throw new LlmException("API error: " + LlmHttp.ExtractErrorMessage(body));
 
@@ -170,7 +182,7 @@ public sealed class AnthropicClient : ILlmClient
             foreach (var block in blocks)
             {
                 // Only text blocks carry the answer; thinking / fallback / other block types are skipped.
-                if (block?["type"]?.ToString() == "text") sb.Append(block["text"]?.ToString());
+                if (block is JsonObject b && b["type"]?.ToString() == "text") sb.Append(b["text"]?.ToString());
             }
         }
         var text = sb.ToString();
@@ -182,13 +194,22 @@ public sealed class AnthropicClient : ILlmClient
         return new LlmResponse
         {
             Text = text,
-            InputTokens = (int?)usage?["input_tokens"],
-            OutputTokens = (int?)usage?["output_tokens"],
-            CachedInputTokens = (int?)usage?["cache_read_input_tokens"],
+            // Same meaning as OpenAI's prompt_tokens: all input, cached or not.
+            InputTokens = SumTokens(usage?["input_tokens"], usage?["cache_read_input_tokens"], usage?["cache_creation_input_tokens"]),
+            OutputTokens = LlmHttp.ReadInt(usage?["output_tokens"]),
+            CachedInputTokens = LlmHttp.ReadInt(usage?["cache_read_input_tokens"]),
             StopReason = stopReason,
             Model = root?["model"]?.ToString(),
             Elapsed = elapsed,
         };
+    }
+
+    private static int? SumTokens(params JsonNode?[] parts)
+    {
+        int? total = null;
+        foreach (var p in parts)
+            if (LlmHttp.ReadInt(p) is { } n) total = (total ?? 0) + n;
+        return total;
     }
 
     private static string Truncate(string s) => s.Length > 300 ? s[..300] + "..." : s;

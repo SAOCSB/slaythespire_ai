@@ -10,7 +10,8 @@ namespace SpirePilot.Core.Llm;
 /// Client for the OpenAI chat-completions protocol, which most providers and local servers implement.
 /// It adapts to common incompatibilities at runtime: when a server rejects a parameter
 /// (max_tokens vs max_completion_tokens, temperature, response_format, reasoning_effort) the request is
-/// retried once without it and the choice is remembered for this client instance.
+/// retried once without it and the choice is remembered for this client instance. A "max_tokens too large"
+/// error only lowers the limit for that one request (to the limit the server states when it says one).
 /// </summary>
 public sealed class OpenAiCompatibleClient : ILlmClient
 {
@@ -20,7 +21,6 @@ public sealed class OpenAiCompatibleClient : ILlmClient
     private bool _dropResponseFormat;
     private bool _dropReasoningEffort;
     private bool _triedTokenFieldSwap;
-    private int? _maxTokensCap;
 
     public OpenAiCompatibleClient(LlmProfile profile)
     {
@@ -35,33 +35,70 @@ public sealed class OpenAiCompatibleClient : ILlmClient
     {
         var sw = Stopwatch.StartNew();
         string body;
+        int? cap = null; // per-request max_tokens limit learned from a "too large" error
         for (int adapt = 0; ; adapt++)
         {
             try
             {
-                body = await LlmHttp.SendAsync(_profile, () => BuildHttpRequest(request), cancellationToken).ConfigureAwait(false);
+                body = await LlmHttp.SendAsync(_profile, () => BuildHttpRequest(request, cap), cancellationToken).ConfigureAwait(false);
                 break;
             }
-            catch (LlmException ex) when (ex.StatusCode is 400 or 422 && adapt < 6 && TryAdapt(ex.Message))
+            catch (LlmException ex) when (ex.StatusCode is 400 or 422 && adapt < 6)
             {
-                // retry with the adapted parameter set
+                int requested = cap ?? request.MaxTokens ?? _profile.MaxTokens;
+                if (TryLowerTokens(ex.Message, requested) is { } lower) cap = lower;
+                else if (!TryAdapt(ex.Message)) throw;
             }
         }
         return Parse(body, sw.Elapsed);
     }
+
+    /// <summary>
+    /// For "max_tokens is too large" errors: the limit to retry this request with — the server's stated limit, the
+    /// room left in the context window, or half the request. Null when the error is about something else.
+    /// </summary>
+    internal static int? TryLowerTokens(string error, int requested)
+    {
+        var e = error.ToLowerInvariant();
+        bool mentionsTokens = e.Contains("max_tokens") || e.Contains("max_completion_tokens") || e.Contains("max_output_tokens");
+        if (!mentionsTokens || IsUnsupportedWording(e)) return null;
+        if (!(e.Contains("too large") || e.Contains("exceed") || e.Contains("less than") || e.Contains("at most") ||
+              e.Contains("maximum") || e.Contains("range") || e.Contains("context length")))
+            return null;
+
+        int? lower = null;
+        // vLLM / OpenAI: "maximum context length is 8192 tokens ... your request has 5000 input tokens"
+        var ctx = System.Text.RegularExpressions.Regex.Match(e, @"context length is (\d+)");
+        var input = System.Text.RegularExpressions.Regex.Match(e, @"(\d+) (?:input|prompt) tokens|(\d+) in the messages");
+        if (ctx.Success && input.Success &&
+            int.TryParse(ctx.Groups[1].Value, out var window) &&
+            int.TryParse(input.Groups[1].Success ? input.Groups[1].Value : input.Groups[2].Value, out var used))
+            lower = window - used - 64;
+        else
+        {
+            // "valid range of max_tokens is [1, 65536]", "must be less than or equal to 8192"
+            int best = 0;
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(e, @"\d{3,7}"))
+                if (int.TryParse(m.Value, out var n) && n >= 256 && n < requested && n > best) best = n;
+            if (best > 0) lower = best;
+        }
+        lower ??= requested / 2;
+        if (lower < 256 || lower >= requested) return null;
+        return lower;
+    }
+
+    private static bool IsUnsupportedWording(string e) =>
+        e.Contains("unsupported") || e.Contains("not supported") || e.Contains("unrecognized") || e.Contains("unknown") ||
+        e.Contains("not allowed") || e.Contains("not permitted") || e.Contains("extra inputs") ||
+        (e.Contains("instead") && e.Contains("max_tokens") && e.Contains("max_completion_tokens"));
 
     /// <summary>Turns off the parameter a 400 error complains about. Returns false when nothing applies.</summary>
     private bool TryAdapt(string error)
     {
         var e = error.ToLowerInvariant();
         bool mentionsTokens = e.Contains("max_tokens") || e.Contains("max_completion_tokens");
-        if (mentionsTokens && _maxTokensCap == null &&
-            (e.Contains("too large") || e.Contains("exceed") || e.Contains("less than") || e.Contains("maximum") || e.Contains("range")))
-        {
-            _maxTokensCap = 2048;
-            return true;
-        }
-        if (mentionsTokens && !_triedTokenFieldSwap)
+        // Rename only when the server says the field itself is unsupported, never for a "too large" error.
+        if (mentionsTokens && !_triedTokenFieldSwap && IsUnsupportedWording(e))
         {
             _useMaxCompletionTokens = !_useMaxCompletionTokens;
             _triedTokenFieldSwap = true;
@@ -77,7 +114,7 @@ public sealed class OpenAiCompatibleClient : ILlmClient
             _dropResponseFormat = true;
             return true;
         }
-        if (!_dropReasoningEffort && !string.IsNullOrEmpty(_profile.ReasoningEffort) && (e.Contains("reasoning_effort") || e.Contains("reasoning")))
+        if (!_dropReasoningEffort && (e.Contains("reasoning_effort") || e.Contains("reasoning")))
         {
             _dropReasoningEffort = true;
             return true;
@@ -85,7 +122,7 @@ public sealed class OpenAiCompatibleClient : ILlmClient
         return false;
     }
 
-    internal HttpRequestMessage BuildHttpRequest(LlmRequest request)
+    internal HttpRequestMessage BuildHttpRequest(LlmRequest request, int? maxTokensCap = null)
     {
         var messages = new JsonArray();
         var system = request.FullSystem;
@@ -101,14 +138,14 @@ public sealed class OpenAiCompatibleClient : ILlmClient
             ["stream"] = false,
         };
         int maxTokens = request.MaxTokens ?? _profile.MaxTokens;
-        if (_maxTokensCap is { } cap && maxTokens > cap) maxTokens = cap;
+        if (maxTokensCap is { } cap && maxTokens > cap) maxTokens = cap;
         body[_useMaxCompletionTokens ? "max_completion_tokens" : "max_tokens"] = maxTokens;
         if (_profile.Temperature is { } t && !_dropTemperature) body["temperature"] = t;
         if (_profile.JsonMode && request.JsonSchema != null && !_dropResponseFormat)
             body["response_format"] = new JsonObject { ["type"] = "json_object" };
         var effort = string.IsNullOrWhiteSpace(request.Effort) ? _profile.ReasoningEffort : request.Effort;
-        // Only send reasoning_effort when the user configured one: many servers reject the field.
-        if (!string.IsNullOrWhiteSpace(_profile.ReasoningEffort) && !string.IsNullOrWhiteSpace(effort) && !_dropReasoningEffort)
+        // Only send reasoning_effort when the user configured one (general or combat): many servers reject the field.
+        if (!string.IsNullOrWhiteSpace(effort) && !_dropReasoningEffort)
             body["reasoning_effort"] = effort!.Trim();
         LlmHttp.MergeExtraBody(body, _profile.ExtraBodyJson);
 
@@ -128,12 +165,13 @@ public sealed class OpenAiCompatibleClient : ILlmClient
         JsonNode? root;
         try { root = JsonNode.Parse(body); }
         catch (Exception ex) { throw new LlmException($"Server returned non-JSON: {Truncate(body)}", inner: ex); }
+        if (root is not JsonObject) throw new LlmException($"Unexpected response: {Truncate(body)}");
         if (root?["error"] is JsonNode)
             throw new LlmException($"Server error: {LlmHttp.ExtractErrorMessage(body)}", retryable: false);
 
-        var choice = root?["choices"]?[0];
+        var choice = root?["choices"] is JsonArray { Count: > 0 } choices ? choices[0] as JsonObject : null;
         if (choice == null) throw new LlmException($"Response has no choices: {Truncate(body)}");
-        var message = choice["message"];
+        var message = choice["message"] as JsonObject;
         string text = ContentToText(message?["content"]);
         string? finish = choice["finish_reason"]?.ToString();
         if (string.IsNullOrWhiteSpace(text))
@@ -147,9 +185,9 @@ public sealed class OpenAiCompatibleClient : ILlmClient
         return new LlmResponse
         {
             Text = text,
-            InputTokens = (int?)usage?["prompt_tokens"],
-            OutputTokens = (int?)usage?["completion_tokens"],
-            CachedInputTokens = (int?)usage?["prompt_tokens_details"]?["cached_tokens"],
+            InputTokens = LlmHttp.ReadInt(usage?["prompt_tokens"]),
+            OutputTokens = LlmHttp.ReadInt(usage?["completion_tokens"]),
+            CachedInputTokens = LlmHttp.ReadInt(usage?["prompt_tokens_details"]?["cached_tokens"]),
             StopReason = finish,
             Model = root?["model"]?.ToString(),
             Elapsed = elapsed,

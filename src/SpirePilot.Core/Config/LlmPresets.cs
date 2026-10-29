@@ -38,7 +38,14 @@ public static class LlmPresets
         // Claude: think more on route / reward / shop decisions, less on routine combat turns.
         ReasoningEffort = preset.Provider == LlmProvider.Anthropic ? "medium" : "",
         CombatReasoningEffort = preset.Provider == LlmProvider.Anthropic ? "low" : "",
-        MaxTokens = preset.Provider == LlmProvider.Anthropic ? 16000 : 4096,
+        // Reasoning models count their thinking against this limit, so they get room for it.
+        MaxTokens = preset.Id switch
+        {
+            "anthropic" => 16000,
+            "openai" => 25000,
+            "gemini" or "zhipu" or "openrouter" => 16000,
+            _ => 8192,
+        },
     };
 
     public static LlmProfile Default() => FromPreset(All[0], "default");

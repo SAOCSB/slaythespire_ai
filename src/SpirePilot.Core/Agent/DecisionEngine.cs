@@ -159,10 +159,13 @@ public sealed class DecisionEngine
             _log.Warn($"LLM decision failed: {ex.Message}");
             if (++_consecutiveLlmFailures >= 3)
             {
+                _consecutiveLlmFailures = 0;
+                // Without the fallback player there is nothing useful to do: stop instead of retrying (and paying) forever.
+                if (!settings.Control.FallbackOnLlmFailure)
+                    throw new PilotConfigException(L10n.T("status.llm_unavailable", ex.Message), ex);
                 // Circuit breaker: stop paying a full timeout for every decision while the endpoint is down.
                 _llmCooldownUntil = _clock() + _cooldown;
                 _cooldown = TimeSpan.FromTicks(Math.Min(_cooldown.Ticks * 2, TimeSpan.FromMinutes(10).Ticks));
-                _consecutiveLlmFailures = 0;
             }
             if (!settings.Control.FallbackOnLlmFailure) throw;
             // Teammate requests stay unread: the rule-based fallback cannot answer them, the LLM can once it is back.
