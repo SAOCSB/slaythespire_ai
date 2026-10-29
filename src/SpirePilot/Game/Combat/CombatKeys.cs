@@ -1,6 +1,7 @@
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Players;
+using MegaCrit.Sts2.Core.Models;
 
 namespace SpirePilot.Game.Combat;
 
@@ -14,6 +15,7 @@ internal static class CombatKeys
     private sealed record Entry(int Index, string MonsterId, int Ordinal);
 
     private static WeakReference<ICombatState>? _combat;
+    private static WeakReference<EncounterModel>? _encounter;
     private static readonly Dictionary<uint, Entry> ById = new();
     private static readonly Dictionary<Creature, Entry> ByRef = new(ReferenceEqualityComparer.Instance);
     private static readonly Dictionary<string, int> OrdinalCounters = new();
@@ -35,7 +37,7 @@ internal static class CombatKeys
         IReadOnlyList<Creature>? enemies = null;
         try { enemies = cs.Enemies; } catch (Exception) { }
         if (enemies == null) return result;
-        Sync(cs, enemies);
+        Sync(cs);
         foreach (var e in enemies)
         {
             if (e == null) continue;
@@ -58,25 +60,31 @@ internal static class CombatKeys
         return null;
     }
 
-    private static void Sync(ICombatState cs, IReadOnlyList<Creature> enemies)
+    /// <summary>
+    /// Keeps the keys while the fight is the same one: the same combat state object and the same encounter. A new
+    /// combat state or encounter starts the numbering over; a wave of new enemies in the same fight never does (they
+    /// get the next numbers).
+    /// </summary>
+    private static void Sync(ICombatState cs)
     {
+        EncounterModel? encounter = null;
+        try { encounter = cs.Encounter; } catch (Exception) { }
         bool sameCombat = _combat != null && _combat.TryGetTarget(out var current) && ReferenceEquals(current, cs);
-        // A new fight shows only unknown creatures (guards against a combat state object being reused).
-        if (sameCombat && _next > 0 && enemies.Count > 0 && !enemies.Any(IsRegistered)) sameCombat = false;
+        if (encounter != null)
+        {
+            EncounterModel? last = null;
+            bool known = _encounter != null && _encounter.TryGetTarget(out last);
+            bool changed = !known || !ReferenceEquals(last, encounter);
+            // An encounter that could not be read before is no evidence of a new fight.
+            if (known && changed) sameCombat = false;
+            if (changed) _encounter = new WeakReference<EncounterModel>(encounter);
+        }
         if (sameCombat) return;
         _combat = new WeakReference<ICombatState>(cs);
         ById.Clear();
         ByRef.Clear();
         OrdinalCounters.Clear();
         _next = 0;
-    }
-
-    private static bool IsRegistered(Creature e)
-    {
-        if (e == null) return false;
-        try { if (e.CombatId is { } id) return ById.ContainsKey(id); }
-        catch (Exception) { }
-        return ByRef.ContainsKey(e);
     }
 
     private static Entry Register(Creature e)

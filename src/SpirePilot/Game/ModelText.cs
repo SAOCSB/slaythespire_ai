@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Context;
@@ -89,6 +90,7 @@ internal static class ModelText
         Try(() => info.Keywords = Keywords(card));
         Try(() => info.Cost = EnergyCost(card, inCombat, info.Keywords.Contains(nameof(CardKeyword.Unplayable))));
         Try(() => info.StarCost = StarCost(card, inCombat));
+        Try(() => info.GainsBlock = card.GainsBlock);
         info.Description = CardDescription(card);
         if (inCombat)
         {
@@ -103,6 +105,59 @@ internal static class ModelText
             }
             catch (Exception) { /* leave unknown */ }
         }
+        return info;
+    }
+
+    // Pile listings (draw / discard / exhaust) only need names: the prompt prints names, and the full rules text costs a
+    // dynamic-variable preview plus formatting per card on every snapshot. The localized name and the static fields are
+    // cached per card instance and refreshed when the card's id, upgrade level or enchantment changes.
+    private static readonly ConditionalWeakTable<CardModel, PileEntry> PileCache = new();
+
+    private sealed class PileEntry
+    {
+        public string Signature = "";
+        public string Name = "";
+        public string Type = "";
+        public string Rarity = "";
+        public string Target = "";
+        public bool Upgraded;
+    }
+
+    /// <summary>
+    /// A card in a pile: id, name, type, rarity, target, keywords, energy / star cost and "gains block", without rules
+    /// text or playability. Main thread only, never throws.
+    /// </summary>
+    public static CardInfo PileCard(CardModel card, bool inCombat)
+    {
+        var info = new CardInfo();
+        if (card == null) return info;
+        info.Id = SafeId(card);
+        string sig = info.Id + "+" + UpgradeLevel(card);
+        try
+        {
+            var ench = card.Enchantment;
+            if (ench != null) sig += "~" + SafeId(ench);
+        }
+        catch (Exception) { }
+        if (!PileCache.TryGetValue(card, out var entry) || entry.Signature != sig)
+        {
+            entry = new PileEntry { Signature = sig, Name = CardName(card) };
+            var e = entry;
+            Try(() => e.Upgraded = card.IsUpgraded);
+            Try(() => e.Type = card.Type.ToString());
+            Try(() => e.Rarity = card.Rarity.ToString());
+            Try(() => e.Target = card.TargetType.ToString());
+            PileCache.AddOrUpdate(card, entry);
+        }
+        info.Name = entry.Name;
+        info.Upgraded = entry.Upgraded;
+        info.Type = entry.Type;
+        info.Rarity = entry.Rarity;
+        info.Target = entry.Target;
+        Try(() => info.Keywords = Keywords(card));
+        Try(() => info.Cost = EnergyCost(card, inCombat, info.Keywords.Contains(nameof(CardKeyword.Unplayable))));
+        Try(() => info.StarCost = StarCost(card, inCombat));
+        Try(() => info.GainsBlock = card.GainsBlock);
         return info;
     }
 
@@ -298,13 +353,14 @@ internal static class ModelText
 
     /// <summary>Potion in a belt slot; null for an empty slot.</summary>
     /// <param name="inCombat">A fight is in progress (combat-only potions are usable).</param>
-    public static PotionInfo? Potion(PotionModel? potion, int slot, bool inCombat)
+    /// <param name="withDescription">Resolve the rules text (teammates' potions only need name and target).</param>
+    public static PotionInfo? Potion(PotionModel? potion, int slot, bool inCombat, bool withDescription = true)
     {
         if (potion == null) return null;
         var info = new PotionInfo { Slot = slot, Id = SafeId(potion), Name = Loc(SafeGet(() => potion.Title)) };
         if (info.Name.Length == 0) info.Name = info.Id;
-        info.Description = Loc(SafeGet(() => potion.DynamicDescription));
-        if (info.Description.Length == 0)
+        if (withDescription) info.Description = Loc(SafeGet(() => potion.DynamicDescription));
+        if (withDescription && info.Description.Length == 0)
         {
             try { info.Description = Clean(potion.HoverTip.Description); }
             catch (Exception) { }
@@ -355,25 +411,62 @@ internal static class ModelText
         try { return owner?.RunState?.Players.Count == 1; } catch (Exception) { return false; }
     }
 
-    public static RelicInfo Relic(RelicModel relic)
+    // Relic and power tooltips are formatted on every snapshot otherwise; they are cached per instance and refreshed
+    // when the shown number changes, or after TextLife at the latest (texts that depend on other state).
+    private static readonly TimeSpan TextLife = TimeSpan.FromSeconds(2);
+
+    private sealed class CachedText
+    {
+        public string Key = "";
+        public long At;
+        public string Text = "";
+    }
+
+    private static readonly ConditionalWeakTable<RelicModel, CachedText> RelicTexts = new();
+    private static readonly ConditionalWeakTable<PowerModel, CachedText> PowerTexts = new();
+
+    private static string CachedOr<TModel>(ConditionalWeakTable<TModel, CachedText> table, TModel model, string key, Func<string> compute)
+        where TModel : class
+    {
+        long now = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (table.TryGetValue(model, out var c) && c.Key == key && System.Diagnostics.Stopwatch.GetElapsedTime(c.At, now) < TextLife)
+            return c.Text;
+        var text = compute();
+        table.AddOrUpdate(model, new CachedText { Key = key, At = now, Text = text });
+        return text;
+    }
+
+    /// <param name="relic">The relic.</param>
+    /// <param name="withDescription">Resolve the rules text (teammates' relics only need names).</param>
+    public static RelicInfo Relic(RelicModel relic, bool withDescription = true)
     {
         var info = new RelicInfo();
         if (relic == null) return info;
         info.Id = SafeId(relic);
         info.Name = Loc(SafeGet(() => relic.Title));
         if (info.Name.Length == 0) info.Name = info.Id;
-        info.Description = Loc(SafeGet(() => relic.DynamicDescription));
-        if (info.Description.Length == 0)
-        {
-            try { info.Description = Clean(relic.HoverTip.Description); }
-            catch (Exception) { }
-        }
         try { info.Counter = relic.ShowCounter ? relic.DisplayAmount : null; }
         catch (Exception) { }
+        if (withDescription)
+            info.Description = CachedOr(RelicTexts, relic, info.Counter + "|" + L10n.Language, () => RelicDescription(relic));
         return info;
     }
 
-    public static PowerInfo Power(PowerModel power)
+    private static string RelicDescription(RelicModel relic)
+    {
+        var text = Loc(SafeGet(() => relic.DynamicDescription));
+        if (text.Length == 0)
+        {
+            try { text = Clean(relic.HoverTip.Description); }
+            catch (Exception) { }
+        }
+        return text;
+    }
+
+    /// <param name="power">The power.</param>
+    /// <param name="withDescription">Resolve the tooltip text (cached per power instance and amount).</param>
+    /// <param name="noteGlossary">Note the keyword tips the power refers to in the snapshot glossary.</param>
+    public static PowerInfo Power(PowerModel power, bool withDescription = true, bool noteGlossary = true)
     {
         var info = new PowerInfo();
         if (power == null) return info;
@@ -389,23 +482,51 @@ internal static class ModelText
             var targetPlayer = power.Target?.Player;
             if (targetPlayer != null) info.TargetNetId = targetPlayer.NetId;
         });
-        info.Description = PowerDescription(power);
+        if (!withDescription) return info;
+        string name = info.Name;
+        info.Description = CachedOr(PowerTexts, power, info.Amount + "|" + L10n.Language, () => PowerDescription(power, name));
+        if (noteGlossary && Glossary.Collecting)
+        {
+            string ownTip = "";
+            try { ownTip = power.Id.ToString(); } catch (Exception) { }
+            Glossary.Note("power:" + info.Id, () => power.HoverTips, ownTip, name);
+        }
         return info;
     }
 
-    /// <summary>The tooltip text the game shows for the power (amounts and owner/applier names filled in).</summary>
-    private static string PowerDescription(PowerModel power)
+    /// <summary>
+    /// The tooltip text the game shows for the power (amounts and owner/applier names filled in): its own hover tip
+    /// (matched by id, by model or by title), else the smart / plain description.
+    /// </summary>
+    private static string PowerDescription(PowerModel power, string name)
     {
         try
         {
-            string id = power.Id.ToString();
+            string id = "", entry = "";
+            try
+            {
+                id = power.Id.ToString();
+                entry = power.Id.Entry;
+            }
+            catch (Exception) { }
+            string? byTitle = null;
             foreach (var tip in power.HoverTips)
-                if (tip is HoverTip ht && ht.Id == id && !string.IsNullOrEmpty(ht.Description)) return Clean(ht.Description);
+            {
+                if (tip is not HoverTip ht || string.IsNullOrEmpty(ht.Description)) continue;
+                if (ht.Id == id || (entry.Length > 0 && (ht.Id == entry || SafeId(ht.CanonicalModel) == entry))) return Clean(ht.Description);
+                if (byTitle == null && name.Length > 0 && Clean(ht.Title) == name) byTitle = ht.Description;
+            }
+            if (byTitle != null) return Clean(byTitle);
         }
         catch (Exception) { }
         string text = "";
         try { if (power.HasSmartDescription) text = Loc(power.SmartDescription); }
         catch (Exception) { }
+        if (text.Length == 0)
+        {
+            try { text = Clean(power.DumbHoverTip.Description); }
+            catch (Exception) { }
+        }
         if (text.Length == 0) text = Loc(SafeGet(() => power.Description));
         return text;
     }
@@ -450,7 +571,8 @@ internal static class ModelText
     // ------------------------------------------------------------------ creatures and intents
 
     /// <summary>A creature (enemy, pet, player creature) with hp/block/powers and, for monsters, intents.</summary>
-    public static CreatureInfo Creature(Creature creature, string key)
+    /// <param name="noteGlossary">Note its powers' keyword tips in the glossary (not for a teammate's companion).</param>
+    public static CreatureInfo Creature(Creature creature, string key, bool noteGlossary = true)
     {
         var info = new CreatureInfo { Key = key ?? "" };
         if (creature == null) return info;
@@ -472,7 +594,7 @@ internal static class ModelText
                 try
                 {
                     if (p == null || !p.IsVisible) continue;
-                    info.Powers.Add(Power(p));
+                    info.Powers.Add(Power(p, noteGlossary: noteGlossary));
                 }
                 catch (Exception) { /* skip this power */ }
             }

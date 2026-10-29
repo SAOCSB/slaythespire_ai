@@ -154,9 +154,16 @@ internal static class PlayerReader
         return name;
     }
 
+    /// <summary>
+    /// One player's public state. Teammates get names, numbers, potions (name and target) and relic names: those rules
+    /// texts are not used by the prompt and would be formatted on every snapshot. Their powers keep the description (the
+    /// prompt's power notes explain every power in the fight; the text is cached per power and amount) but add nothing
+    /// to the glossary.
+    /// </summary>
     private static PlayerInfo ReadPlayer(GameContext ctx, Player p, int slot, bool combatLive)
     {
         var info = new PlayerInfo { IsLocal = IsLocal(ctx, p) };
+        bool local = info.IsLocal;
         Part(() => info.NetId = p.NetId);
         Part(() => info.Name = DisplayName(ctx, p, slot));
         Part(() =>
@@ -182,7 +189,7 @@ internal static class PlayerReader
             if (powers == null) return;
             foreach (var pw in powers)
             {
-                try { if (pw != null && pw.IsVisible) info.Powers.Add(ModelText.Power(pw)); }
+                try { if (pw != null && pw.IsVisible) info.Powers.Add(ModelText.Power(pw, noteGlossary: local)); }
                 catch (Exception) { }
             }
         });
@@ -196,7 +203,7 @@ internal static class PlayerReader
             {
                 try
                 {
-                    var potion = ModelText.Potion(slots[i], i, combatLive);
+                    var potion = ModelText.Potion(slots[i], i, combatLive, withDescription: local);
                     if (potion != null) info.Potions.Add(potion);
                 }
                 catch (Exception) { }
@@ -209,8 +216,15 @@ internal static class PlayerReader
             if (relics == null) return;
             foreach (var r in relics)
             {
-                try { if (r != null) info.Relics.Add(ModelText.Relic(r)); }
+                if (r == null) continue;
+                try { info.Relics.Add(ModelText.Relic(r, withDescription: local)); }
                 catch (Exception) { }
+                // Keyword tips the relic text refers to (its own tip is its description).
+                if (local && Glossary.Collecting)
+                {
+                    var relic = r;
+                    Glossary.Note("relic:" + ModelText.SafeId(relic), () => relic.HoverTipsExcludingRelic);
+                }
             }
         });
 
@@ -221,18 +235,18 @@ internal static class PlayerReader
             info.DeckCount = cards.Count;
             foreach (var card in cards)
             {
-                try { if (card != null) info.Deck.Add(DeckCard(card)); }
+                try { if (card != null) info.Deck.Add(DeckCard(card, combatLive)); }
                 catch (Exception) { }
             }
         });
 
         // PlayerCombatState lingers after a fight and its Energy/MaxEnergy getters run hooks that fail without a
         // live combat (STS2MCP lesson): only read it while the fight is in progress.
-        if (combatLive) Part(() => FillCombat(ctx, p, slot, info));
+        if (combatLive) Part(() => FillCombat(ctx, p, slot, info, local));
         return info;
     }
 
-    private static void FillCombat(GameContext ctx, Player p, int slot, PlayerInfo info)
+    private static void FillCombat(GameContext ctx, Player p, int slot, PlayerInfo info, bool local)
     {
         var pcs = p.PlayerCombatState;
         if (pcs == null) return;
@@ -266,7 +280,7 @@ internal static class PlayerReader
             foreach (var pet in pets)
             {
                 if (pet == null) continue;
-                try { info.Companions.Add(ModelText.Creature(pet, CompanionKey(slot, n))); }
+                try { info.Companions.Add(ModelText.Creature(pet, CompanionKey(slot, n), noteGlossary: local)); }
                 catch (Exception) { }
                 n++;
             }
@@ -277,21 +291,25 @@ internal static class PlayerReader
     public static string CompanionKey(int slot, int n) => n == 0 ? "o" + slot : $"o{slot}_{n}";
 
     // Master-deck cards rarely change; their text is cached per card instance and refreshed when the card changes
-    // (upgrade, enchantment, cost or keyword changes are covered by the signature).
+    // (upgrade, enchantment, cost or keyword changes are covered by the signature). Text read during a fight may carry
+    // the fight's modifiers (Strength and the like in the dynamic values): a cached out-of-combat text is kept through the
+    // fight, and a text first read in combat is read again once the fight is over.
     private static readonly ConditionalWeakTable<CardModel, CachedCard> DeckCache = new();
 
     private sealed class CachedCard
     {
         public string Signature = "";
+        public bool ReadInCombat;
         public CardInfo Info = new();
     }
 
-    private static CardInfo DeckCard(CardModel card)
+    private static CardInfo DeckCard(CardModel card, bool combatLive)
     {
         string sig = DeckSignature(card);
-        if (DeckCache.TryGetValue(card, out var cached) && cached.Signature == sig) return Copy(cached.Info);
+        if (DeckCache.TryGetValue(card, out var cached) && cached.Signature == sig && (combatLive || !cached.ReadInCombat))
+            return Copy(cached.Info);
         var info = ModelText.Card(card, "", inCombat: false);
-        DeckCache.AddOrUpdate(card, new CachedCard { Signature = sig, Info = Copy(info) });
+        DeckCache.AddOrUpdate(card, new CachedCard { Signature = sig, ReadInCombat = combatLive, Info = Copy(info) });
         return info;
     }
 
@@ -330,6 +348,7 @@ internal static class PlayerReader
         Description = c.Description,
         Keywords = new List<string>(c.Keywords),
         Playable = c.Playable,
+        GainsBlock = c.GainsBlock,
         UnplayableReason = c.UnplayableReason,
     };
 

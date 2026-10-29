@@ -25,15 +25,33 @@ internal static class HandSelectReader
         public NPlayerHand Hand = null!;
         public NPlayerHand.Mode Mode;
         public CardSelectorPrefs? Prefs;
+        /// <summary>The hand's completion source of this prompt (a new prompt gets a new one); null when unreadable.</summary>
+        public object? Source;
+        /// <summary>The prompt's localization key ("" when unreadable).</summary>
+        public string PromptKey = "";
         /// <summary>Selectable cards still in the hand (visible holders), in hand order.</summary>
         public List<NHandCardHolder> Selectable = new();
         /// <summary>Already selected cards (moved to the selected-card container).</summary>
         public List<(CardModel Card, NCardHolder? Holder)> Selected = new();
         public NConfirmButton? Confirm;
 
+        /// <summary>Min / max are known (the hand's private prefs could be read).</summary>
+        public bool PrefsKnown => Prefs != null;
         public int Min => Prefs?.MinSelect ?? 1;
-        public int Max => Math.Max(Prefs?.MaxSelect ?? 1, 1);
+        /// <summary>Without prefs: no limit of our own (the confirm button's state decides when it is enough).</summary>
+        public int Max => Prefs != null ? Math.Max(Prefs.Value.MaxSelect, 1) : int.MaxValue;
         public bool ManualConfirm => Prefs?.RequireManualConfirmation ?? false;
+
+        /// <summary>
+        /// Whether <paramref name="other"/> is still this prompt: the same completion source and prompt key. A prompt
+        /// that closed and was replaced by the next one right away counts as closed.
+        /// </summary>
+        public bool SamePrompt(HandSelection? other)
+        {
+            if (other == null) return false;
+            if (Source != null && other.Source != null && !ReferenceEquals(Source, other.Source)) return false;
+            return PromptKey == other.PromptKey;
+        }
     }
 
     public static void Read(GameContext ctx, ScreenProbe probe, GameSnapshot snap, ActionSink sink)
@@ -42,60 +60,62 @@ internal static class HandSelectReader
         var sel = Capture();
         if (sel == null) return;
 
+        int count = sel.Selected.Count;
+        bool confirmUsable = SceneUtil.Usable(sel.Confirm);
         var info = new SelectionInfo
         {
             Purpose = Purpose(sel),
             Prompt = PromptText(sel),
-            MinSelect = sel.Min,
-            MaxSelect = sel.Max,
+            // Without readable prefs: the confirm button tells whether the selection is enough already.
+            MinSelect = sel.PrefsKnown ? sel.Min : confirmUsable ? count : count + 1,
+            MaxSelect = sel.PrefsKnown ? sel.Max : count + sel.Selectable.Count,
             CanCancel = false,
         };
 
         int k = 0;
-        var selectable = new List<(NHandCardHolder Holder, CardModel Card, string Key)>();
+        var selectable = new List<(NHandCardHolder Holder, CardModel Card, string Key, CardInfo Info)>();
         foreach (var holder in sel.Selectable)
         {
             var card = holder.CardModel;
             string key = "c" + k++;
-            info.Candidates.Add(Candidate(card, key));
-            selectable.Add((holder, card, key));
+            var ci = Candidate(card, key);
+            info.Candidates.Add(ci);
+            selectable.Add((holder, card, key, ci));
         }
-        var selected = new List<(CardModel Card, NCardHolder? Holder, string Key)>();
+        var selected = new List<(CardModel Card, NCardHolder? Holder, string Key, CardInfo Info)>();
         foreach (var (card, holder) in sel.Selected)
         {
             string key = "c" + k++;
-            info.Candidates.Add(Candidate(card, key));
+            var ci = Candidate(card, key);
+            info.Candidates.Add(ci);
             info.SelectedKeys.Add(key);
-            selected.Add((card, holder, key));
+            selected.Add((card, holder, key, ci));
         }
 
-        int count = sel.Selected.Count;
-        bool confirmUsable = SceneUtil.Usable(sel.Confirm);
         // The game enables its confirm button only for a valid selection; the count check guards against a button
         // that is still fading out. Without readable prefs the button is the only authority.
-        info.CanConfirm = confirmUsable && (sel.Prefs == null || count >= sel.Min && count <= sel.Max);
+        info.CanConfirm = confirmUsable && (!sel.PrefsKnown || count >= sel.Min && count <= sel.Max);
         snap.Selection = info;
 
-        // Picks: only while more cards may be selected. Picking the last allowed card completes the selection by
-        // itself unless the prompt wants a manual confirm.
+        // Picks: only while more cards may be selected (without prefs: while selectable cards remain). Picking the last
+        // allowed card completes the selection by itself unless the prompt wants a manual confirm; without prefs that
+        // cannot be known.
         if (count < sel.Max)
         {
-            bool completes = count + 1 >= sel.Max && !sel.ManualConfirm;
-            foreach (var (holder, card, key) in selectable)
+            bool completes = !sel.PrefsKnown || count + 1 >= sel.Max && !sel.ManualConfirm;
+            foreach (var (holder, card, key, ci) in selectable)
             {
-                var name = ModelText.CardName(card);
                 var h = holder;
                 var c = card;
-                sink.Add(ActionKind.SelectCard, L10n.T("act.select_card", name), "select:" + SemanticCard(card),
+                sink.Add(ActionKind.SelectCard, L10n.T("act.select_card", ci.Name), "select:" + CardKeys.Semantic(card),
                     ct => SelectCard(h, c, ct), new Dictionary<string, string> { [ActionArgs.Card] = key },
                     unpredictable: completes);
             }
         }
-        foreach (var (card, holder, key) in selected)
+        foreach (var (card, holder, key, ci) in selected)
         {
-            var name = ModelText.CardName(card);
             var c = card;
-            sink.Add(ActionKind.DeselectCard, L10n.T("act.deselect_card", name), "deselect:" + SemanticCard(card),
+            sink.Add(ActionKind.DeselectCard, L10n.T("act.deselect_card", ci.Name), "deselect:" + CardKeys.Semantic(card),
                 ct => DeselectCard(c, ct), new Dictionary<string, string> { [ActionArgs.Card] = key });
         }
         if (info.CanConfirm)
@@ -111,8 +131,6 @@ internal static class HandSelectReader
         return info;
     }
 
-    private static string SemanticCard(CardModel card) => ModelText.SafeId(card) + "+" + ModelText.UpgradeLevel(card);
-
     // ------------------------------------------------------------------ reading the hand
 
     private static HandSelection? Capture()
@@ -124,6 +142,9 @@ internal static class HandSelectReader
         try { sel.Mode = hand.CurrentMode; } catch (Exception) { }
         // Private prefs (min/max/manual confirm): reflection, tolerated when missing (STS2-Agent reads the same field).
         if (Reflect.Get<object>(hand, "_prefs") is CardSelectorPrefs prefs) sel.Prefs = prefs;
+        // Prompt identity: the private completion source is replaced for every new prompt.
+        sel.Source = Reflect.GetOptional<object>(hand, "_selectionCompletionSource");
+        try { sel.PromptKey = sel.Prefs?.Prompt?.LocEntryKey ?? ""; } catch (Exception) { }
 
         var selectedCards = SelectedCards(hand);
         try
@@ -223,7 +244,7 @@ internal static class HandSelectReader
         if (sel == null) return ActionResult.Fail("selection is no longer open");
         if (!SceneUtil.Alive(holder) || !ReferenceEquals(holder.CardModel, card) || !sel.Selectable.Contains(holder))
             return ActionResult.Fail("card is no longer selectable");
-        if (sel.Selected.Count >= sel.Max) return ActionResult.Fail("no more cards can be selected");
+        if (sel.PrefsKnown && sel.Selected.Count >= sel.Max) return ActionResult.Fail("no more cards can be selected");
         int before = sel.Selected.Count;
         try
         {
@@ -235,15 +256,16 @@ internal static class HandSelectReader
         }
         catch (Exception ex) { return ActionResult.Fail("select failed: " + ex.Message); }
 
-        // Done when the pick registered (selection still open) or the selection completed on its own.
+        // Done when the pick registered (selection still open) or the selection completed on its own (closed, or
+        // replaced right away by the next prompt).
         var outcome = await CombatFlow.WaitFor(() =>
         {
             var now = Capture();
-            return now == null || now.Selected.Count != before || now.Selected.Any(s => ReferenceEquals(s.Card, card));
+            return !sel.SamePrompt(now) || now!.Selected.Count != before || now.Selected.Any(s => ReferenceEquals(s.Card, card));
         }, StepTimeout, ct, stopOnChoice: false);
         if (outcome == CombatFlow.WaitOutcome.Cancelled) return ActionResult.Fail("cancelled");
         if (outcome == CombatFlow.WaitOutcome.TimedOut) return ActionResult.Fail("selecting the card had no effect");
-        if (Capture() == null) return await AfterSelectionClosed(ct);
+        if (!sel.SamePrompt(Capture())) return await AfterSelectionClosed(ct);
         await MainThread.Frames(2);
         return ActionResult.Ok();
     }
@@ -256,7 +278,7 @@ internal static class HandSelectReader
         var entry = sel.Selected.FirstOrDefault(s => ReferenceEquals(s.Card, card));
         if (entry.Card == null) return ActionResult.Fail("card is not selected");
 
-        bool StillSelected() => Capture() is { } now && now.Selected.Any(s => ReferenceEquals(s.Card, card));
+        bool StillSelected() => Capture() is { } now && sel.SamePrompt(now) && now.Selected.Any(s => ReferenceEquals(s.Card, card));
 
         if (entry.Holder != null && SceneUtil.Alive(entry.Holder))
         {
@@ -286,10 +308,11 @@ internal static class HandSelectReader
         var sel = Capture();
         if (sel == null) return ActionResult.Fail("selection is no longer open");
         int count = sel.Selected.Count;
-        if (sel.Prefs != null && (count < sel.Min || count > sel.Max)) return ActionResult.Fail("selection is not complete");
+        if (sel.PrefsKnown && (count < sel.Min || count > sel.Max)) return ActionResult.Fail("selection is not complete");
         var pressed = UiActions.Press(sel.Confirm, "confirm selection");
         if (!pressed.Success) return pressed;
-        var outcome = await CombatFlow.WaitFor(() => Capture() == null, StepTimeout, ct, stopOnChoice: false);
+        // Closed, or replaced right away by the next prompt.
+        var outcome = await CombatFlow.WaitFor(() => !sel.SamePrompt(Capture()), StepTimeout, ct, stopOnChoice: false);
         if (outcome == CombatFlow.WaitOutcome.Cancelled) return ActionResult.Fail("cancelled");
         if (outcome == CombatFlow.WaitOutcome.TimedOut) return ActionResult.Fail("confirm had no effect (timed out)");
         return await AfterSelectionClosed(ct);
