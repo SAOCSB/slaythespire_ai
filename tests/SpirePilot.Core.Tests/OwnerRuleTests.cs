@@ -132,6 +132,29 @@ public class OwnerRuleTests
     }
 
     [Fact]
+    public void Potions_offered_outside_combat_do_not_make_a_one_option_screen_a_decision()
+    {
+        var s = new GameSnapshot
+        {
+            Screen = ScreenKind.Map,
+            InRun = true,
+            Actions =
+            {
+                new ActionOption { Id = "a0", Kind = ActionKind.ChooseMapNode, Label = "Travel to Monster (1,1)", SemanticKey = "map:1,1" },
+                new ActionOption { Id = "a1", Kind = ActionKind.UsePotion, Label = "Use potion Blood Potion", SemanticKey = "potion:BLOOD_POTION@P:1" },
+            },
+        };
+        Assert.Equal("a0", DecisionEngine.TrivialAction(s)!.Id);
+
+        s.Actions.RemoveAt(0);
+        Assert.Null(DecisionEngine.TrivialAction(s));
+
+        s.Combat = new CombatInfo();
+        s.Actions.Add(new ActionOption { Id = "a2", Kind = ActionKind.EndTurn, Label = "End turn", SemanticKey = "end_turn" });
+        Assert.Null(DecisionEngine.TrivialAction(s));
+    }
+
+    [Fact]
     public void Teammate_text_cannot_break_out_of_the_inbox_fence()
     {
         var evil = new TeamMessage

@@ -79,8 +79,8 @@ either (`-p:Sts2GameVersion=0.107|0.111`), with `#if STS2_V0107` / `#if STS2_V01
 Version guard: on the first frame where the game's version can be read, the runtime compares its major.minor with
 the branch the DLL was compiled for (`Diagnostics.CompiledFor`). On a mismatch (e.g. the 0.107 build on game 0.111) it
 logs an error, forces mode Off, never starts the pilot, and the overlay / status names the build to install;
-`POST /mode` answers 409 `version_mismatch` and `GET /status` carries `versionMismatch` (`POST /act` itself is not
-blocked; the MCP server refuses to act on it). The other way round (the 0.111 build on game 0.107) the guard is not
+`POST /mode` and `POST /act` answer 409 `version_mismatch` and `GET /status` carries `versionMismatch` (the MCP server
+checks it before acting too). The other way round (the 0.111 build on game 0.107) the guard is not
 expected to run at all: that manifest's `min_game_version` is 0.111.0, which the game's mod loader checks first.
 
 ## Snapshot conventions

@@ -347,6 +347,12 @@ internal sealed class LocalHttpApi : IDisposable
             await Send(res, 400, Error("pass \"semantic_key\" (preferred) or \"id\"", "bad_request"));
             return;
         }
+        // A build for another game version reads screens wrongly: acting on them is as unsafe as running the pilot.
+        if (PilotRuntime.VersionProblemEnglish is { } problem)
+        {
+            await Send(res, 409, Error(problem, "version_mismatch"));
+            return;
+        }
         long? sequence = null;
         if (body?["sequence"] is JsonNode seqNode)
         {

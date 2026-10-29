@@ -173,7 +173,7 @@ public sealed class StrategySettings
 
 public sealed class HttpApiSettings
 {
-    /// <summary>Expose the local HTTP API (127.0.0.1 only) so external AI tools can read state and act.</summary>
+    /// <summary>Expose the local HTTP API (loopback only: localhost, plus 127.0.0.1 where the OS allows it) so external AI tools can read state and act.</summary>
     public bool Enabled { get; set; }
     public int Port { get; set; } = 17654;
     /// <summary>Optional bearer token required by the HTTP API. Empty = no auth (localhost only).</summary>

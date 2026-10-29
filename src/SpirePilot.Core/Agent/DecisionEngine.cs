@@ -413,9 +413,15 @@ public sealed class DecisionEngine
         return ulong.TryParse(idText, out var id) && id != s.LocalPlayerId;
     }
 
-    /// <summary>The action to take without asking when the menu has exactly one choice (never discarding a potion).</summary>
-    public static ActionOption? TrivialAction(GameSnapshot s) =>
-        s.Actions.Count == 1 && s.Actions[0].Kind is not (ActionKind.DiscardPotion or ActionKind.UndoEndTurn) ? s.Actions[0] : null;
+    /// <summary>
+    /// The action to take without asking when the menu has exactly one choice (never discarding a potion). Potions
+    /// offered outside combat do not count: they sit next to a screen's own actions and are never what moves it on.
+    /// </summary>
+    public static ActionOption? TrivialAction(GameSnapshot s)
+    {
+        var real = s.Actions.Where(a => !s.IsOutOfCombatPotion(a)).ToList();
+        return real.Count == 1 && real[0].Kind is not (ActionKind.DiscardPotion or ActionKind.UndoEndTurn) ? real[0] : null;
+    }
 
     private DecisionContext BuildContext(GameSnapshot s, PilotSettings settings, List<TeamMessage> inbox, List<TeamMessage> info, string? liveInstruction)
     {

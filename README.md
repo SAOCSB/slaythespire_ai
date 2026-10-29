@@ -147,7 +147,7 @@ AI 思考时你点暂停或切换模式，这一步会立即取消，不会在�
 | `GET /state?format=text` | 内置 AI 提示词里的状态文本（地图上含路线规划器的 `[ROUTES]` 和钉住的路线）+ `Menu:`（每行 `aN \| 标签`），不能操作时首行为 `WAITING: 原因` |
 | `GET /state?include=text` | 上面的 JSON，外加同一次读取生成的 `text` 字段（编号一致） |
 | `GET /prompt` | 内置 AI 此刻会发送的完整提示词：`system`、`owner`、`user`（含队友消息、未答复的请求、路线和钉住的路线、一次性指令）。只读，不会把消息标为已读 |
-| `POST /act {"semantic_key":"end_turn"}` | 执行菜单中的操作（需把内置 AI 设为关闭或顾问模式）。推荐用 `semantic_key`；用 `{"id":"a3","sequence":123}` 时编号只在那次状态里有效：菜单变了会返回 409 `stale` 和新菜单。你的规则不允许的操作返回 403 `owner_rule` |
+| `POST /act {"semantic_key":"end_turn"}` | 执行菜单中的操作（需把内置 AI 设为关闭或顾问模式）。推荐用 `semantic_key`；用 `{"id":"a3","sequence":123}` 时编号只在那次状态里有效：菜单变了会返回 409 `stale` 和新菜单。你的规则不允许的操作返回 403 `owner_rule`；Mod 包与游戏版本不匹配时返回 409 `version_mismatch` |
 | `POST /mode {"mode":"FullAuto"}` | 切换模式（只接受模式名）；Mod 包与游戏版本不匹配时拒绝开启 AI（409 `version_mismatch`） |
 | `POST /instruction {"text":"..."}` | 给内置 AI 一次性指令 |
 | `GET /chat` / `POST /chat {"text":"...","to":"all"}` | 读取 / 发送队友消息，见下 |
@@ -191,8 +191,8 @@ giving is off) are applied first. `GET /prompt` is exactly the prompt the built-
 `POST /act` takes `{"semantic_key": ...}` (preferred) or `{"id": "a3", "sequence": <snapshot sequence>}`: ids are
 positions in one snapshot's menu, so when that menu changed since the given sequence the call is refused with 409
 `code: "stale"` and the fresh menu. An action an owner rule removed is refused with 403 `code: "owner_rule"`. Other
-409 codes: `pilot_active`, `busy`; `POST /mode` answers 409 `version_mismatch` when this build does not match the
-game version (`GET /status` then carries `versionMismatch`). Requests with an `Origin` header are refused; POST bodies
+409 codes: `pilot_active`, `busy`; `POST /mode` and `POST /act` answer 409 `version_mismatch` when this build does not
+match the game version (`GET /status` then carries `versionMismatch`). Requests with an `Origin` header are refused; POST bodies
 must be `application/json` (else 415), at most 64 KB, e.g.
 `curl -X POST http://localhost:17654/act -H "Content-Type: application/json" -d '{"semantic_key":"end_turn"}'`.
 `POST /chat` takes `text`, `to`, `kind` (`chat`, `request_potion`, `offer_potion`, `ask_need_potion`, `request_debuff`,
