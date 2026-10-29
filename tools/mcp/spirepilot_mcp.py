@@ -159,8 +159,9 @@ def _identity(action: dict) -> str:
 
 
 # --------------------------------------------------------------------------------------------- text rendering
-# format_state() is a line-for-line port of src/SpirePilot.Core/Agent/StateFormatter.cs (default options), kept as
-# the fallback for mods without GET /state?include=text. Newer mods render the text themselves.
+# format_state() is the fallback for mods without GET /state?include=text; every mod since renders the text with the
+# pilot's own StateFormatter, which the server shows instead. It ports StateFormatter.cs as it was then (default
+# options; tests/fixtures/*.txt are that version's output), so it lacks what the C# formatter added since.
 
 
 def _clean(text: str | None) -> str:
@@ -558,9 +559,10 @@ def _snake(kind: str) -> str:
 
 
 def _wrong_build(problem: str) -> str:
+    # The mod's message names the fix that exists (a build, an update, or the panel's "Run anyway"): relay it.
     return (
-        f"Wrong SpirePilot build for this game ({problem}). Its game code targets the other game branch, so neither "
-        "the built-in AI nor you may play through it: ask the user to install the matching build."
+        f"Wrong SpirePilot build for this game: {problem}. Until that is resolved neither the built-in AI nor you "
+        "may play through it; tell the user what this message says."
     )
 
 
@@ -577,6 +579,8 @@ def _render_status(d: dict) -> str:
     )
     if d.get("lastError"):
         lines.append(f"Last LLM error: {d['lastError']}")
+    if d.get("versionWarning"):
+        lines.append(f"Game version warning (play goes on): {d['versionWarning']}")
     if d.get("versionMismatch"):
         lines.append(_wrong_build(d["versionMismatch"]))
     elif d.get("mode") in ("Off", "Advisor") or d.get("paused"):
@@ -589,7 +593,8 @@ def _render_status(d: dict) -> str:
 @mcp.tool(annotations=READ_ONLY, structured_output=False)
 async def status() -> str:
     """Check the connection and the built-in SpirePilot AI: mode, its state, whether it is paused, its current
-    suggestion (Advisor mode), LLM call / token counters and last error. Call this first."""
+    suggestion (Advisor mode), LLM call / token counters, last error, and whether this mod build fits the game
+    version. Call this first."""
     status_code, data = await _api("GET", "/status")
     return _render_status(_expect(status_code, data, "Reading the status"))
 
@@ -697,6 +702,8 @@ async def act(id: str | None = None, semantic_key: str | None = None) -> str:
         body = {"semantic_key": semantic_key}
 
     status_code, data = await _api("POST", "/act", body, timeout=ACT_TIMEOUT)
+    if status_code == 409 and _code(data) == "version_mismatch":
+        raise SpirePilotError(_wrong_build(_err(data)) + " Nothing was done.")
     if status_code == 409 and (_code(data) == "pilot_active" or "pilot is in control" in _err(data)):
         raise SpirePilotError(
             "The built-in SpirePilot AI is in control, so the action was refused. Call "
@@ -740,10 +747,23 @@ async def set_mode(mode: Literal["Off", "Advisor", "FullAuto", "CombatOnly", "Ou
     FullAuto: the built-in AI plays everything. CombatOnly / OutOfCombatOnly: it plays only that part.
     While FullAuto, CombatOnly or OutOfCombatOnly is active, act is refused everywhere.
     """
+    if mode == "Off":
+        # A build blocked for this game version already runs Off; posting Off would also replace the owner's saved
+        # mode, which a matching build starts in.
+        st_code, st = await _api("GET", "/status")
+        if st_code == 200 and isinstance(st, dict) and st.get("versionMismatch"):
+            return _render_status(st) + "\nThe mode is already Off on this build; the owner's saved mode is kept."
     status_code, data = await _api("POST", "/mode", {"mode": mode})
     if status_code == 409 and _code(data) == "version_mismatch":
         raise SpirePilotError(_wrong_build(_err(data)) + " The mode stays Off.")
-    return _render_status(_expect(status_code, data, "Changing the mode"))
+    d = _expect(status_code, data, "Changing the mode")
+    text = _render_status(d)
+    if d.get("saveError"):
+        text += (
+            f"\nWarning: {d['saveError']}. The mode applies now but is not saved, so the next game start uses the old "
+            "mode; tell the user to check that mod_configs/SpirePilot/settings.json is writable."
+        )
+    return text
 
 
 @mcp.tool(annotations=ACTS, structured_output=False)
@@ -800,6 +820,16 @@ async def read_chat(limit: int = 20) -> str:
     return "\n".join(lines) if lines else "No team messages yet."
 
 
+# Recipients the mod reads as everyone (LocalHttpApi.IsEveryone).
+_EVERYONE = ("all", "everyone", "所有人", "全体")
+
+
+def _anyone_without_the_mod() -> bool:
+    """The last state the model saw lists a teammate who does not run SpirePilot."""
+    players = (_last_seen or {}).get("players") or []
+    return any(not p.get("isLocal") and p.get("hasTeamLink") is False for p in players)
+
+
 def _message_id(text: str | None) -> str | None:
     """The bare id of a team message: models copy the decoration read_chat shows ("#4f2a9c01d2e3", "re #...")."""
     return re.sub(r"^(?:(?:re|id)\b|[\s#\[(:])+", "", (text or "").strip(), flags=re.IGNORECASE).rstrip(" ])") or None
@@ -827,7 +857,10 @@ async def send_chat(
 ) -> str:
     """Send a co-op team message. Teammates running SpirePilot see it in chat (a speech bubble in combat, a toast
     elsewhere) and their AI acts on the structured fields; the mod rate-limits AI messages (a few per minute) and
-    drops exact repeats. Teammates without the mod cannot read text: they get the game's emote for the kind instead.
+    drops exact repeats. Teammates without the mod cannot read text: they get the game's emote for the kind instead
+    (requests "!", potion offers / questions "?", accept / decline thumbs up / down; chat has none). In a mixed team,
+    also for "all", the text goes to the teammates with the mod and the emote to the others (not again within 3
+    minutes for the same kind and recipient); the result names the emote they saw.
 
     Args:
         text: the human-readable message (required; human teammates only read this).
@@ -837,7 +870,8 @@ async def send_chat(
             like "e0") | request_focus (target = enemy to focus) | request_block (ask for protection this turn) |
             accept / decline (answer a teammate's request or question; reply_to is required).
         recipient: "all" (default), or a teammate's name, name prefix or character. An unknown name is refused with the
-            list of teammates.
+            list of teammates. With reply_to and "all", the answer goes to the asker, or to everyone when the
+            question was for everyone; a potion offer or question goes to the asker only.
         potion: potion id or name, for potion kinds.
         debuff: debuff / power name, for request_debuff.
         target: enemy name or key ("e0"), for request_debuff / request_focus.
@@ -851,7 +885,7 @@ async def send_chat(
             f"{kind} answers a message: pass reply_to=<its id from read_chat>, or the teammate's AI cannot tell what "
             "you answered."
         )
-    body = {"text": text.strip(), "kind": kind, "to": recipient or "all"}
+    body = {"text": text.strip(), "kind": kind, "to": (recipient or "").strip() or "all"}
     body.update(
         {k: v for k, v in (("potion", potion), ("debuff", debuff), ("target", target), ("reply_to", reply_to)) if v}
     )
@@ -861,11 +895,19 @@ async def send_chat(
             "Not sent: the mod's limit on AI messages per minute was reached, or you sent the same "
             "text very recently. Wait before sending again and avoid repeating yourself."
         )
+    if status_code == 400 and _code(data) == "unknown_recipient":
+        names = [n for n in (data.get("teammates") or []) if n]
+        raise SpirePilotError(
+            f"No teammate matches '{body['to']}'. "
+            + (
+                f"Teammates: {', '.join(names)}; use one of these names (or a prefix or character) or \"all\"."
+                if names
+                else 'No teammates are known (not in a co-op run?); use "all".'
+            )
+        )
     data = _expect(status_code, data, "Sending the message")
-    if data.get("delivered"):
-        return f"Sent to {recipient or 'all'} ({kind}): {text.strip()}"
+    emote = data.get("emote")
     if data.get("reason") == "no_reader":
-        emote = data.get("emote")
         if emote:
             shown = f"they see the game's {emote} emote instead"
         elif kind == "chat":
@@ -876,7 +918,20 @@ async def send_chat(
                 "is spent, or the game could not show one right now), so nothing reached them"
             )
         return f"Text not sent: no teammate you addressed runs SpirePilot; {shown}."
-    return "Logged locally but not delivered: no teammate runs SpirePilot (or you are not in a co-op game)."
+    # A mixed team: the text went to the teammates with the mod, the emote to the others.
+    others = f"\nTeammates without SpirePilot saw the game's {emote} emote instead." if emote else ""
+    everyone = body["to"].lower() in _EVERYONE
+    # Sent to everyone (not an answer, which may have gone to the asker alone) with a kind that has an emote, yet none
+    # was shown although the last state listed a teammate without the mod.
+    if not emote and kind != "chat" and everyone and not reply_to and _anyone_without_the_mod():
+        others = (
+            "\nTeammates without SpirePilot saw no emote: the same kind was shown to them in the last 3 minutes, or "
+            "the game could not show one right now."
+        )
+    if data.get("delivered"):
+        to = f"in answer to #{reply_to}" if reply_to and everyone else f"to {body['to']}"
+        return f"Sent {to} ({kind}): {text.strip()}{others}"
+    return "Logged locally but not delivered: no teammate runs SpirePilot (or you are not in a co-op game)." + others
 
 
 @mcp.tool(annotations=READ_ONLY, structured_output=False)
@@ -888,14 +943,17 @@ async def get_prompt(part: Literal["all", "system", "user"] = "all") -> str:
     character); a good briefing or system prompt for you, read it once per run. part="user": the per-decision part
     (memo, recent history, the owner's live instruction, team inbox and open requests, state, the route planner's
     paths and the pinned route, and the menu after the owner's rules). part="all": both. The built-in AI answers with
-    a JSON object; through MCP you answer by calling act with one menu id instead.
+    a JSON object; through MCP you answer by calling get_state, then act with an id from get_state's menu (act only
+    takes ids from the menu get_state or act showed you, not from this prompt).
     """
     status_code, data = await _api("GET", "/prompt")
     if status_code == 503:
         raise SpirePilotError("The game has no state yet (still starting or loading); try again in a few seconds.")
     data = _expect(status_code, data, "Reading the prompt")
     system = f"{data.get('system', '').strip()}\n\n{data.get('owner', '').strip()}"
-    user = data.get("user", "").strip() + "\n\n(Through MCP: do not reply with JSON; call act with one menu id.)"
+    user = data.get("user", "").strip() + (
+        "\n\n(Through MCP: do not reply with JSON; call get_state, then call act with one id from get_state's menu.)"
+    )
     return {"system": system, "user": user}.get(part, f"{system}\n\n---\n\n{user}")
 
 

@@ -126,7 +126,10 @@ dotnet run --project tools/SpirePilot.Bench -- --settings deepseek.json --repeat
    ```
    请用 `localhost`：Windows 上非管理员运行的游戏只注册了 `localhost`，`127.0.0.1` 会被拒绝。
    把 `snap.json` 的内容整体放进 `"snapshot"`（多出来的 `localPlayer`、`teammates` 会被忽略）。
-   `/state` 的菜单已经按你的规则（角色、进阶、不给队友用药水）过滤过，评测引擎会再按 fixture 的 `settings` 过滤一遍。
+   截取前先清除你在游戏里设的限制（允许的角色、进阶、不给队友用药水），改写进 fixture 的 `settings`
+   （参考 `rule-character-policy.json`、`coop-owner-forbids-potion-giving.json`），评测引擎会按它过滤菜单。
+   开着限制截取的 `/state` 已经去掉了被禁止的操作，但保留游戏原来的编号，菜单会有空号（如 a0、a2、a5），`--validate` 会报错：
+   这时把 id 重新编成 a0..aN，并在 `expect_any` / `forbid` 里用语义键而不是 id。
 2. **从决策记录找题目**：`mod_configs/SpirePilot/traces/trace-日期.jsonl` 记录了每一步给出的选项、AI 的选择和思路。
    用它找到 AI 犯错的地方，再在游戏里重现并用 `/state` 截取（trace 本身不含完整快照）。
 3. 写好 `expect_any` / `forbid` 和一句 `rationale`。只把**明确**的错误放进 `forbid`；有多种合理答案时都放进 `expect_any`。
@@ -264,9 +267,13 @@ case does not matter, and comments and trailing commas are allowed.
 1. **Capture a real snapshot.** Enable the local HTTP API in the overlay's log tab. Stop at the decision you want
    (Advisor mode helps). Then run `curl -s http://localhost:17654/state -H "Authorization: Bearer <token>"` and paste
    the output as `"snapshot"` (use `localhost`: on Windows a game that is not run as administrator registers only
-   `localhost`). Extra computed fields such as `localPlayer` and `teammates` are ignored. The menu is already filtered
-   by the owner's rules; the bench engine applies the fixture's `settings` on top. `GET /prompt` returns exactly the
-   prompt the built-in pilot would send at that moment.
+   `localhost`). Extra computed fields such as `localPlayer` and `teammates` are ignored. Clear the owner's
+   restrictions (allowed characters, ascension, potion giving off) before capturing and put them in the fixture's
+   `settings`, as `rule-character-policy.json` and `coop-owner-forbids-potion-giving.json` do: the bench engine filters
+   the menu by them. A capture taken with restrictions on has lost the forbidden actions but keeps the game's ids, so
+   its menu has gaps (a0, a2, a5) and `--validate` rejects it: renumber the ids a0..aN and name actions by semantic
+   key, not id, in `expect_any` / `forbid`. `GET /prompt` returns exactly the prompt the built-in pilot would send at
+   that moment.
 2. **Mine the traces.** `mod_configs/SpirePilot/traces/trace-<date>.jsonl` lists the options offered at every step, the
    choice and the thought. Use the traces to find mistakes, then reproduce the situation and capture it with `/state`.
    Traces do not hold full snapshots.
