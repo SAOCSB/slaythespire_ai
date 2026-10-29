@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using Godot;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Models;
@@ -17,6 +19,9 @@ namespace SpirePilot.Game.Readers;
 /// <summary>Treasure room: open chest, pick relic (co-op relic vote), proceed. Called for ScreenKind.Treasure.</summary>
 internal static class TreasureReader
 {
+    /// <summary>After this long in the "opening" state with no relic collection, the chest's state is not trusted any more.</summary>
+    private static readonly TimeSpan OpeningGiveUp = TimeSpan.FromSeconds(20);
+
     public static void Read(GameContext ctx, ScreenProbe probe, GameSnapshot snap, ActionSink sink)
     {
         var room = FindRoom(probe.Screen as Node);
@@ -41,22 +46,39 @@ internal static class TreasureReader
             return;
         }
 
-        // 2) Relic picking (one relic per player in co-op; everyone votes, collisions are fought over).
         var collection = Collection(room);
+        var state = ChestState.Of(room, collection);
+        TrackShown(collection, state.Shown);
+
+        // 2) Nothing (more) to take: an empty chest, or the collection says picking is over.
+        if (state.Empty == true || state.Finished == true)
+        {
+            AddProceed(sink, room, RoomUtil.T("act.proceed"));
+            return;
+        }
+
+        // 3) Relic picking (one relic per player in co-op; everyone votes, collisions are fought over).
         var sync = RunManager.Instance?.TreasureRoomRelicSynchronizer;
         IReadOnlyList<RelicModel>? relics = null;
         try { relics = sync?.CurrentRelics; } catch (Exception) { }
-        bool collectionShown = SceneUtil.VisibleInTree(collection);
-        if (collectionShown && relics is { Count: > 0 })
+        if (state.Shown && relics is { Count: > 0 })
         {
             try { ReadPicking(ctx, snap, sink, room, collection!, sync!, relics, me); }
             catch (Exception ex) { ThrottledLog.Warn("treasure-pick", "chest relics unreadable: " + ex.Message); }
             return;
         }
 
-        // 3) Relic taken (or an empty chest): leave. While the button still reads "skip" a relic may be on its way
-        //    (chest animating open), so wait unless there is clearly nothing to pick.
-        bool nothingToPick = !collectionShown && relics is not { Count: > 0 };
+        // 4) The chest is opening (the click registered, the relics are not up yet): a proceed now would forfeit the relic.
+        bool stateKnown = state.Empty != null && state.Finished != null;
+        if (stateKnown && OpenedFor(room) < OpeningGiveUp)
+        {
+            RoomUtil.Note(snap, RoomUtil.T("rooms.chest_opening"));
+            return;
+        }
+
+        // Fallback (collection state unreadable, or stuck): the old heuristics. While the button still reads "skip" a relic
+        // may be on its way, so wait unless there is clearly nothing to pick.
+        bool nothingToPick = !state.Shown && relics is not { Count: > 0 };
         var proceed = Proceed(room);
         bool isSkip = false;
         try { isSkip = SceneUtil.Valid(proceed) && proceed!.IsSkip; } catch (Exception) { }
@@ -66,6 +88,67 @@ internal static class TreasureReader
             return;
         }
         AddProceed(sink, room, RoomUtil.T("act.proceed"));
+    }
+
+    /// <summary>
+    /// The relic collection's own state: <c>_isEmptyChest</c>, <c>RelicPickingBegan()</c> / <c>RelicPickingFinished()</c>
+    /// (completed tasks), and whether it is shown. Null = unreadable.
+    /// </summary>
+    private readonly record struct ChestState(bool? Empty, bool? Began, bool? Finished, bool Shown)
+    {
+        public static ChestState Of(NTreasureRoom room, NTreasureRoomRelicCollection? collection)
+        {
+            if (!SceneUtil.Alive(collection)) return new ChestState(null, null, null, false);
+            bool? empty = Reflect.GetOptional<object>(collection, "_isEmptyChest") is bool e ? e : null;
+            bool? began = TaskDone(() => collection!.RelicPickingBegan());
+            bool? finished = TaskDone(() => collection!.RelicPickingFinished());
+            bool shown = SceneUtil.VisibleInTree(collection) &&
+                         (Reflect.GetOptional<object>(room, "_isRelicCollectionOpen") is not false || ReferenceEquals(RoomUtil.CurrentScreen(), collection));
+            return new ChestState(empty, began, finished, shown);
+        }
+
+        private static bool? TaskDone(Func<Task?> get)
+        {
+            try { return get() is { } t ? t.IsCompleted : null; }
+            catch (Exception) { return null; }
+        }
+    }
+
+    private static readonly ConditionalWeakTable<NTreasureRoom, StrongBox<long>> OpenedAt = new();
+    private static readonly ConditionalWeakTable<NTreasureRoomRelicCollection, StrongBox<long>> ShownAt = new();
+
+    /// <summary>How long the reader has seen this room's chest opened.</summary>
+    private static TimeSpan OpenedFor(NTreasureRoom room) =>
+        Stopwatch.GetElapsedTime(OpenedAt.GetValue(room, _ => new StrongBox<long>(Stopwatch.GetTimestamp())).Value);
+
+    private static void TrackShown(NTreasureRoomRelicCollection? collection, bool shown)
+    {
+        if (collection == null) return;
+        if (!shown) ShownAt.Remove(collection);
+        else ShownAt.GetValue(collection, _ => new StrongBox<long>(Stopwatch.GetTimestamp()));
+    }
+
+    /// <summary>
+    /// Waits out the collection's opening guard (it ignores picks for <c>_noSelectionTimeMsec</c> after <c>_openedTicks</c>),
+    /// at least ~600 ms after it appeared, at most 2 s.
+    /// </summary>
+    private static async Task WaitOpenGuard(NTreasureRoomRelicCollection collection, CancellationToken ct)
+    {
+        var wait = TimeSpan.FromMilliseconds(600) - (ShownAt.TryGetValue(collection, out var box) ? Stopwatch.GetElapsedTime(box.Value) : TimeSpan.Zero);
+        try
+        {
+            ulong? opened = Reflect.GetOptional<object>(collection, "_openedTicks") is ulong o ? o : null;
+            ulong? guard = Reflect.GetOptional<object>(collection, "_noSelectionTimeMsec") is ulong g ? g : null;
+            ulong now = Time.GetTicksMsec();
+            if (opened is > 0 && guard is { } ms && now >= opened && now - opened.Value < 60_000)
+            {
+                var remaining = TimeSpan.FromMilliseconds((double)ms + 100 - (now - opened.Value));
+                if (remaining > wait) wait = remaining;
+            }
+        }
+        catch (Exception) { /* fall back to the time since it appeared */ }
+        if (wait > TimeSpan.FromSeconds(2)) wait = TimeSpan.FromSeconds(2);
+        if (wait > TimeSpan.Zero) await MainThread.Delay(wait, ct);
     }
 
     private static void ReadPicking(GameContext ctx, GameSnapshot snap, ActionSink sink, NTreasureRoom room,
@@ -193,9 +276,22 @@ internal static class TreasureReader
         if (!SceneUtil.Alive(room)) return ActionResult.Fail("treasure room is gone");
         var pressed = UiActions.Press(chest, "chest");
         if (!pressed.Success) return pressed;
-        var r = await UiActions.Expect(() => !SceneUtil.Alive(room) || ChestOpened(room, chest) || SceneUtil.VisibleInTree(Collection(room)),
-            "open chest", ct: ct);
-        await UiActions.WaitSettled(ct: ct);
+        // The click flips _hasChestBeenOpened at once; the relics come after the opening animation. Done once the
+        // collection shows relics, the chest turns out empty, or picking is already over.
+        bool Ready()
+        {
+            if (!SceneUtil.Alive(room) || RoomUtil.Left(room) && RoomUtil.CurrentScreen() is not NTreasureRoomRelicCollection) return true;
+            var state = ChestState.Of(room, Collection(room));
+            if (state.Empty == true || state.Finished == true) return true;
+            if (!state.Shown) return false;
+            if (state.Began == true) return true;
+            try { return RunManager.Instance?.TreasureRoomRelicSynchronizer?.CurrentRelics is { Count: > 0 }; }
+            catch (Exception) { return true; }
+        }
+        var r = await UiActions.Expect(Ready, "open chest", ct: ct);
+        if (!r.Success && SceneUtil.Alive(room) && ChestOpened(room, chest))
+            r = ActionResult.Ok("chest opened; relics not shown yet");
+        await RoomUtil.SettleAsync(ct);
         return r;
     }
 
@@ -209,30 +305,14 @@ internal static class TreasureReader
         List<RelicModel>? before = null;
         try { before = sync.CurrentRelics?.ToList(); } catch (Exception) { }
         if (before == null || index >= before.Count) return ActionResult.Fail("relic is no longer offered");
-        bool ProceedReady()
-        {
-            var proceed = Proceed(room);
-            try { return SceneUtil.Usable(proceed) && !proceed!.IsSkip; }
-            catch (Exception) { return false; }
-        }
-        bool readyBefore = ProceedReady();
-
-        if (holder != null)
-        {
-            // The holder's own click handler (keeps the collection's selection guards and animations).
-            var pressed = UiActions.Press(holder, "relic");
-            if (!pressed.Success) return pressed;
-        }
-        else
-        {
-            try { sync.PickRelicLocally(index); } // synchronized local pick / co-op vote
-            catch (Exception ex) { return ActionResult.Fail("pick relic: " + ex.Message); }
-        }
+        if (SafeVote(sync, me) is { voteReceived: true }) return ActionResult.Fail("a relic was already picked");
 
         bool Done()
         {
             if (!SceneUtil.Alive(room) || !SceneUtil.VisibleInTree(collection)) return true;
             if (SafeVote(sync, me) is { voteReceived: true }) return true;
+            if (ChestState.Of(room, collection).Finished == true) return true;
+            if (RoomUtil.AwaitingPlayerInput()) return true; // the relic's pickup opened a choice
             try
             {
                 // Compare contents: the getter may hand out a new wrapper each call.
@@ -240,10 +320,29 @@ internal static class TreasureReader
                 if (now == null || now.Count != before.Count || now.Where((r, i) => !ReferenceEquals(r, before[i])).Any()) return true;
             }
             catch (Exception) { return true; }
-            return !readyBefore && ProceedReady();
+            return false;
         }
+
+        if (holder != null)
+        {
+            // The holder's own click handler (keeps the collection's selection guards and animations); it ignores clicks
+            // right after the collection opened, so wait that out first and re-press once if the first click was eaten.
+            await WaitOpenGuard(collection, ct);
+            if (Done()) return ActionResult.Ok();
+            var pressed = UiActions.Press(holder, "relic");
+            if (!pressed.Success) return pressed;
+            if (!await MainThread.WaitUntil(Done, TimeSpan.FromSeconds(1.5), ct) && SceneUtil.Usable(holder) && !Done())
+                UiActions.Press(holder, "relic");
+        }
+        else
+        {
+            try { sync.PickRelicLocally(index); } // synchronized local pick / co-op vote
+            catch (Exception ex) { return ActionResult.Fail("pick relic: " + ex.Message); }
+        }
+
         var r = await UiActions.Expect(Done, "pick relic", ct: ct);
-        await UiActions.WaitSettled(ct: ct);
+        // A relic whose pickup opens a selection keeps its action running until that choice is made: SettleAsync stops there.
+        await RoomUtil.SettleAsync(ct);
         return r;
     }
 
