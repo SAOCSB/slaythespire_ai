@@ -91,8 +91,10 @@ public sealed class TeamChatHub
             if (message.From == LocalNetId && LocalNetId != 0) return false;
             if (!Remember(message.Id)) return false;
             bool forUs = message.To == 0 || message.To == LocalNetId;
-            if (forUs && message.Kind != TeamMessageKind.Hello) _aiInbox.Add(message);
             if (!forUs) return false;
+            // Hello is link bookkeeping (handled by the transport), not something to show or answer.
+            if (message.Kind == TeamMessageKind.Hello) return true;
+            _aiInbox.Add(message);
         }
         Append(new ChatEntry { Message = message, Incoming = true });
         return true;

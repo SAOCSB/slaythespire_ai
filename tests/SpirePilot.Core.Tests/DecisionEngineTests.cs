@@ -244,6 +244,30 @@ public class DecisionEngineTests
     }
 
     [Fact]
+    public async Task A_live_instruction_overrides_the_pinned_route()
+    {
+        var settings = Settings();
+        settings.Route.PinnedPath = new() { "1,0" };
+        settings.Route.PinnedAct = 1;
+        var (engine, client, _) = Make(settings, req => req.Messages[0].Content.Contains("go left") ? "{\"thought\":\"ok\",\"actions\":[\"a0\"]}" : "{}");
+        var snap = new GameSnapshot
+        {
+            Screen = ScreenKind.Map,
+            Run = new RunInfo { Act = 1 },
+            Map = TestData.Map(),
+            Actions =
+            {
+                new ActionOption { Id = "a0", Kind = ActionKind.ChooseMapNode, Args = { [ActionArgs.Node] = "0,0" } },
+                new ActionOption { Id = "a1", Kind = ActionKind.ChooseMapNode, Args = { [ActionArgs.Node] = "1,0" } },
+            },
+        };
+        var d = await engine.DecideAsync(snap, "go left", CancellationToken.None);
+        Assert.Equal(DecisionSource.Llm, d!.Source);
+        Assert.Equal("a0", d.FirstActionId);
+        Assert.Single(client.Requests);
+    }
+
+    [Fact]
     public async Task Character_policy_respects_the_allow_list()
     {
         var settings = Settings();

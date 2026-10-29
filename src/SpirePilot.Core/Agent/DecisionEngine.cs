@@ -113,8 +113,9 @@ public sealed class DecisionEngine
             Memory.AddHistory($"(plan stopped: {abort})");
         }
 
-        // 2) Hard rules from settings.
-        if (RuleDecision(snapshot, settings) is { } rule)
+        // 2) Rules from settings. Soft rules (pinned route / planner routing) yield to a live instruction or a
+        //    teammate request, which the LLM must see; hard rules (character allow-list) always apply.
+        if (RuleDecision(snapshot, settings, softRules: !hasInstruction && actionable.Count == 0) is { } rule)
         {
             rule.HandledInboxIds = info.Select(m => m.Id).ToList();
             return rule;
@@ -181,7 +182,7 @@ public sealed class DecisionEngine
         };
     }
 
-    private static AgentDecision? RuleDecision(GameSnapshot s, PilotSettings settings)
+    private static AgentDecision? RuleDecision(GameSnapshot s, PilotSettings settings, bool softRules)
     {
         if (s.Screen == ScreenKind.CharacterSelect && settings.Characters.Policy != CharacterPickPolicy.AiChoice)
         {
@@ -197,7 +198,7 @@ public sealed class DecisionEngine
             if (current == null || !allowed.Contains(current.Id, StringComparer.OrdinalIgnoreCase))
                 s.Actions.RemoveAll(a => a.Kind == ActionKind.Embark);
         }
-        if (s.Screen == ScreenKind.Map && s.Map is { } map)
+        if (softRules && s.Screen == ScreenKind.Map && s.Map is { } map)
         {
             var me = s.LocalPlayer;
             double hp = me is { MaxHp: > 0 } ? (double)me.Hp / me.MaxHp : 1;

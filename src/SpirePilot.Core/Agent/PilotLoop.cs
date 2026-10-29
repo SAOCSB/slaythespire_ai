@@ -238,10 +238,11 @@ public sealed class PilotLoop : IDisposable
 
         if (mode == PilotMode.Advisor)
         {
+            // The human plays in advisor mode: never speak for them; show suggested messages as part of the advice.
             Advice = decision;
             AdviceAction = action;
-            SetStatus(PilotState.Advising, L10n.T("status.advice", action.Label));
-            if (decision.Messages.Count > 0) SendMessages(decision, snap, settings);
+            var advice = action.Label + (decision.Messages.Count > 0 ? "  💬 " + string.Join(" / ", decision.Messages.Select(m => m.Text)) : "");
+            SetStatus(PilotState.Advising, L10n.T("status.advice", advice));
             await WaitForChangeAsync(snap, waitForStep: false, ct).ConfigureAwait(false);
             _engine.Memory.ClearPlan();
             return;

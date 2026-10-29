@@ -86,7 +86,8 @@ public class TeamChatHubTests
         hub.Receive(new TeamMessage { From = 2, To = 3, Text = "for someone else" });
         hub.Receive(new TeamMessage { From = 2, To = 1, Text = "for me" });
         hub.Receive(new TeamMessage { From = 2, To = 0, Text = "for all" });
-        hub.Receive(new TeamMessage { From = 2, To = 0, Kind = TeamMessageKind.Hello, Text = "hello" });
+        Assert.True(hub.Receive(new TeamMessage { From = 2, To = 0, Kind = TeamMessageKind.Hello, Text = "hello" }));
+        Assert.DoesNotContain(hub.Log, e => e.Message.Kind == TeamMessageKind.Hello);
         var inbox = hub.PeekAiInbox();
         Assert.Equal(new[] { "for me", "for all" }, inbox.Select(i => i.Text));
         hub.MarkRead(inbox.Take(1).Select(i => i.Id));
