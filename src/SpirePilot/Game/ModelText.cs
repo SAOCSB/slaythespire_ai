@@ -383,6 +383,12 @@ internal static class ModelText
         Try(() => info.Amount = power.Amount);
         // A negative buff (e.g. Strength -2) counts as a debuff.
         Try(() => info.IsDebuff = power.TypeForCurrentAmount == PowerType.Debuff);
+        // A power aimed at a player (Sandpit: owned by The Insatiable, Target = the threatened player).
+        Try(() =>
+        {
+            var targetPlayer = power.Target?.Player;
+            if (targetPlayer != null) info.TargetNetId = targetPlayer.NetId;
+        });
         info.Description = PowerDescription(power);
         return info;
     }
@@ -448,6 +454,8 @@ internal static class ModelText
     {
         var info = new CreatureInfo { Key = key ?? "" };
         if (creature == null) return info;
+        // Same on every client (unlike the key): team messages name enemies by it.
+        Try(() => info.CombatId = creature.CombatId);
         Try(() => info.Hp = creature.CurrentHp);
         Try(() => info.MaxHp = creature.MaxHp);
         Try(() => info.Block = creature.Block);

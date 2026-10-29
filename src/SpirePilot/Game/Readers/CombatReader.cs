@@ -26,17 +26,26 @@ internal static class CombatReader
     private static readonly TimeSpan PlayTimeout = TimeSpan.FromSeconds(12);
     private static readonly TimeSpan PotionTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan EndTurnTimeout = TimeSpan.FromSeconds(5);
+    /// <summary>Undo goes through the host on a client: allow round trips.</summary>
+    private static readonly TimeSpan UndoEndTurnTimeout = TimeSpan.FromSeconds(6);
 
     /// <summary>
     /// Registers the legal combat actions of the local player: card plays (hand order, every valid target), potions
     /// (slot order, every valid target incl. teammates), end turn. Nothing is registered outside the local player's
-    /// play window (enemy turn, turn already ended, dead), the readiness gate explains why.
+    /// play window (enemy turn, dead), the readiness gate explains why. In co-op after readying end turn while
+    /// teammates still play, the one action is "undo end turn".
     /// </summary>
     public static void Read(GameContext ctx, ScreenProbe probe, GameSnapshot snap, ActionSink sink)
     {
         CombatStrings.Ensure();
         var view = CombatView.Create(ctx);
         if (view == null) return;
+        if (view.IsMultiplayer && CombatFlow.CanUndoEndTurn(ctx, view.Cs, view.Me))
+        {
+            try { AddUndoEndTurn(sink); }
+            catch (Exception ex) { ThrottledLog.Warn("combat:undoendturn", "undo end turn action failed: " + ex); }
+            return;
+        }
         if (!CombatFlow.InPlayWindow(view.Cs, view.Me)) return;
 
         try { AddCardPlays(view, snap, sink); }
@@ -92,7 +101,7 @@ internal static class CombatReader
             foreach (var e in CombatKeys.Enemies(cs))
             {
                 try { info.Enemies.Add(ModelText.Creature(e.Creature, e.Key)); }
-                catch (Exception) { info.Enemies.Add(new CreatureInfo { Key = e.Key, Id = e.MonsterId, IsAlive = false }); }
+                catch (Exception) { info.Enemies.Add(new CreatureInfo { Key = e.Key, CombatId = SafeCombatId(e.Creature), Id = e.MonsterId, IsAlive = false }); }
             }
         });
         snap.Combat = info;
@@ -465,7 +474,66 @@ internal static class CombatReader
         };
     }
 
+    // ------------------------------------------------------------------ undo end turn (co-op)
+
+    private static void AddUndoEndTurn(ActionSink sink) =>
+        sink.Add(ActionKind.UndoEndTurn, L10n.T("act.undo_end_turn"), "undo_end_turn", UndoEndTurn, unpredictable: true);
+
+    /// <summary>
+    /// Takes back the local player's end-turn ready in co-op by enqueueing <see cref="UndoEndPlayerTurnAction"/>
+    /// through the action queue synchronizer (never the local mutator <c>CombatManager.UndoReadyToEndTurn</c>). Done
+    /// when the player is no longer ready in the same round of the player side; fails on timeout or when the turn
+    /// ended meanwhile.
+    /// </summary>
+    private static async Task<ActionResult> UndoEndTurn(CancellationToken ct)
+    {
+        var ctx = GameContext.Capture();
+        var cs = ctx.Combat;
+        var me = ctx.Me;
+        if (cs == null || me == null) return ActionResult.Fail("not in combat");
+        if (!CombatFlow.CanUndoEndTurn(ctx, cs, me)) return ActionResult.Fail("end turn cannot be undone now");
+        var cm = CombatManager.Instance;
+        int round;
+        try { round = cs.RoundNumber; }
+        catch (Exception) { return ActionResult.Fail("round unknown"); }
+        var sync = RunManager.Instance?.ActionQueueSynchronizer;
+        if (sync == null) return ActionResult.Fail("action queue unavailable");
+        try
+        {
+            // Same turnNumber convention as EndPlayerTurnAction (combat round; STS2MCP).
+            sync.RequestEnqueue(new UndoEndPlayerTurnAction(me, round));
+        }
+        catch (Exception ex) { return ActionResult.Fail("undo end turn failed: " + ex.Message); }
+
+        bool SameTurn()
+        {
+            try { return cm.IsInProgress && cs.RoundNumber == round && cs.CurrentSide == CombatSide.Player; }
+            catch (Exception) { return false; }
+        }
+        bool Undone()
+        {
+            try { return SameTurn() && !cm.IsPlayerReadyToEndTurn(me); }
+            catch (Exception) { return false; }
+        }
+        var outcome = await CombatFlow.WaitFor(() => Undone() || !SameTurn(), UndoEndTurnTimeout, ct, stopOnChoice: false);
+        if (outcome == CombatFlow.WaitOutcome.Cancelled) return ActionResult.Fail("cancelled");
+        if (Undone())
+        {
+            await MainThread.Frames(2);
+            return ActionResult.Ok();
+        }
+        return ActionResult.Fail(outcome == CombatFlow.WaitOutcome.TimedOut
+            ? "undo end turn had no effect (timed out)"
+            : "the turn ended before the undo went through");
+    }
+
     // ------------------------------------------------------------------ helpers
+
+    private static uint? SafeCombatId(Creature creature)
+    {
+        try { return creature.CombatId; }
+        catch (Exception) { return null; }
+    }
 
     private static TargetType SafeTargetType(CardModel card)
     {

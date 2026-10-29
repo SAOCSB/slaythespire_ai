@@ -24,7 +24,9 @@ internal static class Readiness
 
     /// <summary>
     /// Returns (true, null) when the AI may act on <paramref name="probe"/>'s screen right now, otherwise false and a
-    /// short reason ("animating", "enemy turn", "waiting for teammates", "transition", ...).
+    /// short reason ("animating", "enemy turn", "waiting for teammates", "transition", ...). One case acts with a
+    /// reason: in co-op after readying end turn, (true, "waiting for teammates") — the only action then is "undo end
+    /// turn", which the pilot takes only when a teammate needs it.
     /// </summary>
     public static (bool canAct, string? reason) Check(GameContext ctx, ScreenProbe probe, GameSnapshot snap)
     {
@@ -32,19 +34,21 @@ internal static class Readiness
         if (probe.Kind == ScreenKind.Loading) return (false, "loading");
         if (CombatFlow.InTransition()) return (false, "transition");
 
+        string? note = null;
         var reason = probe.Kind switch
         {
-            ScreenKind.Combat => CombatGate(ctx),
+            ScreenKind.Combat => CombatGate(ctx, out note),
             ScreenKind.HandSelect => HandSelectGate(ctx),
             _ => ScreenGate(ctx, probe),
         };
         if (reason != null) return (false, reason);
-        return Stable(Signature(ctx, probe, snap)) ? (true, null) : (false, "settling");
+        return Stable(Signature(ctx, probe, snap)) ? (true, note) : (false, "settling");
     }
 
     /// <summary>Full gate for the local player's combat turn (order follows STS2-Agent's combat action gate).</summary>
-    private static string? CombatGate(GameContext ctx)
+    private static string? CombatGate(GameContext ctx, out string? note)
     {
+        note = null;
         var cm = CombatManager.Instance;
         var cs = ctx.Combat;
         var me = ctx.Me;
@@ -54,7 +58,18 @@ internal static class Readiness
         if (me == null) return "no local player";
         if (!CombatFlow.LocalAlive(me)) return "dead";
         if (cs.CurrentSide != CombatSide.Player) return "enemy turn";
-        if (cm.IsPlayerReadyToEndTurn(me)) return ctx.IsMultiplayer ? "waiting for teammates" : "turn ending";
+        if (cm.IsPlayerReadyToEndTurn(me))
+        {
+            if (!ctx.IsMultiplayer) return "turn ending";
+            // Co-op: teammates still play. Acting is possible (undo end turn), but nothing else is.
+            if (!CombatFlow.CanUndoEndTurn(ctx, cs, me)) return "waiting for teammates";
+            if (ScreenResolver.FindActiveCombatRoom(MegaCrit.Sts2.Core.Nodes.Screens.ScreenContext.ActiveScreenContext.Instance?.GetCurrentScreen()) == null)
+                return "combat room not active";
+            var readiedHand = CombatFlow.Hand();
+            if (readiedHand == null || readiedHand.InCardPlay || readiedHand.IsInCardSelection) return "waiting for teammates";
+            note = "waiting for teammates";
+            return null;
+        }
         // Only signals the reference mods gate on (IsEnemyTurnStarted / EndingPlayerTurnPhase* are not: unverified).
         if (cm.PlayerActionsDisabled) return "turn transition";
         if (!cm.IsPartOfPlayerTurn(me)) return ctx.IsMultiplayer ? "teammate's turn" : "not your turn";

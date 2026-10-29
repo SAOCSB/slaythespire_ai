@@ -71,7 +71,8 @@ internal static class SnapshotBuilder
 
         var (canAct, reason) = SafeReadiness(ctx, probe, snap);
         snap.CanAct = canAct && sink.Count > 0;
-        snap.WaitReason = canAct ? (sink.Count == 0 ? "no actions" : null) : reason;
+        // A reason while able to act is informational (co-op: turn readied, only "undo end turn" is offered).
+        snap.WaitReason = canAct && sink.Count == 0 ? (reason ?? "no actions") : reason;
         snap.Actions = sink.Options.ToList();
     }
 

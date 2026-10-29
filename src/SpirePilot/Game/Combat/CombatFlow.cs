@@ -66,6 +66,27 @@ internal static class CombatFlow
     }
 
     /// <summary>
+    /// Co-op only: the local player has readied end turn while teammates are still playing, and the player side of
+    /// the round goes on, so the ready can still be taken back (<c>UndoEndPlayerTurnAction</c>). False in single
+    /// player, once every player is ready (the turn is ending) and while player actions are disabled.
+    /// </summary>
+    public static bool CanUndoEndTurn(GameContext ctx, CombatState? cs, Player? me)
+    {
+        if (!ctx.IsMultiplayer || cs == null || me == null || !CombatLive() || !LocalAlive(me)) return false;
+        try
+        {
+            var cm = CombatManager.Instance;
+            if (cs.CurrentSide != CombatSide.Player) return false;
+            if (!cm.IsPlayerReadyToEndTurn(me)) return false;
+            if (cm.AllPlayersReadyToEndTurn()) return false;
+            if (cm.PlayerActionsDisabled || cm.EndingPlayerTurnPhaseOne || cm.EndingPlayerTurnPhaseTwo) return false;
+            if (!cm.IsPartOfPlayerTurn(me)) return false;
+            return cs.Players.Count > 1;
+        }
+        catch (Exception) { return false; }
+    }
+
+    /// <summary>
     /// True when a player-driven action is running or ready to run (the one waiting for a player choice does not
     /// count). <c>GetReadyAction</c> throws while an action executes; that counts as busy (STS2-Agent lesson).
     /// </summary>

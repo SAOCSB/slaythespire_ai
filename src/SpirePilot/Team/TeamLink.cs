@@ -1,13 +1,8 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using HarmonyLib;
-using MegaCrit.Sts2.Core.Context;
-using MegaCrit.Sts2.Core.Modding;
-using MegaCrit.Sts2.Core.Multiplayer;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
-using MegaCrit.Sts2.Core.Multiplayer.Transport;
 using MegaCrit.Sts2.Core.Platform;
-using MegaCrit.Sts2.Core.Runs;
 using SpirePilot.Core.Model;
 using SpirePilot.Core.Team;
 using SpirePilot.Core.Text;
@@ -24,8 +19,11 @@ namespace SpirePilot.Team;
 /// Topology is the game's star: clients only talk to the host, which delivers locally and relays to the addressed
 /// linked peers, overwriting <see cref="TeamMessage.From"/> with the transport sender so nobody can spoof.
 /// A packet is only ever sent to a peer whose handshake mod list names SpirePilot or that already sent us a valid
-/// team packet; a vanilla peer would feed our bytes to its own deserializer.
+/// team packet; a vanilla peer would feed our bytes to its own deserializer. Clients learn about each other through
+/// the host: it forwards each newly linked client's Hello to the other linked clients, whose answers travel back the
+/// same way.
 /// All state changes happen on the main thread: the Harmony hooks only queue work that <see cref="Tick"/> drains.
+/// Every game-API call goes through <see cref="TeamNet"/> and is wrapped here (see there why).
 /// </remarks>
 internal static class TeamLink
 {
@@ -41,18 +39,34 @@ internal static class TeamLink
     private const int MaxQueuedEvents = 512;
     private const int MaxOutbox = 64;
     private const int MaxHelloAttempts = 6;
-    private const int RelayBudget = 30;
-    private static readonly TimeSpan RelayWindow = TimeSpan.FromSeconds(10);
-    private static readonly TimeSpan PeerGrace = TimeSpan.FromSeconds(10);
-    private static readonly TimeSpan HelloAnswerWindow = TimeSpan.FromSeconds(10);
-    private static readonly TimeSpan NeverConnectedTimeout = TimeSpan.FromSeconds(30);
+    /// <summary>Messages accepted per original sender and window (host: per client; client: per relayed origin).</summary>
+    private const int InboundBudget = 30;
+    private const long InboundWindowMs = 10_000;
+    private const long PeerGraceMs = 10_000;
+    private const long HelloAnswerWindowMs = 10_000;
+    private const long NeverConnectedTimeoutMs = 30_000;
+    private const long SlowTickMs = 500;
+    private const long PruneEveryMs = 5_000;
+    private const long AdoptEveryMs = 1_000;
 
+    // Per-sender token bucket applied in the receive hook before decoding (any thread): a burst of 40 packets, then
+    // 4 per second. Far above what SpirePilot sends; it only stops a peer from making us decode a flood.
+    private const double PacketBurst = 40;
+    private const double PacketsPerSecond = 4;
+    private const int MaxPacketBuckets = 64;
+
+    /// <summary>Data work from the receive hooks (bounded; dropped when full).</summary>
     private static readonly ConcurrentQueue<Action> Events = new();
+    /// <summary>Session control (session ended, peer left, peer mod lists): rare, small, never dropped.</summary>
+    private static readonly ConcurrentQueue<Action> Control = new();
     private static readonly ConcurrentQueue<Outbound> Outbox = new();
+    private static readonly ConcurrentDictionary<ulong, PacketBucket> PacketBuckets = new();
     private static readonly object RosterLock = new();
     private static readonly Dictionary<ulong, TeamPeer> Peers = new();
+    private static readonly Dictionary<ulong, (long start, int count)> Inbound = new();
     private static readonly HashSet<ulong> LoggedPeerMods = new();
     private static readonly HashSet<ulong> PolledVersionInfo = new();
+    private static readonly HashSet<string> BrokenCalls = new();
     private static readonly ConditionalWeakTable<INetGameService, object> DeadServices = new();
     private static readonly object DeadMarker = new();
 
@@ -63,14 +77,16 @@ internal static class TeamLink
     private static int _queued;
     private static int _epoch;
     private static ulong _localId;
+    /// <summary>Client side: the host's net id, refreshed on the main thread (read by the hub's worker thread).</summary>
+    private static ulong _hostId;
     private static ulong _nameResolvedFor;
     private static bool _initialized;
     private static bool _sawConnected;
     private static bool _localModsLogged;
-    private static DateTime _observedAt;
-    private static DateTime _nextSlowTick;
-    private static DateTime _nextPrune;
-    private static DateTime _nextAdopt;
+    private static long _observedAtMs;
+    private static long _nextSlowTickMs;
+    private static long _nextPruneMs;
+    private static long _nextAdoptMs;
     private static TeamChatHub? _hub;
 
     static TeamLink()
@@ -81,6 +97,8 @@ internal static class TeamLink
         L10n.Add("team.link_ai_off", "{0} 的 AI 领航员已关闭", "{0}'s AI pilot was turned off");
         L10n.Add("team.link_down", "SpirePilot 队伍频道已断开", "SpirePilot team channel closed");
     }
+
+    private static long NowMs => Environment.TickCount64;
 
     /// <summary>Transport used by <see cref="TeamChatHub"/>.</summary>
     public static ITeamTransport Transport { get; } = new LinkTransport();
@@ -109,27 +127,37 @@ internal static class TeamLink
                     $"client discovery={TeamPatches.ClientDiscovery}, host discovery={TeamPatches.HostDiscovery}, channel {Channel}");
     }
 
-    /// <summary>Called every frame on the main thread (flush queued inbound messages, hello announcements ...).</summary>
+    /// <summary>
+    /// Called every frame on the main thread (flush queued inbound messages, hello announcements ...). Each stage is
+    /// guarded on its own, so one that breaks (e.g. a game member it needs is gone) does not stop the others.
+    /// </summary>
     public static void Tick()
     {
         if (!_initialized) return;
-        DrainEvents();
-        var now = DateTime.UtcNow;
-        CheckSession(now);
-        FlushOutbox();
-        if (now < _nextSlowTick) return;
-        _nextSlowTick = now + TimeSpan.FromMilliseconds(500);
+        Stage("control", DrainControl);
+        Stage("events", DrainEvents);
+        long now = NowMs;
+        Stage("session", () => CheckSession(now));
+        Stage("outbox", FlushOutbox);
+        if (now < _nextSlowTickMs) return;
+        _nextSlowTickMs = now + SlowTickMs;
 
-        UpdateLocalIdentity(force: false);
+        Stage("identity", () => UpdateLocalIdentity(force: false));
         if (_service == null) return;
-        if (Interlocked.Exchange(ref _announcePending, 0) == 1) Route(0, HelloPacket(0), allowAdvertised: false);
-        RetryHellos(now);
-        if (now >= _nextPrune)
+        Stage("announce", Announce);
+        Stage("hello", () => RetryHellos(now));
+        if (now >= _nextPruneMs)
         {
-            _nextPrune = now + TimeSpan.FromSeconds(5);
-            PollHostVersionInfo();
-            Prune(now);
+            _nextPruneMs = now + PruneEveryMs;
+            Stage("poll", PollHostVersionInfo);
+            Stage("prune", () => Prune(now));
         }
+    }
+
+    private static void Stage(string name, Action stage)
+    {
+        try { stage(); }
+        catch (Exception ex) { ThrottledLog.Warn("team.tick." + name, $"team link: tick stage '{name}' failed: {ex.GetType().Name}: {ex.Message}"); }
     }
 
     /// <summary>Marks players in the snapshot that have SpirePilot (<see cref="PlayerInfo.HasTeamLink"/>) or an active AI.</summary>
@@ -181,8 +209,14 @@ internal static class TeamLink
         try
         {
             if (packet == null || packet.Length == 0 || packet[0] != TeamWire.Magic[0]) return true;
+            if (!TeamWire.MatchesMagic(packet)) return true;
+            // Ours from here on: never hand it to the game. Flood control before the (comparatively) costly decode.
+            if (!TakePacketToken(senderId))
+            {
+                ThrottledLog.Warn("team.flood.packets", $"team link: peer {senderId} sends too many team packets, dropping");
+                return false;
+            }
             var outcome = TeamWire.TryDecode(packet, out var message);
-            if (outcome == TeamWire.ParseOutcome.NotOurs) return true;
             if (outcome == TeamWire.ParseOutcome.Ok && message != null)
                 Post(() => HandleInbound(service, senderId, message));
             else
@@ -204,7 +238,7 @@ internal static class TeamLink
         {
             var gameplay = gameplayMods?.Where(s => s != null).ToArray() ?? Array.Empty<string>();
             var other = otherMods?.Where(s => s != null).ToArray() ?? Array.Empty<string>();
-            Post(() => HandlePeerVersion(service, peerId, gameplay, other, gameVersion));
+            Control.Enqueue(() => HandlePeerVersion(service, peerId, gameplay, other, gameVersion));
         }
         catch (Exception ex)
         {
@@ -214,11 +248,11 @@ internal static class TeamLink
 
     /// <summary>The whole network session of <paramref name="service"/> ended (local disconnect / host lost).</summary>
     internal static void OnSessionEnded(INetGameService service, string reason) =>
-        Post(() => { if (ReferenceEquals(service, _service)) ResetSession(reason); });
+        Control.Enqueue(() => { if (ReferenceEquals(service, _service)) ResetSession(reason); });
 
     /// <summary>Host side: one client left.</summary>
     internal static void OnPeerLeft(INetGameService service, ulong peerId) =>
-        Post(() => { if (ReferenceEquals(service, _service)) RemovePeer(peerId, "disconnected"); });
+        Control.Enqueue(() => { if (ReferenceEquals(service, _service)) RemovePeer(peerId, "disconnected"); });
 
     private static void Post(Action work)
     {
@@ -229,6 +263,15 @@ internal static class TeamLink
             return;
         }
         Events.Enqueue(work);
+    }
+
+    private static void DrainControl()
+    {
+        while (Control.TryDequeue(out var work))
+        {
+            try { work(); }
+            catch (Exception ex) { ThrottledLog.Warn("team.control", "team link: session event failed: " + ex); }
+        }
     }
 
     private static void DrainEvents()
@@ -242,36 +285,114 @@ internal static class TeamLink
         }
     }
 
+    private sealed class PacketBucket
+    {
+        public double Tokens = PacketBurst;
+        public long LastMs = Environment.TickCount64;
+    }
+
+    /// <summary>Any thread. False when <paramref name="sender"/> exceeded its packet rate.</summary>
+    private static bool TakePacketToken(ulong sender)
+    {
+        // Senders come from the transport (bounded by the session's connections); the cap only guards against a leak.
+        if (PacketBuckets.Count > MaxPacketBuckets) PacketBuckets.Clear();
+        var bucket = PacketBuckets.GetOrAdd(sender, _ => new PacketBucket());
+        lock (bucket)
+        {
+            long now = NowMs;
+            bucket.Tokens = Math.Min(PacketBurst, bucket.Tokens + (now - bucket.LastMs) / 1000.0 * PacketsPerSecond);
+            bucket.LastMs = now;
+            if (bucket.Tokens < 1) return false;
+            bucket.Tokens -= 1;
+            return true;
+        }
+    }
+
+    // ------------------------------------------------------------------------------------------------------------
+    // Guarded game calls (see TeamNet: a missing member surfaces at these call sites, never in the game's code)
+    // ------------------------------------------------------------------------------------------------------------
+
+    private static T Broken<T>(string what, Exception ex, T fallback)
+    {
+        bool first;
+        lock (BrokenCalls) first = BrokenCalls.Add(what);
+        if (first) ModLog.Warn($"team link: game call {what} unavailable ({ex.GetType().Name}: {ex.Message}); that part of the team link is disabled");
+        return fallback;
+    }
+
+    private static bool IsHost(INetGameService? svc)
+    {
+        try { return TeamNet.IsHost(svc); }
+        catch (Exception ex) { return Broken("IsHost", ex, false); }
+    }
+
+    private static bool IsClient(INetGameService? svc)
+    {
+        try { return TeamNet.IsClient(svc); }
+        catch (Exception ex) { return Broken("IsClient", ex, false); }
+    }
+
+    private static bool IsNetworked(INetGameService? svc)
+    {
+        try { return TeamNet.IsNetworked(svc); }
+        catch (Exception ex) { return Broken("IsNetworked", ex, false); }
+    }
+
+    private static bool SafeConnected(INetGameService? svc)
+    {
+        try { return TeamNet.IsConnected(svc); }
+        catch (Exception ex) { return Broken("IsConnected", ex, false); }
+    }
+
+    private static ulong SafeHostId(INetGameService? svc)
+    {
+        try { return TeamNet.HostId(svc); }
+        catch (Exception ex) { return Broken("HostNetId", ex, 0UL); }
+    }
+
+    private static string PlayerName(PlatformType platform, ulong id)
+    {
+        try { return TeamNet.PlayerName(platform, id); }
+        catch (Exception ex) { return Broken("GetPlayerName", ex, ""); }
+    }
+
+    private static PlatformType CurrentPlatform()
+    {
+        try { return TeamNet.Platform(_service); }
+        catch (Exception ex) { return Broken("Platform", ex, PlatformType.None); }
+    }
+
+    private static HashSet<ulong>? ConnectedClientIds(INetGameService? svc)
+    {
+        try { return TeamNet.HostPeerIds(svc); }
+        catch (Exception ex) { return Broken("ConnectedPeerIds", ex, (HashSet<ulong>?)null); }
+    }
+
+    private static HashSet<ulong>? RunPlayerIds()
+    {
+        try { return TeamNet.RunPlayerIds(); }
+        catch (Exception ex) { return Broken("RunLobby players", ex, (HashSet<ulong>?)null); }
+    }
+
+    private static bool SendToHost(INetGameService? svc, byte[] bytes)
+    {
+        try { return TeamNet.SendToHost(svc, bytes); }
+        catch (Exception ex) { return Broken("SendMessageToHost", ex, false); }
+    }
+
+    private static bool SendToClient(INetGameService? svc, ulong peerId, byte[] bytes)
+    {
+        try { return TeamNet.SendToClient(svc, peerId, bytes); }
+        catch (Exception ex) { return Broken("SendMessageToClient", ex, false); }
+    }
+
     // ------------------------------------------------------------------------------------------------------------
     // Session tracking (main thread)
     // ------------------------------------------------------------------------------------------------------------
 
-    private static bool IsNetworked(INetGameService? svc)
-    {
-        if (svc is not (NetHostGameService or NetClientGameService)) return false;
-        try { return svc.Type is NetGameType.Host or NetGameType.Client; }
-        catch (Exception) { return false; }
-    }
-
     /// <summary>True when our receive hook for the service's role is installed (else we must not announce).</summary>
-    private static bool RoleReady(INetGameService? svc) => svc switch
-    {
-        NetHostGameService => TeamPatches.HostReceive,
-        NetClientGameService => TeamPatches.ClientReceive,
-        _ => false,
-    };
-
-    private static bool SafeConnected(INetGameService svc)
-    {
-        try { return svc.IsConnected; }
-        catch (Exception) { return false; }
-    }
-
-    private static ulong SafeHostId(NetClientGameService client)
-    {
-        try { return client.HostNetId; }
-        catch (Exception) { return 0; }
-    }
+    private static bool RoleReady(INetGameService? svc) =>
+        IsHost(svc) ? TeamPatches.HostReceive : IsClient(svc) && TeamPatches.ClientReceive;
 
     /// <summary>Adopts the live network service seen by a hook (or RunManager); a different instance is a new session.</summary>
     private static void ObserveService(INetGameService? svc)
@@ -281,37 +402,40 @@ internal static class TeamLink
         if (DeadServices.TryGetValue(svc, out _)) return;
         if (_service != null) ResetSession("a new network session started");
         _service = svc;
-        _observedAt = DateTime.UtcNow;
+        Volatile.Write(ref _hostId, SafeHostId(svc));
+        _observedAtMs = NowMs;
         _sawConnected = false;
         Interlocked.Increment(ref _epoch);
         UpdateLocalIdentity(force: true);
         LogLocalModsOnce(svc);
         string type;
-        try { type = svc.Type.ToString(); } catch (Exception) { type = "?"; }
+        try { type = TeamNet.TypeName(svc); }
+        catch (Exception ex) { type = Broken("Type", ex, "?"); }
         ModLog.Info($"team link: observing {type} session (local id {_localId})");
     }
 
-    private static void CheckSession(DateTime now)
+    private static void CheckSession(long now)
     {
         var svc = _service;
         if (svc == null)
         {
             // Hooks normally hand us the service; RunManager is the fallback once a run exists.
-            if (now < _nextAdopt) return;
-            _nextAdopt = now + TimeSpan.FromSeconds(1);
-            INetGameService? rm = null;
-            try { rm = RunManager.Instance?.NetService; }
-            catch (Exception) { /* run not set up */ }
+            if (now < _nextAdoptMs) return;
+            _nextAdoptMs = now + AdoptEveryMs;
+            INetGameService? rm;
+            try { rm = TeamNet.RunNetService(); }
+            catch (Exception ex) { rm = Broken("RunManager.NetService", ex, (INetGameService?)null); }
             if (rm != null && IsNetworked(rm) && SafeConnected(rm)) ObserveService(rm);
             return;
         }
         if (SafeConnected(svc))
         {
             _sawConnected = true;
+            if (IsClient(svc)) Volatile.Write(ref _hostId, SafeHostId(svc));
             return;
         }
         // IsConnected may only turn true after the join flow; give a fresh service time before calling it dead.
-        if (_sawConnected || now - _observedAt > NeverConnectedTimeout) ResetSession("connection closed");
+        if (_sawConnected || now - _observedAtMs > NeverConnectedTimeoutMs) ResetSession("connection closed");
     }
 
     private static void ResetSession(string reason)
@@ -325,8 +449,11 @@ internal static class TeamLink
         }
         LoggedPeerMods.Clear();
         PolledVersionInfo.Clear();
+        Inbound.Clear();
+        PacketBuckets.Clear();
         if (_service != null) DeadServices.AddOrUpdate(_service, DeadMarker);
         _service = null;
+        Volatile.Write(ref _hostId, 0UL);
         _sawConnected = false;
         Interlocked.Increment(ref _epoch);
         while (Outbox.TryDequeue(out _)) { }
@@ -338,23 +465,10 @@ internal static class TeamLink
     {
         var hub = _hub;
         if (hub == null) return;
-        ulong id = 0;
-        var platform = PlatformType.None;
-        try
-        {
-            var svc = _service ?? RunManager.Instance?.NetService;
-            if (svc != null)
-            {
-                id = svc.NetId;
-                platform = svc.Platform;
-            }
-        }
-        catch (Exception) { /* no service yet */ }
-        if (id == 0)
-        {
-            try { id = LocalContext.NetId ?? 0; }
-            catch (Exception) { /* not set */ }
-        }
+        (ulong id, PlatformType platform) identity;
+        try { identity = TeamNet.LocalIdentity(_service); }
+        catch (Exception ex) { identity = Broken("local identity", ex, (0UL, PlatformType.None)); }
+        var (id, platform) = identity;
         if (id == 0) return;
         _localId = id;
         if (hub.LocalNetId != id) hub.LocalNetId = id;
@@ -364,18 +478,6 @@ internal static class TeamLink
         if (name.Length > 0) hub.LocalName = name;
     }
 
-    private static string PlayerName(PlatformType platform, ulong id)
-    {
-        try { return PlatformUtil.GetPlayerName(platform, id) ?? ""; }
-        catch (Exception) { return ""; }
-    }
-
-    private static PlatformType CurrentPlatform()
-    {
-        try { return _service?.Platform ?? PlatformType.None; }
-        catch (Exception) { return PlatformType.None; }
-    }
-
     /// <summary>Self-test of the mod list format: our own list must name SpirePilot, or discovery cannot work.</summary>
     private static void LogLocalModsOnce(INetGameService svc)
     {
@@ -383,16 +485,7 @@ internal static class TeamLink
         _localModsLogged = true;
         try
         {
-#if STS2_V0107
-            // 0.107 sends these lists in InitialGameInfoMessage (assumed to be built from the mod manager).
-            List<string> gameplay = ModManager.GetGameplayRelevantModNameList() ?? new List<string>();
-            List<string> other = ModManager.GetNonGameplayRelevantModNameList() ?? new List<string>();
-#else
-            // What this game sends in its handshake.
-            var local = svc.LocalVersion;
-            List<string> gameplay = local.gameplayAffectingMods ?? new List<string>();
-            List<string> other = local.otherMods ?? new List<string>();
-#endif
+            var (gameplay, other) = TeamNet.LocalModLists(svc);
             var ours = FindOurEntry(gameplay) ?? FindOurEntry(other);
             var line = $"team link: local mod lists gameplay=[{string.Join(", ", gameplay)}] other=[{string.Join(", ", other)}]";
             if (ours != null) ModLog.Info(line + $" (SpirePilot entry \"{ours}\")");
@@ -404,14 +497,23 @@ internal static class TeamLink
         }
     }
 
-    /// <summary>Mod list entries are probably "id-version"; anything starting with our id counts (also a bare id).</summary>
-    private static string? FindOurEntry(IEnumerable<string> mods) =>
-        mods.FirstOrDefault(m => m != null && m.StartsWith(PilotRuntime.ModId, StringComparison.Ordinal));
+    /// <summary>
+    /// Our entry in a peer's mod list: exactly "SpirePilot", or "SpirePilot-&lt;version&gt;" / "SpirePilot &lt;version&gt;"
+    /// (case-insensitive). Other mods whose id merely starts with ours ("SpirePilotTweaks") do not count.
+    /// </summary>
+    internal static string? FindOurEntry(IEnumerable<string> mods)
+    {
+        var id = PilotRuntime.ModId;
+        return mods.FirstOrDefault(m => m != null &&
+                                        (m.Equals(id, StringComparison.OrdinalIgnoreCase) ||
+                                         m.StartsWith(id + "-", StringComparison.OrdinalIgnoreCase) ||
+                                         m.StartsWith(id + " ", StringComparison.OrdinalIgnoreCase)));
+    }
 
     private static string VersionFromEntry(string entry)
     {
         var id = PilotRuntime.ModId;
-        return entry.Length > id.Length + 1 && entry[id.Length] == '-' ? entry[(id.Length + 1)..] : "";
+        return entry.Length > id.Length + 1 && entry[id.Length] is '-' or ' ' ? entry[(id.Length + 1)..].Trim() : "";
     }
 
     // ------------------------------------------------------------------------------------------------------------
@@ -423,7 +525,7 @@ internal static class TeamLink
         ObserveService(service);
         if (!ReferenceEquals(service, _service)) return;
         // A client's only remote peer is the host.
-        if (service is NetClientGameService client && SafeHostId(client) is var hostId && hostId != 0) peerId = hostId;
+        if (IsClient(service) && SafeHostId(service) is var hostId && hostId != 0) peerId = hostId;
         if (peerId == 0 || peerId == _localId) return;
 
         var ours = FindOurEntry(gameplay) ?? FindOurEntry(other);
@@ -433,7 +535,7 @@ internal static class TeamLink
                         $"other=[{string.Join(", ", other)}] → SpirePilot {(ours != null ? "found (\"" + ours + "\")" : "not found")}");
         }
 
-        var now = DateTime.UtcNow;
+        long now = NowMs;
         lock (RosterLock)
         {
             Peers.TryGetValue(peerId, out var p);
@@ -449,14 +551,14 @@ internal static class TeamLink
                 p = new TeamPeer(peerId) { Name = PlayerName(CurrentPlatform(), peerId) };
                 Peers[peerId] = p;
             }
-            p.LastSeen = now;
+            p.LastSeenMs = now;
             if (p.Version.Length == 0) p.Version = VersionFromEntry(ours);
             if (!p.Advertised)
             {
                 p.Advertised = true;
                 p.GaveUp = false;
                 p.HelloAttempts = 0;
-                p.NextHelloAt = now;
+                p.NextHelloAtMs = now;
             }
         }
     }
@@ -474,11 +576,13 @@ internal static class TeamLink
         }
         LoggedPeerMods.Remove(peerId);
         PolledVersionInfo.Remove(peerId);
+        Inbound.Remove(peerId);
+        PacketBuckets.TryRemove(peerId, out _);
         if (removed.Confirmed) ModLog.Info($"team link: {removed.Display} left ({reason})");
     }
 
     /// <summary>Records a peer proven to run SpirePilot; returns true when it was not linked before.</summary>
-    private static bool Confirm(ulong peerId, string sentName, DateTime now, out TeamPeer peer)
+    private static bool Confirm(ulong peerId, string sentName, long now, out TeamPeer peer)
     {
         lock (RosterLock)
         {
@@ -490,7 +594,7 @@ internal static class TeamLink
             peer = existing;
             bool newly = !peer.Confirmed;
             peer.Confirmed = true;
-            peer.LastSeen = now;
+            peer.LastSeenMs = now;
             if (peer.Name.Length == 0)
             {
                 var platformName = PlayerName(CurrentPlatform(), peerId);
@@ -507,16 +611,16 @@ internal static class TeamLink
     private static void PollHostVersionInfo()
     {
 #if !STS2_V0107
-        if (TeamPatches.HostDiscovery || _service is not NetHostGameService host) return;
-        foreach (var id in ConnectedClientIds(host) ?? new HashSet<ulong>())
+        var svc = _service;
+        if (TeamPatches.HostDiscovery || !IsHost(svc)) return;
+        foreach (var id in ConnectedClientIds(svc) ?? new HashSet<ulong>())
         {
             if (!PolledVersionInfo.Add(id)) continue;
             lock (RosterLock) if (Peers.ContainsKey(id)) continue;
             try
             {
-                var info = host.GetVersionInfoForPeer(id);
-                if (info.HasValue) HandlePeerVersion(host, id, info.Value.gameplayAffectingMods?.ToArray() ?? Array.Empty<string>(),
-                    info.Value.otherMods?.ToArray() ?? Array.Empty<string>(), info.Value.version);
+                var info = TeamNet.HostVersionInfo(svc, id);
+                if (info is { } v) HandlePeerVersion(svc!, id, v.gameplay, v.other, v.version);
                 else PolledVersionInfo.Remove(id); // handshake not finished yet, ask again later
             }
             catch (Exception ex)
@@ -527,61 +631,46 @@ internal static class TeamLink
 #endif
     }
 
-    private static HashSet<ulong>? ConnectedClientIds(NetHostGameService host)
-    {
-        try { return host.NetHost?.ConnectedPeerIds?.ToHashSet(); }
-        catch (Exception) { return null; }
-    }
-
-    /// <summary>Connected players of the current run (client side), or null when not readable.</summary>
-    private static HashSet<ulong>? RunPlayerIds()
-    {
-        try
-        {
-            var lobby = RunManager.Instance?.RunLobby;
-            if (lobby == null) return null;
-#if STS2_V0107
-            return lobby.ConnectedPlayerIds?.ToHashSet();
-#else
-            return lobby.PlayerIds?.ToHashSet();
-#endif
-        }
-        catch (Exception) { return null; }
-    }
-
     /// <summary>Drops peers that are no longer part of the session (missed disconnect events, relayed clients).</summary>
-    private static void Prune(DateTime now)
+    private static void Prune(long now)
     {
+        var svc = _service;
         HashSet<ulong>? present = null;
         ulong keep = 0;
-        switch (_service)
+        if (IsHost(svc))
         {
-            case NetHostGameService host:
-                present = ConnectedClientIds(host);
-                break;
-            case NetClientGameService client:
-                present = RunPlayerIds();
-                keep = SafeHostId(client);
-                break;
+            // Readable and empty means every client left: prune them all (after the grace period).
+            present = ConnectedClientIds(svc);
+            if (present == null) return;
         }
-        if (present == null || present.Count == 0) return;
+        else if (IsClient(svc))
+        {
+            // The run's player list is empty / unreadable before a run exists: not a reason to drop anyone.
+            present = RunPlayerIds();
+            keep = SafeHostId(svc);
+            if (present == null || present.Count == 0) return;
+        }
+        else
+        {
+            return;
+        }
         List<ulong> gone;
         lock (RosterLock)
         {
             gone = Peers.Values
-                .Where(p => p.NetId != keep && !present.Contains(p.NetId) && now - p.LastSeen > PeerGrace)
+                .Where(p => p.NetId != keep && !present.Contains(p.NetId) && now - p.LastSeenMs > PeerGraceMs)
                 .Select(p => p.NetId).ToList();
         }
         foreach (var id in gone) RemovePeer(id, "no longer in the session");
     }
 
-    private static void RetryHellos(DateTime now)
+    private static void RetryHellos(long now)
     {
         List<ulong> due = new();
         lock (RosterLock)
         {
             foreach (var p in Peers.Values)
-                if (p.Advertised && !p.Confirmed && !p.GaveUp && now >= p.NextHelloAt) due.Add(p.NetId);
+                if (p.Advertised && !p.Confirmed && !p.GaveUp && now >= p.NextHelloAtMs) due.Add(p.NetId);
         }
         foreach (var id in due)
         {
@@ -590,11 +679,26 @@ internal static class TeamLink
             {
                 if (!Peers.TryGetValue(id, out var p)) continue;
                 if (sent) p.HelloAttempts++;
-                p.NextHelloAt = now + TimeSpan.FromSeconds(1 << Math.Min(p.HelloAttempts, 5));
+                p.NextHelloAtMs = now + 1000L * (1 << Math.Min(p.HelloAttempts, 5));
                 if (p.HelloAttempts < MaxHelloAttempts) continue;
                 p.GaveUp = true;
             }
             ModLog.Warn($"team link: peer {id} lists SpirePilot but never answered our Hello (old version or its hooks failed?)");
+        }
+    }
+
+    /// <summary>
+    /// Sends a pending "AI on/off" announcement to everyone. Stays pending until a send actually went out (nobody may
+    /// be linked yet); a change raised meanwhile re-arms it.
+    /// </summary>
+    private static void Announce()
+    {
+        if (Interlocked.Exchange(ref _announcePending, 0) != 1) return;
+        bool sent = false;
+        try { sent = Route(0, HelloPacket(0), allowAdvertised: false); }
+        finally
+        {
+            if (!sent) Interlocked.Exchange(ref _announcePending, 1);
         }
     }
 
@@ -606,64 +710,62 @@ internal static class TeamLink
     {
         ObserveService(service);
         if (!ReferenceEquals(service, _service) || _hub == null) return;
-        var now = DateTime.UtcNow;
-        switch (service)
+        long now = NowMs;
+        if (IsHost(service))
         {
-            case NetHostGameService:
-                if (transportSender == 0 || transportSender == _localId) return;
-                // Anti-spoof: only the transport knows who really sent it. The display name is re-derived too.
-                message.From = transportSender;
-                var platformName = PlayerName(CurrentPlatform(), transportSender);
-                if (platformName.Length > 0) message.FromName = platformName;
-                if (!WithinRelayBudget(transportSender, now))
-                {
-                    ThrottledLog.Warn("team.flood", $"team link: peer {transportSender} sends too many team messages, dropping");
-                    return;
-                }
-                Process(message, now);
-                Relay(message, transportSender);
-                break;
-
-            case NetClientGameService client:
-                // A client has exactly one connection, so everything comes from (or through) the host, which already
-                // overwrote From with the real origin.
-                ulong host = SafeHostId(client);
-                if (host == 0) host = transportSender;
-                if (transportSender != 0 && transportSender != host)
-                    ThrottledLog.Warn("team.sender", $"team link: client got a packet from {transportSender}, host is {host}");
-                if (message.From == 0) message.From = host;
-                if (message.From == _localId) return;
-                // A relayed message also proves that the host runs SpirePilot.
-                if (message.From != host && host != 0 && host != _localId && Confirm(host, "", now, out _))
-                    OnNewlyLinked(host, null);
-                Process(message, now);
-                break;
+            if (transportSender == 0 || transportSender == _localId) return;
+            // Anti-spoof: only the transport knows who really sent it. The display name is re-derived too.
+            message.From = transportSender;
+            var platformName = PlayerName(CurrentPlatform(), transportSender);
+            if (platformName.Length > 0) message.FromName = platformName;
+            if (!WithinInboundBudget(transportSender, now))
+            {
+                ThrottledLog.Warn("team.flood", $"team link: peer {transportSender} sends too many team messages, dropping");
+                return;
+            }
+            Process(message, now);
+            Relay(message, transportSender);
+        }
+        else if (IsClient(service))
+        {
+            // A client has exactly one connection, so everything comes from (or through) the host, which already
+            // overwrote From with the real origin.
+            ulong host = SafeHostId(service);
+            if (host == 0) host = transportSender;
+            if (transportSender != 0 && transportSender != host)
+                ThrottledLog.Warn("team.sender", $"team link: client got a packet from {transportSender}, host is {host}");
+            if (message.From == 0) message.From = host;
+            if (message.From == _localId) return;
+            // Relayed traffic is limited per original sender too (the host's budget is per client, not per origin).
+            if (!WithinInboundBudget(message.From, now))
+            {
+                ThrottledLog.Warn("team.flood.relayed", $"team link: too many team messages from {message.From}, dropping");
+                return;
+            }
+            // A relayed message also proves that the host runs SpirePilot.
+            if (message.From != host && host != 0 && host != _localId && Confirm(host, "", now, out _))
+                OnNewlyLinked(host, null);
+            Process(message, now);
         }
     }
 
-    private static bool WithinRelayBudget(ulong sender, DateTime now)
+    private static bool WithinInboundBudget(ulong sender, long now)
     {
-        lock (RosterLock)
-        {
-            if (!Peers.TryGetValue(sender, out var p)) return true;
-            if (now - p.RelayWindowStart > RelayWindow)
-            {
-                p.RelayWindowStart = now;
-                p.RelayCount = 0;
-            }
-            return ++p.RelayCount <= RelayBudget;
-        }
+        if (!Inbound.TryGetValue(sender, out var w) || now - w.start > InboundWindowMs) w = (now, 0);
+        w.count++;
+        Inbound[sender] = w;
+        return w.count <= InboundBudget;
     }
 
     /// <summary>Roster update + local delivery of one message whose <see cref="TeamMessage.From"/> is trusted.</summary>
-    private static void Process(TeamMessage m, DateTime now)
+    private static void Process(TeamMessage m, long now)
     {
         if (m.From == 0 || m.From == _localId) return;
         bool newly = Confirm(m.From, m.FromName, now, out var peer);
         if (m.Kind == TeamMessageKind.Hello)
         {
             ParseHello(m.Text, out var version, out var ai);
-            bool aiChanged, answer;
+            bool aiChanged, answer, forward;
             string name;
             lock (RosterLock)
             {
@@ -673,7 +775,12 @@ internal static class TeamLink
                 name = peer.Display;
                 // A Hello addressed to us from a peer we have not greeted lately is a probe (it does not know us yet,
                 // e.g. our first answer was lost): answer it. Our own answers are recent, so this never ping-pongs.
-                answer = !newly && m.To == _localId && now - peer.LastHelloSent > HelloAnswerWindow;
+                answer = !newly && m.To == _localId && now - peer.LastHelloSentMs > HelloAnswerWindowMs;
+                // Host: the other clients learn about this one from a copy of its first Hello. A Hello for everyone
+                // is relayed anyway.
+                forward = IsHost(_service) && !peer.HelloForwarded;
+                peer.HelloForwarded = true;
+                if (m.To == 0) forward = false;
             }
             if (newly) OnNewlyLinked(m.From, version);
             else
@@ -681,6 +788,7 @@ internal static class TeamLink
                 if (aiChanged) _hub?.AddSystemNote(L10n.T(ai ? "team.link_ai_on" : "team.link_ai_off", name));
                 if (answer) SendHello(m.From, allowAdvertised: false);
             }
+            if (forward) ForwardHello(m);
             return; // Hellos are link plumbing, not chat
         }
         if (newly) OnNewlyLinked(m.From, null);
@@ -724,17 +832,46 @@ internal static class TeamLink
     /// <summary>Host only: forwards a client's message to the addressed linked peers (never back to its source).</summary>
     private static void Relay(TeamMessage m, ulong source)
     {
-        if (_service is not NetHostGameService host || m.To == _localId || m.To == source) return;
+        var svc = _service;
+        if (!IsHost(svc) || m.To == _localId || m.To == source) return;
         byte[] bytes;
         try { bytes = TeamWire.Encode(m); }
         catch (Exception) { return; }
         if (m.To != 0)
         {
-            if (CanSendTo(m.To, allowAdvertised: false)) SendToClient(host, m.To, bytes);
+            // Clients address teammates they may not know yet; only the host knows who can receive.
+            if (CanSendTo(m.To, allowAdvertised: false)) SendToClient(svc, m.To, bytes);
             return;
         }
         foreach (var id in _linked)
-            if (id != source) SendToClient(host, id, bytes);
+            if (id != source) SendToClient(svc, id, bytes);
+    }
+
+    /// <summary>
+    /// Host only: introduces a newly linked client to the other linked clients by forwarding a copy of its Hello to
+    /// everyone. They answer it (through us), so the newcomer learns about them as well.
+    /// </summary>
+    private static void ForwardHello(TeamMessage hello)
+    {
+        var svc = _service;
+        if (!IsHost(svc)) return;
+        var others = _linked.Where(id => id != hello.From).ToArray();
+        if (others.Length == 0) return;
+        byte[] bytes;
+        try
+        {
+            bytes = TeamWire.Encode(new TeamMessage
+            {
+                Kind = TeamMessageKind.Hello,
+                From = hello.From,
+                To = 0,
+                FromName = hello.FromName,
+                Text = hello.Text,
+                Time = hello.Time,
+            });
+        }
+        catch (Exception) { return; }
+        foreach (var id in others) SendToClient(svc, id, bytes);
     }
 
     // ------------------------------------------------------------------------------------------------------------
@@ -758,7 +895,7 @@ internal static class TeamLink
         if (sent)
         {
             lock (RosterLock)
-                if (Peers.TryGetValue(peerId, out var p)) p.LastHelloSent = DateTime.UtcNow;
+                if (Peers.TryGetValue(peerId, out var p)) p.LastHelloSentMs = NowMs;
         }
         return sent;
     }
@@ -772,62 +909,27 @@ internal static class TeamLink
 
     /// <summary>
     /// Sends one encoded packet towards <paramref name="to"/> (0 = every linked peer). Clients always send to the
-    /// host, which relays. <paramref name="allowAdvertised"/> lets Hello probes reach peers known only from their mod
-    /// list. Returns true when at least one send was handed to the transport.
+    /// host, which relays (and checks whether <paramref name="to"/> can receive). <paramref name="allowAdvertised"/>
+    /// lets Hello probes reach peers known only from their mod list. Returns true when at least one send was handed
+    /// to the transport.
     /// </summary>
     private static bool Route(ulong to, byte[] bytes, bool allowAdvertised)
     {
         var svc = _service;
         if (!RoleReady(svc)) return false;
-        switch (svc)
+        if (IsClient(svc))
         {
-            case NetClientGameService client:
-            {
-                ulong host = SafeHostId(client);
-                return CanSendTo(host, allowAdvertised) && SendToHost(client, bytes);
-            }
-            case NetHostGameService host:
-            {
-                if (to != 0) return CanSendTo(to, allowAdvertised) && SendToClient(host, to, bytes);
-                bool any = false;
-                foreach (var id in _linked) any |= SendToClient(host, id, bytes);
-                return any;
-            }
-            default:
-                return false;
+            ulong host = SafeHostId(svc);
+            return CanSendTo(host, allowAdvertised) && SendToHost(svc, bytes);
         }
-    }
-
-    // Send pattern adapted from RitsuLib's RitsuLibSidecarSend (MIT, BAKAOLC/STS2-RitsuLib): connected check,
-    // reliable mode, own channel, and a failing transport (peer gone / not started) is a soft failure.
-    private static bool SendToHost(NetClientGameService client, byte[] bytes)
-    {
-        try
+        if (IsHost(svc))
         {
-            if (!client.IsConnected || client.NetClient == null) return false;
-            client.NetClient.SendMessageToHost(bytes, bytes.Length, NetTransferMode.Reliable, Channel);
-            return true;
+            if (to != 0) return CanSendTo(to, allowAdvertised) && SendToClient(svc, to, bytes);
+            bool any = false;
+            foreach (var id in _linked) any |= SendToClient(svc, id, bytes);
+            return any;
         }
-        catch (Exception ex)
-        {
-            ThrottledLog.Warn("team.send.host", "team link: send to host failed: " + ex.Message);
-            return false;
-        }
-    }
-
-    private static bool SendToClient(NetHostGameService host, ulong peerId, byte[] bytes)
-    {
-        try
-        {
-            if (!host.IsConnected || host.NetHost == null) return false;
-            host.NetHost.SendMessageToClient(peerId, bytes, bytes.Length, NetTransferMode.Reliable, Channel);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            ThrottledLog.Warn("team.send.client", $"team link: send to {peerId} failed: {ex.Message}");
-            return false;
-        }
+        return false;
     }
 
     private static void FlushOutbox()
@@ -845,6 +947,20 @@ internal static class TeamLink
     private static bool IsLinkUp => _initialized && RoleReady(_service) && _linked.Length > 0;
 
     /// <summary>
+    /// Whether a message to <paramref name="to"/> can go out: a linked peer, or (as a client with a linked host) any
+    /// other player, because the host relays and knows who can receive.
+    /// </summary>
+    private static bool CanAddress(ulong to)
+    {
+        if (to == 0) return true;
+        if (to == _localId) return false;
+        var linked = _linked;
+        if (linked.Contains(to)) return true;
+        ulong host = Volatile.Read(ref _hostId);
+        return IsClient(_service) && host != 0 && linked.Contains(host);
+    }
+
+    /// <summary>
     /// <see cref="ITeamTransport.Send"/>: on the main thread the packet goes out immediately; from other threads (the
     /// pilot loop) it is queued for the next frame and the result reflects the roster check, which is what decides
     /// whether anyone can receive it.
@@ -854,7 +970,7 @@ internal static class TeamLink
         try
         {
             if (message == null || !IsLinkUp) return false;
-            if (message.To != 0 && !_linked.Contains(message.To)) return false;
+            if (!CanAddress(message.To)) return false;
             if (message.From == 0) message.From = _localId;
             var bytes = TeamWire.Encode(message); // throws when the payload exceeds TeamWire.MaxPayloadBytes
             if (MainThread.IsMainThread) return Route(message.To, bytes, allowAdvertised: false);

@@ -14,7 +14,7 @@
 - **自定义 AI 接口**：任何 OpenAI 兼容接口（OpenAI、DeepSeek、通义千问、Kimi、智谱 GLM、硅基流动、OpenRouter、
   Gemini、Ollama / LM Studio 本地模型……）以及 Anthropic Claude 原生接口；可改 Base URL、模型、密钥、代理、
   请求头、额外请求体参数、推理强度等，并可保存多套配置随时切换
-- **本地 HTTP 接口（可选）**：让外部 AI 工具 / 脚本读取状态并操作（默认关闭，只监听 127.0.0.1）
+- **本地 HTTP 接口（可选）**：让外部 AI 工具 / 脚本读取状态并操作（默认关闭，只监听本机）
 
 > ⚠️ 这是一个**实验性** Mod，作者无法在开发环境中实际运行游戏进行联调；所有游戏接口都按游戏的真实程序集签名编译通过，
 > 并参考了多个已在实机运行的开源 Mod，但仍可能在某些界面上卡住。遇到问题请打开面板“日志”页，
@@ -104,17 +104,23 @@ AI 失败时的保护：同一操作重复无效 / 连续失败 / API 配置错�
   面板会显示累计调用次数和 token。
 
 ### 本地 HTTP 接口（给外部 AI / 脚本用，默认关闭）
-在“日志”页开启，默认端口 17654，只监听 127.0.0.1，可设置 Bearer Token。
+在“日志”页开启，默认端口 17654，只监听本机（优先 `http://localhost:17654/`；Windows 上非管理员进程无法注册
+`127.0.0.1`，所以请用 `localhost` 访问），可设置 Bearer Token。
 
 | 接口 | 说明 |
 | --- | --- |
-| `GET /state` | 当前完整状态 + 合法操作菜单（JSON） |
+| `GET /state` | 当前完整状态 + 合法操作菜单（JSON，含 `sequence`） |
+| `GET /state?format=text` | 内置 AI 提示词里的状态文本 + `Menu:`（每行 `aN \| 标签`），不能操作时首行为 `WAITING: 原因` |
+| `GET /state?include=text` | 上面的 JSON，外加同一次读取生成的 `text` 字段（编号一致） |
 | `GET /prompt` | 内置 AI 在当前状态下会发送的提示词 |
-| `POST /act {"id":"a3"}` | 执行菜单中的操作（需把内置 AI 设为关闭或顾问模式） |
-| `POST /mode {"mode":"FullAuto"}` | 切换模式 |
+| `POST /act {"semantic_key":"end_turn"}` | 执行菜单中的操作（需把内置 AI 设为关闭或顾问模式）。推荐用 `semantic_key`；用 `{"id":"a3","sequence":123}` 时编号只在那次状态里有效：菜单变了会返回 409 `stale` 和新菜单 |
+| `POST /mode {"mode":"FullAuto"}` | 切换模式（只接受模式名） |
 | `POST /instruction {"text":"..."}` | 给内置 AI 一次性指令 |
-| `GET /chat` / `POST /chat {"text":"...","to":"all"}` | 读取 / 发送队友消息 |
+| `GET /chat` / `POST /chat {"text":"...","to":"all"}` | 读取 / 发送队友消息；`to` 写错会返回 400 和队友名单；`from_ai` 默认 true |
 | `GET /status` | 状态、token 统计、最近错误 |
+
+安全：带 `Origin` 头（网页发起）的请求一律拒绝；POST 必须是 `Content-Type: application/json`，正文不超过 64 KB。
+错误响应为 `{"error":"...","code":"..."}`，409 的 `code` 为 `pilot_active`（内置 AI 在操作）、`busy`（现在不能操作）或 `stale`（编号已过期）。
 
 #### MCP
 
@@ -124,6 +130,16 @@ AI 失败时的保护：同一操作重复无效 / 连续失败 / API 配置错�
 外部模型看到的状态文本和操作菜单与内置 AI 完全相同；开始前用 `set_mode` 把模式设为关闭或顾问。详见 [tools/mcp/README.md](tools/mcp/README.md)。
 
 MCP: `tools/mcp/` has an MCP server so Claude Desktop, Claude Code, Cursor and other MCP clients can play through this API; see [tools/mcp/README.md](tools/mcp/README.md).
+
+HTTP API (English): listens on `http://localhost:<port>/` (plus `127.0.0.1` where the OS allows it; on Windows a
+non-elevated process may only register `localhost`). `GET /state` (JSON with `sequence`), `GET /state?format=text`
+(the pilot's state text plus a `Menu:` of `aN | label` lines, `WAITING: <reason>` first when it cannot act),
+`GET /state?include=text` (the JSON plus that text as `text`, from the same capture). `POST /act` takes
+`{"semantic_key": ...}` (preferred) or `{"id": "a3", "sequence": <snapshot sequence>}`: ids are positions in one
+snapshot's menu, so when that menu changed since the given sequence the call is refused with 409 `code: "stale"` and
+the fresh menu. Other 409 codes: `pilot_active`, `busy`. Requests with an `Origin` header are refused; POST bodies
+must be `application/json`, at most 64 KB. `POST /chat` rejects an unknown recipient with 400 and the teammates'
+names, and takes an optional `from_ai` (default true).
 
 ## 5. 文件位置
 

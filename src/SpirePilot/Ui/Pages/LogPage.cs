@@ -187,7 +187,7 @@ internal sealed class LogPage : Page
     {
         if (!slow) return;
         var api = PilotRuntime.HttpApi;
-        UiKit.SetText(_httpStatus, api != null ? L10n.T("ui.misc.http_running", api.Port) : L10n.T("ui.misc.http_stopped"));
+        UiKit.SetText(_httpStatus, api != null ? L10n.T("ui.misc.http_running", api.Url) : L10n.T("ui.misc.http_stopped"));
         UiKit.SetColor(_httpStatus, api != null ? UiTheme.Good : UiTheme.Muted);
     }
 
