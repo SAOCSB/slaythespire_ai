@@ -23,6 +23,7 @@ internal static class CombatStrings
         L10n.Add("why.no_allies", "没有存活的队友", "no living allies");
         L10n.Add("player.n", "玩家 {0}", "Player {0}");
         L10n.Add("act.undo_end_turn", "撤销结束回合（继续出牌）", "Undo end turn (keep playing)");
+        L10n.Add("act.combat_proceed", "继续（离开已结束的战斗）", "Proceed (leave the finished fight)");
     }
 
     /// <summary>Touch to make sure the strings are registered (runs the static constructor once).</summary>

@@ -1,3 +1,6 @@
+using System.Diagnostics;
+using System.Globalization;
+using Godot;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Commands;
 using MegaCrit.Sts2.Core.Entities.Cards;
@@ -7,6 +10,10 @@ using MegaCrit.Sts2.Core.GameActions;
 using MegaCrit.Sts2.Core.Localization.DynamicVars;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.Combat;
+using MegaCrit.Sts2.Core.Nodes.CommonUi;
+using MegaCrit.Sts2.Core.Nodes.Rooms;
+using MegaCrit.Sts2.Core.Nodes.Screens.Map;
+using MegaCrit.Sts2.Core.Nodes.Screens.ScreenContext;
 using MegaCrit.Sts2.Core.Runs;
 using SpirePilot.Core.Model;
 using SpirePilot.Core.Text;
@@ -17,8 +24,8 @@ namespace SpirePilot.Game.Readers;
 
 /// <summary>
 /// Combat info (hand, piles, enemies, intents) and actions: play card (every valid target), use potion (every valid
-/// target incl. teammates), end turn. Called for ScreenKind.Combat. FillState is called for every snapshot while in
-/// combat (also when a selection screen is open).
+/// target incl. teammates), end turn; in the room left behind after a fight, its proceed button. Called for
+/// ScreenKind.Combat. FillState is called for every snapshot while in combat (also when a selection screen is open).
 /// </summary>
 internal static class CombatReader
 {
@@ -26,18 +33,33 @@ internal static class CombatReader
     private static readonly TimeSpan PlayTimeout = TimeSpan.FromSeconds(12);
     private static readonly TimeSpan PotionTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan EndTurnTimeout = TimeSpan.FromSeconds(5);
+    /// <summary>Single player: how long the queued end-turn request gets before the direct path is tried.</summary>
+    private static readonly TimeSpan SoloEndTurnFirstWait = TimeSpan.FromSeconds(1);
     /// <summary>Undo goes through the host on a client: allow round trips.</summary>
     private static readonly TimeSpan UndoEndTurnTimeout = TimeSpan.FromSeconds(6);
+    /// <summary>A combat read slower than this is logged (once): reads run on the main thread several times a second.</summary>
+    private static readonly TimeSpan SlowRead = TimeSpan.FromMilliseconds(4);
+    /// <summary>The first reads include JIT compilation and cold caches: not measured.</summary>
+    private const int WarmUpReads = 20;
+    private static int _fillCount, _readCount;
+    private static bool _slowFillLogged, _slowReadLogged;
 
     /// <summary>
     /// Registers the legal combat actions of the local player: card plays (hand order, every valid target), potions
     /// (slot order, every valid target incl. teammates), end turn. Nothing is registered outside the local player's
     /// play window (enemy turn, dead), the readiness gate explains why. In co-op after readying end turn while
-    /// teammates still play, the one action is "undo end turn".
+    /// teammates still play, the one action is "undo end turn". In a finished combat room: its proceed button.
     /// </summary>
     public static void Read(GameContext ctx, ScreenProbe probe, GameSnapshot snap, ActionSink sink)
     {
         CombatStrings.Ensure();
+        if (probe.CombatFinished)
+        {
+            try { AddFinishedRoomProceed(probe, sink); }
+            catch (Exception ex) { ThrottledLog.Warn("combat:proceed", "combat room proceed action failed: " + ex); }
+            return;
+        }
+        var sw = Stopwatch.StartNew();
         var view = CombatView.Create(ctx);
         if (view == null) return;
         if (view.IsMultiplayer && CombatFlow.CanUndoEndTurn(ctx, view.Cs, view.Me))
@@ -54,6 +76,13 @@ internal static class CombatReader
         catch (Exception ex) { ThrottledLog.Warn("combat:potions", "combat potion actions failed: " + ex); }
         try { AddEndTurn(view, sink); }
         catch (Exception ex) { ThrottledLog.Warn("combat:endturn", "end turn action failed: " + ex); }
+
+        if (_readCount <= WarmUpReads) _readCount++;
+        else if (sw.Elapsed > SlowRead && !_slowReadLogged)
+        {
+            _slowReadLogged = true;
+            ModLog.Info($"combat actions took {sw.Elapsed.TotalMilliseconds:0.0} ms ({sink.Count} actions); logged once");
+        }
     }
 
     /// <summary>Fills <see cref="GameSnapshot.Combat"/> (round, hand, piles, enemies) whenever combat is in progress.</summary>
@@ -61,6 +90,7 @@ internal static class CombatReader
     {
         var cs = ctx.Combat;
         if (cs == null) return;
+        long t0 = Stopwatch.GetTimestamp();
         var info = new CombatInfo();
         Part(() => info.Round = cs.RoundNumber);
         Part(() => info.IsPlayerTurn = cs.CurrentSide == CombatSide.Player);
@@ -73,6 +103,7 @@ internal static class CombatReader
             info.EncounterName = name.Length > 0 ? name : null;
         });
 
+        long tHand = t0, tPiles = t0;
         var pcs = SafeGet(() => ctx.Me?.PlayerCombatState);
         if (pcs != null)
         {
@@ -84,16 +115,30 @@ internal static class CombatReader
                 {
                     var card = hand[i];
                     if (card == null) continue;
-                    try { info.Hand.Add(ModelText.Card(card, "h" + i, inCombat: true)); }
-                    catch (Exception) { info.Hand.Add(new CardInfo { Key = "h" + i, Id = ModelText.SafeId(card) }); }
+                    CardInfo ci;
+                    try { ci = ModelText.Card(card, "h" + i, inCombat: true); }
+                    catch (Exception) { ci = new CardInfo { Key = "h" + i, Id = ModelText.SafeId(card) }; }
+                    info.Hand.Add(ci);
+                    // Keyword explanations for the cards the model can play (cached per card id, upgrade, enchantment
+                    // and affliction: those decide which tips a card has).
+                    if (Glossary.Collecting && ci.Id.Length > 0)
+                    {
+                        var c = card;
+                        string extra = "";
+                        try { extra = ModelText.SafeId(card.Enchantment) + "/" + ModelText.SafeId(card.Affliction); }
+                        catch (Exception) { }
+                        Glossary.Note("card:" + ci.Id + "+" + ModelText.UpgradeLevel(card) + "~" + extra, () => c.HoverTips);
+                    }
                 }
             });
+            tHand = Stopwatch.GetTimestamp();
             Part(() => info.DrawPile = Pile(pcs.DrawPile?.Cards, sortByName: true));
             Part(() => info.DiscardPile = Pile(pcs.DiscardPile?.Cards, sortByName: false));
             Part(() => info.ExhaustPile = Pile(pcs.ExhaustPile?.Cards, sortByName: false));
             Part(() => info.DrawPileCount = pcs.DrawPile?.Cards.Count ?? 0);
             Part(() => info.DiscardPileCount = pcs.DiscardPile?.Cards.Count ?? 0);
             Part(() => info.ExhaustPileCount = pcs.ExhaustPile?.Cards.Count ?? 0);
+            tPiles = Stopwatch.GetTimestamp();
         }
 
         Part(() =>
@@ -105,9 +150,24 @@ internal static class CombatReader
             }
         });
         snap.Combat = info;
+
+        var total = Stopwatch.GetElapsedTime(t0);
+        if (_fillCount <= WarmUpReads) _fillCount++;
+        else if (total > SlowRead && !_slowFillLogged)
+        {
+            _slowFillLogged = true;
+            ModLog.Info($"combat state read took {total.TotalMilliseconds:0.0} ms (hand {Ms(t0, tHand)}, piles {Ms(tHand, tPiles)}, " +
+                        $"enemies {Ms(tPiles, Stopwatch.GetTimestamp())}; {info.Hand.Count} hand, " +
+                        $"{info.DrawPileCount + info.DiscardPileCount + info.ExhaustPileCount} pile cards, {info.Enemies.Count} enemies); logged once");
+        }
     }
 
-    /// <summary>Pile contents. The draw pile is sorted by name: its real order is hidden information.</summary>
+    private static string Ms(long from, long to) => Stopwatch.GetElapsedTime(from, to).TotalMilliseconds.ToString("0.0", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// Pile contents: names, types and costs only (the prompt lists pile cards by name; rules text would cost a preview
+    /// per card on every snapshot). The draw pile is sorted by name: its real order is hidden information.
+    /// </summary>
     private static List<CardInfo> Pile(IReadOnlyList<CardModel>? cards, bool sortByName)
     {
         var list = new List<CardInfo>();
@@ -115,7 +175,7 @@ internal static class CombatReader
         foreach (var card in cards)
         {
             if (card == null) continue;
-            try { list.Add(ModelText.Card(card, "", inCombat: true)); }
+            try { list.Add(ModelText.PileCard(card, inCombat: true)); }
             catch (Exception) { }
         }
         if (sortByName)
@@ -125,11 +185,15 @@ internal static class CombatReader
 
     // ------------------------------------------------------------------ card plays
 
-    /// <summary>Identical hand cards (same id, upgrade, cost and text) collapse into one menu line per target.</summary>
+    /// <summary>
+    /// Identical hand cards (same semantic identity and text) collapse into one menu line per target; the line's key is
+    /// "play:" + <see cref="CardKeys.Semantic"/> + "@" + target, so plan steps and re-validation find the same variant again.
+    /// </summary>
     private sealed class HandGroup
     {
         public List<(CardModel Card, int Index)> Cards { get; } = new();
         public CardInfo Info { get; init; } = new();
+        public string CardKey { get; set; } = "";
     }
 
     private static void AddCardPlays(CombatView view, GameSnapshot snap, ActionSink sink)
@@ -150,14 +214,25 @@ internal static class CombatReader
             var info = i < (snap.Combat?.Hand.Count ?? 0) && snap.Combat!.Hand[i].Id == ModelText.SafeId(card)
                 ? snap.Combat.Hand[i]
                 : ModelText.Card(card, "h" + i, inCombat: true);
-            string sig = string.Join("|", info.Id, ModelText.UpgradeLevel(card), info.Cost, info.StarCost, info.Description, string.Join(",", info.Keywords));
+            string cardKey = CardKeys.Semantic(card);
+            // The text joins the grouping (not the key): copies whose text differs must not share one menu line.
+            string sig = string.Join("|", cardKey, info.Cost, info.StarCost, info.Description, string.Join(",", info.Keywords));
             if (!bySignature.TryGetValue(sig, out var group))
             {
-                group = new HandGroup { Info = info };
+                group = new HandGroup { Info = info, CardKey = cardKey };
                 bySignature[sig] = group;
                 groups.Add(group);
             }
             group.Cards.Add((card, i));
+        }
+        // Keys must stay unique in one menu: a second group with the same identity (text differs for a reason the key
+        // does not capture) gets "#n".
+        var keyCounts = new Dictionary<string, int>();
+        foreach (var group in groups)
+        {
+            keyCounts.TryGetValue(group.CardKey, out int n);
+            keyCounts[group.CardKey] = n + 1;
+            if (n > 0) group.CardKey += "#" + n;
         }
 
         foreach (var group in groups)
@@ -170,7 +245,7 @@ internal static class CombatReader
 
             bool unpredictable = IsUnpredictable(first, group.Info);
             string name = group.Cards.Count > 1 ? L10n.T("lbl.copies", group.Info.Name, group.Cards.Count) : group.Info.Name;
-            string idKey = "play:" + group.Info.Id + "+" + ModelText.UpgradeLevel(first) + "@";
+            string idKey = "play:" + group.CardKey + "@";
 
             List<int>? aoeNumbers = null;
             foreach (var target in targets)
@@ -295,12 +370,13 @@ internal static class CombatReader
         catch (Exception ex) { return ActionResult.Fail("play failed: " + ex.Message); }
         if (!accepted) return ActionResult.Fail("the game rejected the play (target or state not valid)");
 
-        // "Left the hand at some point" (a card may come back to the hand through its own effect).
+        // "Left the hand at some point" (a card may come back to the hand through its own effect). Done once the local
+        // player's actions settled, or the play is parked waiting for a choice.
         bool left = false;
         bool Played()
         {
             if (!SafeBool(() => card.Pile?.Type == PileType.Hand)) left = true;
-            return left && !CombatFlow.PlayerDrivenBusy();
+            return left && CombatFlow.LocalQueue(me, playerDrivenOnly: true, out _) != CombatFlow.QueueState.Busy;
         }
         var outcome = await CombatFlow.WaitFor(Played, PlayTimeout, ct);
         switch (outcome)
@@ -311,13 +387,17 @@ internal static class CombatReader
                 return ActionResult.Fail("cancelled");
             case CombatFlow.WaitOutcome.TimedOut:
                 // Never cancel a running action (co-op desync); report what we know.
-                return !left && !CombatFlow.PlayerDrivenBusy()
+                return !left && !CombatFlow.PlayerDrivenBusy(me)
                     ? ActionResult.Fail("card play had no effect (timed out)")
                     : ActionResult.Ok("still resolving");
         }
         await MainThread.Frames(2);
-        return ActionResult.Ok();
+        return ParkedForChoice(me) ? ActionResult.Ok("waiting for a choice") : ActionResult.Ok();
     }
+
+    /// <summary>The local player's action waits for a choice that no local prompt shows (yet).</summary>
+    private static bool ParkedForChoice(Player me) =>
+        CombatFlow.LocalQueue(me, playerDrivenOnly: true, out _) == CombatFlow.QueueState.OwnChoice && !CombatFlow.ChoiceOpen();
 
     // ------------------------------------------------------------------ potions
 
@@ -382,7 +462,8 @@ internal static class CombatReader
         catch (Exception ex) { return ActionResult.Fail("potion use failed: " + ex.Message); }
 
         bool Gone() => SafeBool(() => potion.HasBeenRemovedFromState) || !ReferenceEquals(SlotPotion(me, slot), potion);
-        var outcome = await CombatFlow.WaitFor(() => Gone() && !CombatFlow.PlayerDrivenBusy(), PotionTimeout, ct);
+        var outcome = await CombatFlow.WaitFor(
+            () => Gone() && CombatFlow.LocalQueue(me, playerDrivenOnly: true, out _) != CombatFlow.QueueState.Busy, PotionTimeout, ct);
         switch (outcome)
         {
             case CombatFlow.WaitOutcome.ChoicePending:
@@ -395,7 +476,7 @@ internal static class CombatReader
                     : ActionResult.Ok("still resolving");
         }
         await MainThread.Frames(2);
-        return ActionResult.Ok();
+        return ParkedForChoice(me) ? ActionResult.Ok("waiting for a choice") : ActionResult.Ok();
     }
 
     private static PotionModel? SlotPotion(Player me, int slot)
@@ -419,6 +500,11 @@ internal static class CombatReader
     /// Ends (in co-op: readies) the local player's turn by enqueueing <see cref="EndPlayerTurnAction"/> through the
     /// action queue synchronizer, the co-op safe path STS2MCP uses (no FTUE popup, no local-only mutators). Waits until
     /// the game took it: the player is marked ready, the turn/side changed, or an end-of-turn prompt opened.
+    /// <para>When the request evidently never ran (nothing of the local player's runs or waits, still in the play
+    /// window, not marked ready): single player calls <see cref="PlayerCmd.EndTurn"/> after a short wait (STS2MCP's
+    /// single-player path); co-op asks again with <c>PlayerCombatState.TurnNumber</c> when it differs from the round
+    /// (the request is stamped with a turn number and a stale one is dropped), and otherwise presses the vanilla end
+    /// turn button (its own release logic, which is what a click runs).</para>
     /// </summary>
     private static async Task<ActionResult> EndTurn(CancellationToken ct)
     {
@@ -427,9 +513,8 @@ internal static class CombatReader
         var me = ctx.Me;
         if (cs == null || me == null) return ActionResult.Fail("not in combat");
         if (!CombatFlow.InPlayWindow(cs, me)) return ActionResult.Fail("turn already ended or not your turn");
-        var hand = CombatFlow.Hand();
         // Mirrors NEndTurnButton.CanTurnBeEnded (private): not while a card is in play or the hand is selecting.
-        if (hand != null && (hand.InCardPlay || hand.CurrentMode != NPlayerHand.Mode.Play)) return ActionResult.Fail("hand is busy");
+        if (HandBusy()) return ActionResult.Fail("hand is busy");
         if (CombatFlow.ChoiceOpen()) return ActionResult.Fail("a choice is pending");
         var cm = CombatManager.Instance;
         if (cm.PlayerActionsDisabled) return ActionResult.Fail("player actions are disabled right now");
@@ -441,7 +526,7 @@ internal static class CombatReader
         if (sync == null) return ActionResult.Fail("action queue unavailable");
         try
         {
-            // turnNumber = combat round, as STS2MCP does (unverified whether PlayerCombatState.TurnNumber is meant).
+            // turnNumber = combat round, as STS2MCP does; PlayerCombatState.TurnNumber is the retry below.
             sync.RequestEnqueue(new EndPlayerTurnAction(me, round));
         }
         catch (Exception ex) { return ActionResult.Fail("end turn failed: " + ex.Message); }
@@ -455,15 +540,50 @@ internal static class CombatReader
             }
             catch (Exception) { return true; }
         }
-        var outcome = await CombatFlow.WaitFor(Taken, EndTurnTimeout, ct);
-        if (outcome == CombatFlow.WaitOutcome.TimedOut && !ctx.IsMultiplayer && CombatFlow.InPlayWindow(cs, me) &&
-            !CombatFlow.AnyActionBusy(out _))
+        // The request evidently did not run: still this player's play window (not marked ready), nothing of this
+        // player's runs, waits to run or waits for a choice, in co-op nothing at all runs (our request might sit behind
+        // a teammate's action), no prompt.
+        bool NotTaken() => CombatFlow.InPlayWindow(cs, me) && !HandBusy() && !CombatFlow.ChoiceOpen() &&
+                           CombatFlow.LocalQueue(me, playerDrivenOnly: false, out _) == CombatFlow.QueueState.Idle &&
+                           (!ctx.IsMultiplayer || CombatFlow.ExecutorIdle());
+
+        bool multiplayer = ctx.IsMultiplayer;
+        var outcome = await CombatFlow.WaitFor(Taken, multiplayer ? EndTurnTimeout : SoloEndTurnFirstWait, ct);
+        if (outcome == CombatFlow.WaitOutcome.TimedOut && !NotTaken())
         {
-            // Single player only, and only when the queued request evidently never ran: STS2MCP's single-player path.
-            // (Never in co-op: PlayerCmd.EndTurn is a local command there.)
+            // Still resolving (the request may sit behind running actions): give it more time.
+            outcome = await CombatFlow.WaitFor(Taken, EndTurnTimeout, ct);
+        }
+        // Taken, cancelled, a prompt, or still busy after the whole budget: nothing more to try.
+        bool dropped = outcome == CombatFlow.WaitOutcome.TimedOut && NotTaken();
+        if (dropped && !multiplayer)
+        {
+            // Single player only: PlayerCmd.EndTurn is a local command (never in co-op).
             try { PlayerCmd.EndTurn(me, canBackOut: false); }
             catch (Exception ex) { return ActionResult.Fail("end turn failed: " + ex.Message); }
             outcome = await CombatFlow.WaitFor(Taken, EndTurnTimeout, ct);
+        }
+        else if (dropped)
+        {
+            bool retried = false;
+            int turn = SafeTurnNumber(me);
+            if (turn > 0 && turn != round)
+            {
+                try
+                {
+                    sync.RequestEnqueue(new EndPlayerTurnAction(me, turn));
+                    retried = true;
+                }
+                catch (Exception ex) { ModLog.Warn("end turn retry with turn number failed: " + ex.Message); }
+                if (retried) outcome = await CombatFlow.WaitFor(Taken, EndTurnTimeout, ct);
+            }
+            if (!retried || outcome == CombatFlow.WaitOutcome.TimedOut && NotTaken())
+            {
+                var pressed = PressEndTurnButton();
+                if (!pressed.Success) return ActionResult.Fail("end turn had no effect, and " + pressed.Message);
+                outcome = await CombatFlow.WaitFor(() => Taken() || ModalOpen(), EndTurnTimeout, ct);
+                if (ModalOpen() && !Taken()) return ActionResult.Fail("the end turn button opened a popup; answer it first");
+            }
         }
         return outcome switch
         {
@@ -472,6 +592,52 @@ internal static class CombatReader
             CombatFlow.WaitOutcome.TimedOut => ActionResult.Fail("end turn had no effect (timed out)"),
             _ => ActionResult.Ok(),
         };
+    }
+
+    private static bool HandBusy()
+    {
+        var hand = CombatFlow.Hand();
+        try { return hand != null && (hand.InCardPlay || hand.CurrentMode != NPlayerHand.Mode.Play); }
+        catch (Exception) { return true; }
+    }
+
+    private static int SafeTurnNumber(Player me)
+    {
+        try { return me.PlayerCombatState?.TurnNumber ?? -1; }
+        catch (Exception) { return -1; }
+    }
+
+    private static bool ModalOpen()
+    {
+        try { return NModalContainer.Instance?.OpenModal is Node modal && SceneUtil.Alive(modal); }
+        catch (Exception) { return false; }
+    }
+
+    /// <summary>
+    /// The vanilla end turn button's release logic (what a click runs once the optional hold-to-confirm bar is full),
+    /// after the button's own enabled state allows it. Co-op safe: the button goes through the game's synchronized path.
+    /// </summary>
+    private static ActionResult PressEndTurnButton()
+    {
+        NEndTurnButton? button = null;
+        try
+        {
+            var room = NCombatRoom.Instance;
+            if (SceneUtil.Alive(room))
+            {
+                try { button = room!.Ui?.EndTurnButton; } catch (Exception) { }
+                if (!SceneUtil.Valid(button)) button = SceneUtil.Descendants<NEndTurnButton>(room).FirstOrDefault();
+            }
+        }
+        catch (Exception) { }
+        if (!SceneUtil.VisibleInTree(button)) return ActionResult.Fail("the end turn button was not found");
+        if (!button!.IsEnabled) return ActionResult.Fail("the end turn button is disabled");
+        try
+        {
+            button.CallReleaseLogic();
+            return ActionResult.Ok();
+        }
+        catch (Exception ex) { return ActionResult.Fail("the end turn button failed: " + ex.Message); }
     }
 
     // ------------------------------------------------------------------ undo end turn (co-op)
@@ -516,6 +682,18 @@ internal static class CombatReader
             catch (Exception) { return false; }
         }
         var outcome = await CombatFlow.WaitFor(() => Undone() || !SameTurn(), UndoEndTurnTimeout, ct, stopOnChoice: false);
+        int turn = SafeTurnNumber(me);
+        if (outcome == CombatFlow.WaitOutcome.TimedOut && turn > 0 && turn != round && SameTurn() && !Undone() &&
+            CombatFlow.ExecutorIdle())
+        {
+            // Dropped as stale (the same question as for ending the turn): ask once more with the player's turn number.
+            try
+            {
+                sync.RequestEnqueue(new UndoEndPlayerTurnAction(me, turn));
+                outcome = await CombatFlow.WaitFor(() => Undone() || !SameTurn(), UndoEndTurnTimeout, ct, stopOnChoice: false);
+            }
+            catch (Exception ex) { ModLog.Warn("undo end turn retry with turn number failed: " + ex.Message); }
+        }
         if (outcome == CombatFlow.WaitOutcome.Cancelled) return ActionResult.Fail("cancelled");
         if (Undone())
         {
@@ -525,6 +703,75 @@ internal static class CombatReader
         return ActionResult.Fail(outcome == CombatFlow.WaitOutcome.TimedOut
             ? "undo end turn had no effect (timed out)"
             : "the turn ended before the undo went through");
+    }
+
+    // ------------------------------------------------------------------ finished combat room
+
+    /// <summary>
+    /// The room left behind after a fight (no rewards, or the rewards overlay closed) shows its own proceed button: the
+    /// way on to the map. Offered while the button is usable.
+    /// </summary>
+    private static void AddFinishedRoomProceed(ScreenProbe probe, ActionSink sink)
+    {
+        if (probe.Screen is not NCombatRoom room || !SceneUtil.Alive(room)) return;
+        if (!SceneUtil.Usable(RoomProceedButton(room)))
+        {
+            _proceedSince = null;
+            return;
+        }
+        // The button must have stayed usable for a moment: never press one that flashes up while the end-of-fight flow
+        // (rewards) is still opening.
+        ulong id = room.GetInstanceId();
+        long now = Stopwatch.GetTimestamp();
+        if (_proceedSince is not { } since || since.Room != id)
+        {
+            _proceedSince = (id, now);
+            return;
+        }
+        if (Stopwatch.GetElapsedTime(since.At, now) < ProceedSettle) return;
+        sink.Add(ActionKind.Proceed, L10n.T("act.combat_proceed"), "proceed", ct => ProceedFromRoom(room, ct), unpredictable: true);
+    }
+
+    /// <summary>How long the finished room's proceed button must stay usable before it is offered.</summary>
+    private static readonly TimeSpan ProceedSettle = TimeSpan.FromMilliseconds(400);
+    private static (ulong Room, long At)? _proceedSince;
+
+    private static NProceedButton? RoomProceedButton(NCombatRoom room)
+    {
+        try
+        {
+            var button = room.ProceedButton;
+            if (SceneUtil.Valid(button)) return button;
+        }
+        catch (Exception) { }
+        return Reflect.GetOptional<NProceedButton>(room, "_proceedButton");
+    }
+
+    /// <summary>
+    /// Presses the room's proceed button (its own click path), then waits until the room is left (map opened, next
+    /// room), the button stops being usable, or the co-op "waiting for other players" overlay shows.
+    /// </summary>
+    private static async Task<ActionResult> ProceedFromRoom(NCombatRoom room, CancellationToken ct)
+    {
+        if (!SceneUtil.Alive(room)) return ActionResult.Fail("the combat room is gone");
+        if (CombatFlow.CombatLive()) return ActionResult.Fail("the fight is still running");
+        var button = RoomProceedButton(room);
+        var pressed = UiActions.Press(button, "proceed");
+        if (!pressed.Success) return pressed;
+        bool Done()
+        {
+            if (!SceneUtil.Alive(room) || !SceneUtil.Usable(button)) return true;
+            try
+            {
+                if (!ReferenceEquals(ActiveScreenContext.Instance?.GetCurrentScreen(), room)) return true;
+                if (NMapScreen.Instance is { } map && SceneUtil.Alive(map) && map.IsOpen) return true;
+            }
+            catch (Exception) { }
+            return SceneUtil.VisibleInTree(Reflect.GetOptional<Control>(room, "_waitingForOtherPlayersOverlay"));
+        }
+        var r = await UiActions.Expect(Done, "proceed", ct: ct);
+        await UiActions.WaitSettled(ct: ct);
+        return r;
     }
 
     // ------------------------------------------------------------------ helpers

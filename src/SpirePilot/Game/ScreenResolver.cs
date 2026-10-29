@@ -42,6 +42,11 @@ internal sealed class ScreenProbe
     public string Name { get; init; } = "";
     /// <summary>Set when a human-only screen is open (pause menu, settings, card library ...): the AI must wait.</summary>
     public string? HumanOnlyReason { get; init; }
+    /// <summary>
+    /// <see cref="ScreenKind.Combat"/> only: the combat room is the current screen but no fight is running (the room
+    /// left behind after a fight, with its own proceed button). Judged like any other room, not like a combat turn.
+    /// </summary>
+    public bool CombatFinished { get; init; }
 
     public T? As<T>() where T : class => Screen as T;
 }
@@ -121,11 +126,24 @@ internal static class ScreenResolver
             case NGameOverScreen: return Make(ScreenKind.GameOver);
             case NRewardsScreen: return Make(ScreenKind.CombatRewards);
         }
+        // 7) The combat room, before the generic card-grid walk below (it would visit every node of the room on every
+        //    snapshot of a fight). A room whose fight is over is still Combat (its reader offers the room's proceed
+        //    button), flagged so the readiness gate judges it like any other room.
+        if (current is NCombatRoom)
+        {
+            bool running;
+            try { running = CombatManager.Instance is { IsInProgress: true }; }
+            catch (Exception) { running = false; }
+            return running
+                ? Make(ScreenKind.Combat)
+                : new ScreenProbe { Kind = ScreenKind.Combat, Screen = current, Name = name, CombatFinished = true };
+        }
+
         // Card selections only exist in a run.
         if (ctx.InRun && current is Node n && SceneUtil.Descendants<NGridCardHolder>(n, 12).Any(h => SceneUtil.VisibleInTree(h)))
             return Make(ScreenKind.CardGridSelect);
 
-        // 7) Rooms and full screens.
+        // 8) Rooms and full screens.
         if (FindActiveCombatRoom(current) != null) return Make(ScreenKind.Combat);
         switch (current)
         {
@@ -135,7 +153,6 @@ internal static class ScreenResolver
             case NCrystalSphereScreen: return Make(ScreenKind.Event);
             case NEventRoom: return Make(ScreenKind.Event);
             case NMapScreen or NMapRoom: return Make(ScreenKind.Map);
-            case NCombatRoom: return Make(ScreenKind.Combat);
         }
         return Make(ScreenKind.Unknown);
     }

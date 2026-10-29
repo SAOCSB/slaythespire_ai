@@ -144,9 +144,10 @@ internal sealed class CombatView
 
     /// <summary>
     /// Every valid target of a playable card. Enemy- and ally-aimed cards list each candidate the game accepts
-    /// (<see cref="CardModel.IsValidTarget"/>); self / AoE / random / untargeted cards get the null target, which is
-    /// what the vanilla UI passes (STS2-Agent, live-tested). Vanilla AnyPlayer cards only accept null unless a library
-    /// (BaseLib / RitsuLib) patches targeting, so those are probed both ways.
+    /// (<see cref="CardModel.IsValidTarget"/>; a candidate is dropped when the check says no, kept when the check
+    /// itself throws); self / AoE / random / untargeted cards get the null target, which is what the vanilla UI passes
+    /// (STS2-Agent, live-tested). Vanilla AnyPlayer cards only accept null unless a library (BaseLib / RitsuLib)
+    /// patches targeting, so those are probed both ways; the null target is only offered when the game accepts it.
     /// </summary>
     public List<TargetOption> CardTargets(CardModel card)
     {
@@ -158,32 +159,25 @@ internal sealed class CombatView
         switch (type)
         {
             case TargetType.AnyEnemy:
-            {
-                var cands = TargetableEnemies().ToList();
-                var valid = cands.Where(e => Valid(card, e.Creature)).ToList();
-                // If the probe rejects everything, let TryManualPlay decide at execution time.
-                foreach (var e in valid.Count > 0 ? valid : cands) list.Add(ForEnemy(e));
+                foreach (var e in TargetableEnemies())
+                    if (Keep(Check(card, e.Creature))) list.Add(ForEnemy(e));
                 break;
-            }
             case TargetType.AnyAlly:
-            {
-                var cands = Teammates().ToList();
-                var valid = cands.Where(p => Valid(card, p.Player.Creature)).ToList();
-                foreach (var p in valid.Count > 0 ? valid : cands) list.Add(ForPlayer(p));
+                foreach (var p in Teammates())
+                    if (Keep(Check(card, p.Player.Creature))) list.Add(ForPlayer(p));
                 break;
-            }
             case TargetType.AnyPlayer:
             {
                 foreach (var p in LivingPlayers())
-                    if (Valid(card, p.Player.Creature)) list.Add(ForPlayer(p));
-                if (list.Count == 0) list.Add(Untargeted);
+                    if (Check(card, p.Player.Creature) == true) list.Add(ForPlayer(p));
+                if (list.Count == 0 && Check(card, null) == true) list.Add(Untargeted);
                 break;
             }
             case TargetType.Osty:
             {
-                foreach (var pet in Pets.Where(x => IsMe(x.Owner)))
-                    if (Safe(() => pet.Pet.IsAlive) && Valid(card, pet.Pet)) list.Add(ForPet(pet));
-                if (list.Count == 0) list.Add(Untargeted);
+                foreach (var pet in MyOstyCandidates())
+                    if (Safe(() => pet.Pet.IsAlive) && Keep(Check(card, pet.Pet))) list.Add(ForPet(pet));
+                if (list.Count == 0 && Check(card, null) == true) list.Add(Untargeted);
                 break;
             }
             case TargetType.None:
@@ -197,14 +191,35 @@ internal sealed class CombatView
             default:
             {
                 // Custom target types added by libraries: let the game decide.
-                if (Valid(card, null)) list.Add(Untargeted);
+                if (Check(card, null) == true) list.Add(Untargeted);
                 foreach (var c in AllCreatures())
-                    if (Safe(() => c.IsAlive) && Valid(card, c) && Describe(c) is { } opt) list.Add(opt);
-                if (list.Count == 0) list.Add(Untargeted);
+                    if (Safe(() => c.IsAlive) && Check(card, c) == true && Describe(c) is { } opt) list.Add(opt);
                 break;
             }
         }
         return list;
+    }
+
+    /// <summary>
+    /// The local player's companions that an Osty card may aim at: the pets of their combat state, plus
+    /// <see cref="Player.Osty"/> when the game tracks it outside that list.
+    /// </summary>
+    private List<(Creature Pet, Player Owner, string Key)> MyOstyCandidates()
+    {
+        var mine = Pets.Where(x => IsMe(x.Owner)).ToList();
+        try
+        {
+            var osty = Me.Osty;
+            if (osty != null && !mine.Any(x => ReferenceEquals(x.Pet, osty)))
+            {
+                int slot = Players.FirstOrDefault(p => IsMe(p.Player)).Slot;
+                var entry = (osty, Me, PlayerReader.CompanionKey(slot, mine.Count));
+                Pets.Add(entry);
+                mine.Add(entry);
+            }
+        }
+        catch (Exception) { /* no Osty on this character / version */ }
+        return mine;
     }
 
     private IEnumerable<Creature> AllCreatures()
@@ -214,11 +229,15 @@ internal sealed class CombatView
         return all?.Where(c => c != null) ?? Enumerable.Empty<Creature>();
     }
 
-    private static bool Valid(CardModel card, Creature? target)
+    /// <summary>The game's target check: true / false, or null when the check itself threw.</summary>
+    private static bool? Check(CardModel card, Creature? target)
     {
         try { return card.IsValidTarget(target); }
-        catch (Exception) { return false; }
+        catch (Exception) { return null; }
     }
+
+    /// <summary>A candidate stays unless the game's check rejected it (a check that threw is no rejection).</summary>
+    private static bool Keep(bool? check) => check != false;
 
     // ------------------------------------------------------------------ potion targets
 
@@ -226,7 +245,8 @@ internal sealed class CombatView
     /// Every valid target of a usable potion. Following STS2-Agent's live-tested table: AoE / random / no-creature
     /// potions take null (passing the owner makes the game drop the use), AnyPlayer potions are aimed at any living
     /// player in co-op (this is how a potion is "given" to a teammate) and at the owner in single player, self
-    /// potions at the owner; potions the game lets you throw at an ally also list the living teammates.
+    /// potions at the owner; potions the game lets you throw at an ally also list the living teammates. Candidates the
+    /// game's check rejects are dropped (kept when the check throws).
     /// </summary>
     public List<TargetOption> PotionTargets(PotionModel potion)
     {
@@ -239,12 +259,9 @@ internal sealed class CombatView
         switch (type)
         {
             case TargetType.AnyEnemy:
-            {
-                var cands = TargetableEnemies().ToList();
-                var valid = cands.Where(e => Valid(potion, e.Creature)).ToList();
-                foreach (var e in valid.Count > 0 ? valid : cands) list.Add(ForEnemy(e));
+                foreach (var e in TargetableEnemies())
+                    if (Keep(Check(potion, e.Creature))) list.Add(ForEnemy(e));
                 return list;
-            }
             case TargetType.AllEnemies:
             case TargetType.AllAllies:
             case TargetType.RandomEnemy:
@@ -256,38 +273,36 @@ internal sealed class CombatView
                 var living = LivingPlayers().ToList();
                 if (living.Count > 1)
                 {
-                    var valid = living.Where(p => Valid(potion, p.Player.Creature)).ToList();
-                    foreach (var p in valid.Count > 0 ? valid : living) list.Add(ForPlayer(p));
+                    foreach (var p in living)
+                        if (Keep(Check(potion, p.Player.Creature))) list.Add(ForPlayer(p));
                 }
-                else if (me.Player != null) list.Add(ForPlayer(me));
+                else if (me.Player != null && Keep(Check(potion, Me.Creature))) list.Add(ForPlayer(me));
                 return list;
             }
             case TargetType.AnyAlly:
-            {
-                var cands = Teammates().ToList();
-                var valid = cands.Where(p => Valid(potion, p.Player.Creature)).ToList();
-                foreach (var p in valid.Count > 0 ? valid : cands) list.Add(ForPlayer(p));
+                foreach (var p in Teammates())
+                    if (Keep(Check(potion, p.Player.Creature))) list.Add(ForPlayer(p));
                 return list;
-            }
             default:
             {
                 // Self / None: the owner (STS2-Agent's default arm); null only if the game rejects the owner but takes null.
-                if (me.Player != null && (Valid(potion, Me.Creature) || !Valid(potion, null))) list.Add(ForPlayer(me));
-                else list.Add(Untargeted);
+                var owner = me.Player != null ? Check(potion, Me.Creature) : false;
+                if (owner != false && me.Player != null) list.Add(ForPlayer(me));
+                else if (Check(potion, null) == true) list.Add(Untargeted);
                 bool throwable = false;
                 try { throwable = potion.CanThrowAtAlly(); } catch (Exception) { }
                 if (throwable)
                     foreach (var p in Teammates())
-                        if (Valid(potion, p.Player.Creature)) list.Add(ForPlayer(p));
+                        if (Check(potion, p.Player.Creature) == true) list.Add(ForPlayer(p));
                 return list;
             }
         }
     }
 
-    private static bool Valid(PotionModel potion, Creature? target)
+    private static bool? Check(PotionModel potion, Creature? target)
     {
         try { return potion.IsValidTarget(target); }
-        catch (Exception) { return false; }
+        catch (Exception) { return null; }
     }
 
     private static bool Safe(Func<bool> f)

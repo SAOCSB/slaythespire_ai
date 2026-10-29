@@ -75,19 +75,14 @@ internal static class SnapshotBuilder
             }
         });
 
-        // A finished room that offers nothing while the map is closed: the top-bar map button is the way on.
-        bool openMapOnly = false;
+        // A finished room that offers nothing while the map is closed: the top-bar map button is the way on. (A finished
+        // combat room is flagged by the resolver, so the readiness gate judges it like any other room.)
         if (ctx.InRun)
-            Section(snap, "open map", () => openMapOnly = MapReader.TryAddOpenMap(ctx, probe, snap, sink) && sink.Count == 1);
+            Section(snap, "open map", () => MapReader.TryAddOpenMap(ctx, probe, snap, sink));
 
         Section(snap, "team", () => TeamLink.Annotate(snap));
 
-        // A finished combat room resolves as ScreenKind.Combat, whose readiness gate wants a running fight; judge the
-        // lone "open map" like any other room action instead.
-        var readinessProbe = openMapOnly && probe.Kind == ScreenKind.Combat
-            ? new ScreenProbe { Kind = ScreenKind.Unknown, Screen = probe.Screen, Name = probe.Name }
-            : probe;
-        var (canAct, reason) = SafeReadiness(ctx, readinessProbe, snap);
+        var (canAct, reason) = SafeReadiness(ctx, probe, snap);
         snap.CanAct = canAct && sink.Count > 0;
         // A reason while able to act is informational (co-op: turn readied, only "undo end turn" is offered).
         snap.WaitReason = canAct && sink.Count == 0 ? (reason ?? "no actions") : reason;

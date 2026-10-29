@@ -37,6 +37,8 @@ internal static class Readiness
         string? note = null;
         var reason = probe.Kind switch
         {
+            // The room left behind after a fight (its proceed button, or the map button) is an ordinary screen.
+            ScreenKind.Combat when probe.CombatFinished => ScreenGate(ctx, probe),
             ScreenKind.Combat => CombatGate(ctx, out note),
             ScreenKind.HandSelect => HandSelectGate(ctx),
             _ => ScreenGate(ctx, probe),
@@ -72,6 +74,8 @@ internal static class Readiness
         }
         // Only signals the reference mods gate on (IsEnemyTurnStarted / EndingPlayerTurnPhase* are not: unverified).
         if (cm.PlayerActionsDisabled) return "turn transition";
+        // Requests outside the synchronizer's play phase are held for the next player turn and then dropped as stale.
+        if (CombatFlow.SyncPlayPhase() == false) return "turn transition";
         if (!cm.IsPartOfPlayerTurn(me)) return ctx.IsMultiplayer ? "teammate's turn" : "not your turn";
         try
         {
@@ -84,8 +88,17 @@ internal static class Readiness
         if (hand == null) return "hand unavailable";
         if (hand.InCardPlay) return "card in play";
         if (hand.IsInCardSelection || hand.CurrentMode != NPlayerHand.Mode.Play) return "hand busy";
-        // Teammates' plays and enemy reactions count too: acting meanwhile would race the queue.
-        if (CombatFlow.AnyActionBusy(out _)) return "animating";
+        // The local player's own actions and the game's (enemy reactions, triggered effects) must finish first.
+        // Teammates' actions run in their own queues: what they change resets the stability signature instead.
+        switch (CombatFlow.LocalQueue(me, playerDrivenOnly: false, out _))
+        {
+            case CombatFlow.QueueState.Busy:
+                return "animating";
+            case CombatFlow.QueueState.OwnChoice when !CombatFlow.ChoiceOpen():
+                // Our own action waits for a choice this client does not show (remote or unrecognised prompt): the next
+                // card would queue behind it.
+                return "waiting for a choice";
+        }
         return null;
     }
 
@@ -142,13 +155,18 @@ internal static class Readiness
         }
     }
 
-    /// <summary>Cheap fingerprint of what the AI decides on (game model values, never animation state).</summary>
+    /// <summary>
+    /// Cheap fingerprint of what the AI decides on (game model values, never animation state). Only the local player
+    /// and the enemies: teammates acting (HP, block, energy, potions, hand, ended turn) must not keep resetting the
+    /// settle timer and discard finished decisions; anything of theirs that matters for this player's actions shows up
+    /// on the enemies or the local player, or is re-validated through the action's semantic key.
+    /// </summary>
     private static string Signature(GameContext ctx, ScreenProbe probe, GameSnapshot snap)
     {
         var sb = new StringBuilder(256);
         sb.Append(probe.Kind).Append('|').Append(probe.Name).Append('|');
         if (probe.Screen != null) sb.Append(RuntimeHelpers.GetHashCode(probe.Screen)).Append('|');
-        foreach (var p in snap.Players)
+        if (snap.LocalPlayer is { } p)
             sb.Append(p.NetId).Append(':').Append(p.Hp).Append('/').Append(p.Block).Append('/').Append(p.Energy).Append('/')
               .Append(p.Stars).Append('/').Append(p.Gold).Append('/').Append(p.Potions.Count).Append('/').Append(p.DeckCount)
               .Append('/').Append(p.HandCount).Append('/').Append(p.EndedTurn).Append(';');
