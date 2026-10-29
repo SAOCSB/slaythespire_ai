@@ -234,10 +234,26 @@ internal static class ShopReader
         try { task = entry.OnTryPurchaseWrapper(inv); } // never ignoreCost
         catch (Exception ex) { return ActionResult.Fail("buy " + name + ": " + ex.Message); }
 
-        if (!await RoomUtil.WaitTask(task, UiActions.DefaultTimeout, ct))
+        // Relics that open a choice on pickup (Dolly's Mirror, Orrery, Astrolabe, Empty Cage, Pandora's Box, Calling
+        // Bell ...) keep the purchase task open until that choice is made, so the wait also ends when a selection,
+        // reward screen or popup takes over or the inventory closes.
+        bool TookOver()
+        {
+            if (RoomUtil.SelectionOpen() || RoomUtil.ModalOpen()) return true;
+            var cur = RoomUtil.CurrentScreen();
+            return cur != null && !view.IsOpenNow();
+        }
+        if (!await MainThread.WaitUntil(() => task.IsCompleted || TookOver(), UiActions.DefaultTimeout, ct))
         {
             RoomUtil.Observe(task, "purchase of " + name);
             return ActionResult.Fail("buy " + name + ": no answer from the shop (timed out)");
+        }
+        if (!task.IsCompleted)
+        {
+            // The follow-up choice is a separate screen (handled by its reader); the purchase finishes with it.
+            RoomUtil.Observe(task, "purchase of " + name);
+            await RoomUtil.Settle(ct);
+            return ActionResult.Ok("bought " + name + (player.Gold != gold ? "" : " (a follow-up choice opened)"));
         }
         if (task.IsFaulted) return ActionResult.Fail("buy " + name + ": " + task.Exception?.GetBaseException().Message);
         if (RoomUtil.Outcome(task) != true) return ActionResult.Fail("the shop refused to sell " + name);

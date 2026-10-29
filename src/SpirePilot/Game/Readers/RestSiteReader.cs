@@ -6,6 +6,7 @@ using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.RestSite;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
+using MegaCrit.Sts2.Core.Nodes.Screens.ScreenContext;
 using MegaCrit.Sts2.Core.Runs;
 using SpirePilot.Core.Model;
 using SpirePilot.Game.Rooms2;
@@ -50,6 +51,7 @@ internal static class RestSiteReader
             AddProceed(room, sink);
             return;
         }
+        int before = sink.Count;
 
         for (int i = 0; i < options.Count; i++)
         {
@@ -100,22 +102,89 @@ internal static class RestSiteReader
             }
         }
 
-        AddProceed(room, sink);
+        bool optionOffered = sink.Count > before;
+        bool proceedOffered = AddProceed(room, sink);
+        if (optionOffered || proceedOffered) _stuckSince = null;
+        else if (NoWayOut(room)) AddForcedLeave(room!, snap, sink);
     }
 
-    private static void AddProceed(NRestSiteRoom? room, ActionSink sink)
+    private static bool AddProceed(NRestSiteRoom? room, ActionSink sink)
     {
         NClickableControl? button = null;
         try { button = room?.ProceedButton; }
         catch (Exception) { /* not ready */ }
-        if (!SceneUtil.Usable(button)) return;
+        if (!SceneUtil.Usable(button)) return false;
         sink.Add(ActionKind.Proceed, R2Text.T("act.rest_leave"), "proceed",
-            ct => RoomUtil.PressAndWait(button, "leave rest site", () =>
-            {
-                var cur = RoomUtil.CurrentScreen();
-                return RoomUtil.ModalOpen() || cur != null && !ReferenceEquals(cur, room);
-            }, UiActions.DefaultTimeout, ct),
+            ct => RoomUtil.PressAndWait(button, "leave rest site", () => LeftRoom(room), UiActions.DefaultTimeout, ct),
             unpredictable: true);
+        return true;
+    }
+
+    private static bool LeftRoom(NRestSiteRoom? room)
+    {
+        var cur = RoomUtil.CurrentScreen();
+        return RoomUtil.ModalOpen() || cur != null && !ReferenceEquals(cur, room);
+    }
+
+    // ---------------------------------------------------------------- no way out
+
+    /// <summary>How long the room must show no usable option and no proceed button before leaving is forced.</summary>
+    private static readonly TimeSpan StuckFor = TimeSpan.FromSeconds(4);
+
+    /// <summary>Room (instance id) and time since which it has offered nothing.</summary>
+    private static (ulong room, DateTime since)? _stuckSince;
+
+    /// <summary>
+    /// True when the rest site is the current screen, offers no usable option (all disabled / used) and still shows no
+    /// usable proceed button, and has stayed like that for <see cref="StuckFor"/> (not just animating between states).
+    /// </summary>
+    private static bool NoWayOut(NRestSiteRoom? room)
+    {
+        if (room == null || !ReferenceEquals(RoomUtil.CurrentScreen(), room) || RoomUtil.ModalOpen() || RoomUtil.SelectionOpen())
+        {
+            _stuckSince = null;
+            return false;
+        }
+        ulong id = room.GetInstanceId();
+        var now = DateTime.UtcNow;
+        if (_stuckSince is not { } s || s.room != id)
+        {
+            _stuckSince = (id, now);
+            return false;
+        }
+        return now - s.since >= StuckFor;
+    }
+
+    /// <summary>
+    /// Every option is disabled or used but the game did not show its proceed button (seen with options that cannot be
+    /// used, e.g. no upgradable card). Shows it the way the room does after a pick (STS2-Agent does the same), then
+    /// presses it, so the normal leave path runs.
+    /// </summary>
+    private static void AddForcedLeave(NRestSiteRoom room, GameSnapshot snap, ActionSink sink)
+    {
+        snap.Notes.Add(R2Text.T("note.rest_stuck"));
+        sink.Add(ActionKind.Proceed, R2Text.T("act.rest_force_leave"), "proceed", async ct =>
+        {
+            if (!SceneUtil.Alive(room) || !ReferenceEquals(RoomUtil.CurrentScreen(), room)) return ActionResult.Fail("the rest site is not open");
+            if (!ProceedUsable())
+            {
+                try
+                {
+                    // ShowProceedButton is private but registered with Godot on every supported version.
+                    room.Call(NRestSiteRoom.MethodName.ShowProceedButton);
+                    ActiveScreenContext.Instance?.Update();
+                }
+                catch (Exception ex) { return ActionResult.Fail("show the leave button: " + ex.Message); }
+                if (!await MainThread.WaitUntil(ProceedUsable, RoomUtil.ShortWait, ct))
+                    return ActionResult.Fail("the rest site's leave button did not appear");
+            }
+            NClickableControl? button;
+            try { button = room.ProceedButton; }
+            catch (Exception ex) { return ActionResult.Fail("leave rest site: " + ex.Message); }
+            var r = await RoomUtil.PressAndWait(button, "leave rest site", () => LeftRoom(room), UiActions.DefaultTimeout, ct);
+            if (r.Success) _stuckSince = null;
+            return r;
+        }, unpredictable: true);
     }
 
     private static void NoteTeammate(GameSnapshot snap, RestSiteSynchronizer sync, Player p)
@@ -132,16 +201,16 @@ internal static class RestSiteReader
         catch (Exception) { /* teammate info is optional */ }
     }
 
-    /// <summary>MEND: one action per living teammate (the game asks for a target after the option is picked).</summary>
+    /// <summary>MEND: one action per living, damaged teammate (the game asks for a target after the option is picked).</summary>
     private static void AddMendActions(GameContext ctx, GameSnapshot snap, ActionSink sink, RestSiteOption option, RestOptionInfo oi)
     {
         foreach (var p in RoomUtil.PlayersInSlotOrder(ctx.Run))
         {
             if (p.NetId == ctx.LocalNetId) continue;
-            bool alive;
-            try { alive = p.Creature?.IsAlive ?? false; }
-            catch (Exception) { alive = false; }
-            if (!alive) continue;
+            bool needsHealing;
+            try { needsHealing = p.Creature is { IsAlive: true } c && c.CurrentHp < c.MaxHp; }
+            catch (Exception) { needsHealing = false; }
+            if (!needsHealing) continue; // only living teammates who are missing HP
             var name = RoomUtil.PlayerName(snap, p.NetId);
             ulong target = p.NetId;
             int index = oi.Index;
@@ -255,19 +324,25 @@ internal static class RestSiteReader
         if (!SceneUtil.Alive(node))
         {
             // Back out of the targeting like a right-click would; the option is not used.
-            try { manager.CancelTargeting(); }
-            catch (Exception) { }
+            CancelTargeting(manager);
+            RoomUtil.Observe(task, name);
             return ActionResult.Fail(name + ": teammate not found at the rest site");
         }
 
-        // Prefer the node the target manager accepts (the character, or its hitbox).
-        Node target = node!;
+        // The node the target manager accepts: the character, or its hitbox. Neither: back out, the option is not used.
+        Node? target = null;
         try
         {
-            if (!manager.AllowedToTargetNode(node!) && node!.Hitbox is { } hb && SceneUtil.Alive(hb) && manager.AllowedToTargetNode(hb))
-                target = hb;
+            if (manager.AllowedToTargetNode(node!)) target = node;
+            else if (node!.Hitbox is { } hb && SceneUtil.Alive(hb) && manager.AllowedToTargetNode(hb)) target = hb;
         }
-        catch (Exception) { /* keep the character */ }
+        catch (Exception) { target = null; }
+        if (target == null)
+        {
+            CancelTargeting(manager);
+            RoomUtil.Observe(task, name);
+            return ActionResult.Fail(name + ": the game does not accept this teammate as a target");
+        }
 
         try
         {
@@ -275,15 +350,35 @@ internal static class RestSiteReader
             // FinishTargeting(bool cancel) is private but registered with Godot, so it can be called by name.
             manager.Call(NTargetManager.MethodName.FinishTargeting, false);
         }
-        catch (Exception ex) { return ActionResult.Fail(name + ": " + ex.Message); }
+        catch (Exception ex)
+        {
+            CancelTargeting(manager);
+            return ActionResult.Fail(name + ": " + ex.Message);
+        }
 
         if (!await RoomUtil.WaitTask(task, UiActions.DefaultTimeout, ct))
         {
+            // Never leave the targeting arrow hanging (it would block every other input).
+            CancelTargeting(manager);
             RoomUtil.Observe(task, name);
             return ActionResult.Fail(name + ": no result (timed out)");
         }
-        if (RoomUtil.Outcome(task) != true) return ActionResult.Fail("the game refused " + name);
+        if (RoomUtil.Outcome(task) != true)
+        {
+            CancelTargeting(manager);
+            return ActionResult.Fail("the game refused " + name);
+        }
         await RoomUtil.Settle(ct);
         return ActionResult.Ok(name);
+    }
+
+    /// <summary>Backs out of a target selection that is still open (like a right-click); no-op otherwise.</summary>
+    private static void CancelTargeting(NTargetManager manager)
+    {
+        try
+        {
+            if (SceneUtil.Valid(manager) && manager.IsInSelection) manager.CancelTargeting();
+        }
+        catch (Exception ex) { ModLog.Warn("cancel targeting failed: " + ex.Message); }
     }
 }

@@ -48,6 +48,33 @@ internal static class Reflect
         }
     }
 
+    /// <summary>
+    /// Like <see cref="Get{T}"/> for optional members that only some subclasses (or game versions) declare: a missing
+    /// member is not reported as missing. Returns false when the member does not exist or could not be read.
+    /// </summary>
+    public static bool TryGetQuiet<T>(object? target, string name, out T? value)
+    {
+        value = default;
+        if (target == null) return false;
+        var member = Find(target.GetType(), name);
+        try
+        {
+            object? raw = member switch
+            {
+                FieldInfo f => f.GetValue(f.IsStatic ? null : target),
+                PropertyInfo p when p.GetMethod != null => p.GetValue(p.GetMethod.IsStatic ? null : target),
+                _ => null,
+            };
+            if (member == null) return false;
+            if (raw is T t) value = t;
+            return true;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
     public static T? GetStatic<T>(Type type, string name)
     {
         var member = Find(type, name);

@@ -67,9 +67,13 @@ internal static class EventReader
             {
                 FillOptions(ctx, ev, info);
                 snap.Notes.Add(R2Text.T("note.event_dialogue"));
+                // The lines are NAncientDialogueLine buttons, so buttons are not skipped; earlier lines stay on screen
+                // (faded), so the latest ones are the last in tree order.
                 var dialogue = RoomUtil.Node<Godot.Node>(ancient, "_dialogueContainer");
-                foreach (var text in RoomUtil.Texts(dialogue, 3, skipButtons: true)) snap.Notes.Add("“" + text + "”");
-                sink.Add(ActionKind.Proceed, R2Text.T("act.event_advance"), "event:dialogue",
+                var lines = RoomUtil.Texts(dialogue, 32, skipButtons: false);
+                foreach (var text in lines.Skip(Math.Max(0, lines.Count - 2))) snap.Notes.Add("“" + text + "”");
+                // The line index keeps each step distinct (same key on every line would look like a stuck loop).
+                sink.Add(ActionKind.Proceed, R2Text.T("act.event_advance"), "event:dialogue:" + line,
                     ct => AdvanceDialogueAsync(ancient, hitbox, ct), unpredictable: true);
                 return;
             }
