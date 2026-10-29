@@ -35,7 +35,7 @@ internal static class TeamPatches
 
     public static void Install(Harmony harmony)
     {
-        HarmonyNativePreload.EnsureLoaded();
+        HarmonyPreload.EnsureLoaded();
 
         HostReceive = Patch(harmony, typeof(NetHostGameService), nameof(NetHostGameService.OnPacketReceived), PacketArgs,
             prefix: nameof(HostPacketPrefix));
