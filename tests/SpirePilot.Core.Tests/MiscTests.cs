@@ -197,3 +197,19 @@ public class SettingsRobustnessTests
         finally { Directory.Delete(dir, true); }
     }
 }
+
+public class MapInPromptTests
+{
+    [Fact]
+    public void Full_map_only_on_the_map_screen()
+    {
+        var combat = TestData.Combat();
+        combat.Map = TestData.Map();
+        var text = new StateFormatter().Format(combat);
+        Assert.DoesNotContain("Map: at", text);
+        Assert.Contains("Next on the map:", text);
+
+        var map = new SpirePilot.Core.Model.GameSnapshot { Screen = SpirePilot.Core.Model.ScreenKind.Map, Map = TestData.Map() };
+        Assert.Contains("Map: at", new StateFormatter().Format(map));
+    }
+}

@@ -41,7 +41,12 @@ public sealed class StateFormatter
             AppendCombat(sb, c);
             AppendPowerNotes(sb, s, c);
         }
-        if (s.Map is { } map) AppendMap(sb, map);
+        // The whole act map matters when choosing a node; elsewhere one line about what comes next is enough.
+        if (s.Map is { } map)
+        {
+            if (s.Screen == ScreenKind.Map) AppendMap(sb, map);
+            else AppendNextNodes(sb, map);
+        }
         if (s.Rewards is { } r) AppendRewards(sb, r);
         if (s.Shop is { } shop) AppendShop(sb, shop);
         if (s.Event is { } ev) AppendEvent(sb, ev);
@@ -209,6 +214,13 @@ public sealed class StateFormatter
             if (c.DiscardPile.Count > 0) sb.Append("  Discard pile: ").AppendLine(Grouped(c.DiscardPile));
             if (c.ExhaustPile.Count > 0) sb.Append("  Exhausted: ").AppendLine(Grouped(c.ExhaustPile));
         }
+    }
+
+    private static void AppendNextNodes(StringBuilder sb, MapInfo map)
+    {
+        if (map.Reachable.Count == 0) return;
+        sb.Append("Next on the map: ")
+          .AppendLine(string.Join(", ", map.Reachable.Select(k => map.Find(k) is { } n ? $"{k}={n.Type}" : k)));
     }
 
     private static void AppendMap(StringBuilder sb, MapInfo map)
