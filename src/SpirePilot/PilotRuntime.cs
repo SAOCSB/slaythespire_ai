@@ -68,9 +68,15 @@ internal static class PilotRuntime
         Loop.RunStarted += OnRunStarted;
         var traces = new TraceWriter(DataDir);
         Loop.DecisionTraced += t => { if (Store.Current.SaveDecisionTraces) traces.Write(t); };
-        Loop.StatusChanged += s => TeamLink.SetLocalAiActive(Store.Current.Control.Mode is not (PilotMode.Off or PilotMode.Advisor) && !Loop.Paused);
+        // Status changes come from the loop's worker thread; the team link only runs on the main thread.
+        Loop.StatusChanged += _ =>
+        {
+            bool active = Store.Current.Control.Mode is not (PilotMode.Off or PilotMode.Advisor) && !Loop.Paused;
+            MainThread.Post(() => TeamLink.SetLocalAiActive(active));
+        };
 
         MainThread.Install();
+        HarmonyPreload.EnsureLoaded();
         Harmony = new Harmony("spirepilot.mod");
         TryInit("team link", () => TeamLink.Initialize(Harmony, Team));
         TryInit("overlay", () => Overlay.Initialize(Harmony));
