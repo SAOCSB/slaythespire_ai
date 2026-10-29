@@ -19,27 +19,56 @@ namespace SpirePilot.Game.Rooms;
 /// </summary>
 internal static class CardGridSelection
 {
-    // Private button / container fields per subclass (names from the 0.111 dump), with the reference mods' node paths.
-    private static readonly string[] PreviewConfirmFields = { "_previewConfirmButton", "_singlePreviewConfirmButton", "_multiPreviewConfirmButton" };
+    /// <summary>
+    /// Private button / container fields of one grid screen type (names from the 0.111 dump; the 0.107 dump lists the same
+    /// Godot-typed fields). Probing only the fields a type has keeps the diagnostics' "missing members" list meaningful.
+    /// </summary>
+    private sealed record GridFields(string[] PreviewContainers, string[] PreviewConfirms, string[] PreviewCancels, string? MainConfirm,
+        string? Close, bool Known);
+
+    private static readonly Dictionary<Type, GridFields> FieldsByType = new()
+    {
+        [typeof(NDeckCardSelectScreen)] = new(new[] { "_previewContainer" }, new[] { "_previewConfirmButton" }, new[] { "_previewCancelButton" },
+            "_confirmButton", "_closeButton", true),
+        [typeof(NDeckTransformSelectScreen)] = new(new[] { "_previewContainer" }, new[] { "_previewConfirmButton" }, new[] { "_previewCancelButton" },
+            "_confirmButton", "_closeButton", true),
+        [typeof(NDeckEnchantSelectScreen)] = new(new[] { "_enchantSinglePreviewContainer", "_enchantMultiPreviewContainer" },
+            new[] { "_singlePreviewConfirmButton", "_multiPreviewConfirmButton" }, new[] { "_singlePreviewCancelButton", "_multiPreviewCancelButton" },
+            "_confirmButton", "_closeButton", true),
+        // The upgrade screen has no main confirm: a full selection opens the single / multi preview directly.
+        [typeof(NDeckUpgradeSelectScreen)] = new(new[] { "_upgradeSinglePreviewContainer", "_upgradeMultiPreviewContainer" },
+            new[] { "_singlePreviewConfirmButton", "_multiPreviewConfirmButton" }, new[] { "_singlePreviewCancelButton", "_multiPreviewCancelButton" },
+            null, "_closeButton", true),
+        [typeof(NSimpleCardSelectScreen)] = new(Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>(), "_confirmButton", null, true),
+        [typeof(NCombatPileCardSelectScreen)] = new(Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>(), "_confirmButton", null, true),
+    };
+
+    /// <summary>Unknown subclass: every name any subclass uses, probed quietly, plus the reference mods' node paths.</summary>
+    private static readonly GridFields GenericFields = new(
+        new[] { "_previewContainer", "_upgradeSinglePreviewContainer", "_upgradeMultiPreviewContainer", "_enchantSinglePreviewContainer", "_enchantMultiPreviewContainer" },
+        new[] { "_previewConfirmButton", "_singlePreviewConfirmButton", "_multiPreviewConfirmButton" },
+        new[] { "_previewCancelButton", "_singlePreviewCancelButton", "_multiPreviewCancelButton" },
+        "_confirmButton", "_closeButton", false);
+
+    // Unique-name node paths from the reference mods (unverified), only used for screen types not in the table.
     private static readonly string[] PreviewConfirmPaths =
     {
         "%PreviewConfirm", "%PreviewContainer/Confirm", "%UpgradeSinglePreviewContainer/Confirm", "%UpgradeMultiPreviewContainer/Confirm",
         "%EnchantSinglePreviewContainer/Confirm", "%EnchantMultiPreviewContainer/Confirm",
     };
-    private static readonly string[] PreviewCancelFields = { "_previewCancelButton", "_singlePreviewCancelButton", "_multiPreviewCancelButton" };
     private static readonly string[] PreviewCancelPaths =
     {
         "%PreviewCancel", "%PreviewContainer/Cancel", "%UpgradeSinglePreviewContainer/Cancel", "%UpgradeMultiPreviewContainer/Cancel",
         "%EnchantSinglePreviewContainer/Cancel", "%EnchantMultiPreviewContainer/Cancel",
     };
-    private static readonly string[] PreviewContainerFields =
-    {
-        "_previewContainer", "_upgradeSinglePreviewContainer", "_upgradeMultiPreviewContainer", "_enchantSinglePreviewContainer", "_enchantMultiPreviewContainer",
-    };
     private static readonly string[] PreviewContainerPaths =
     {
         "%PreviewContainer", "%UpgradeSinglePreviewContainer", "%UpgradeMultiPreviewContainer", "%EnchantSinglePreviewContainer", "%EnchantMultiPreviewContainer",
     };
+
+    private static GridFields FieldsOf(NCardGridSelectionScreen screen) => FieldsByType.TryGetValue(screen.GetType(), out var f) ? f : GenericFields;
+
+    private static string[] Paths(GridFields f, string[] paths) => f.Known ? Array.Empty<string>() : paths;
 
     private sealed record Prefs(int Min, int Max, bool Cancelable, bool Known, LocString? Prompt);
 
@@ -87,7 +116,8 @@ internal static class CardGridSelection
             }
             sel.CanConfirm = true;
             sink.Add(ActionKind.ConfirmSelection, RoomUtil.T("act.confirm"), "confirm", ct => Confirm(screen, ct), unpredictable: true);
-            if (RoomUtil.UsableButton<NBackButton>(screen, PreviewCancelFields, PreviewCancelPaths) is { } back)
+            var fields = FieldsOf(screen);
+            if (RoomUtil.OptionalUsableButton<NBackButton>(screen, fields.PreviewCancels, Paths(fields, PreviewCancelPaths)) is { } back)
                 sink.Add(ActionKind.CancelSelection, RoomUtil.T("rooms.cancel_preview"), "cancel:preview", ct => Cancel(screen, back, ct));
             return;
         }
@@ -140,8 +170,7 @@ internal static class CardGridSelection
 
         // Never leave "cancel" as the only option while cards are picked (it would be taken as trivial and drop the picks).
         bool onlyCancel = sink.Count == actionsBefore && selectedCount > 0;
-        if (!onlyCancel && (!prefs.Known || prefs.Cancelable) &&
-            RoomUtil.UsableButton<NBackButton>(screen, new[] { "_closeButton" }, "%Close") is { } close)
+        if (!onlyCancel && (!prefs.Known || prefs.Cancelable) && CloseButton(screen) is { } close)
         {
             sel.CanCancel = true;
             sink.Add(ActionKind.CancelSelection, RoomUtil.T("act.cancel"), "cancel", ct => Cancel(screen, close, ct), unpredictable: true);
@@ -150,11 +179,15 @@ internal static class CardGridSelection
 
     // ---------------------------------------------------------------- reading
 
+    /// <summary>A private field every known grid screen has; probed quietly on screen types the table does not know.</summary>
+    private static T? ScreenField<T>(NCardGridSelectionScreen screen, string name) =>
+        FieldsOf(screen).Known ? Reflect.Get<T>(screen, name) : Reflect.GetOptional<T>(screen, name);
+
     private static Prefs ReadPrefs(NCardGridSelectionScreen screen)
     {
         try
         {
-            if (Reflect.Get<object>(screen, "_prefs") is CardSelectorPrefs p)
+            if (ScreenField<object>(screen, "_prefs") is CardSelectorPrefs p)
             {
                 int max = Math.Max(p.MaxSelect, 0);
                 return new Prefs(Math.Max(0, p.MinSelect), max == 0 ? Math.Max(1, p.MinSelect) : max, p.Cancelable, true, p.Prompt);
@@ -197,7 +230,7 @@ internal static class CardGridSelection
     {
         try
         {
-            var set = Reflect.Get<IEnumerable<CardModel>>(screen, "_selectedCards");
+            var set = ScreenField<IEnumerable<CardModel>>(screen, "_selectedCards");
             return set == null ? null : new HashSet<CardModel>(set.Where(c => c != null), ReferenceEqualityComparer.Instance as IEqualityComparer<CardModel>);
         }
         catch (Exception) { return null; }
@@ -207,18 +240,33 @@ internal static class CardGridSelection
 
     private static bool PreviewOpen(NCardGridSelectionScreen screen)
     {
-        foreach (var f in PreviewContainerFields)
-            if (SceneUtil.VisibleInTree(RoomUtil.NodeOf<Control>(screen, f))) return true;
-        foreach (var p in PreviewContainerPaths)
-            if (SceneUtil.VisibleInTree(RoomUtil.NodeOf<Control>(screen, null, p))) return true;
+        var fields = FieldsOf(screen);
+        foreach (var f in fields.PreviewContainers)
+            if (SceneUtil.VisibleInTree(RoomUtil.OptionalNodeOf<Control>(screen, f))) return true;
+        foreach (var p in Paths(fields, PreviewContainerPaths))
+            if (SceneUtil.VisibleInTree(RoomUtil.OptionalNodeOf<Control>(screen, null, p))) return true;
         return false;
     }
 
-    private static NConfirmButton? PreviewConfirm(NCardGridSelectionScreen screen) =>
-        RoomUtil.UsableButton<NConfirmButton>(screen, PreviewConfirmFields, PreviewConfirmPaths);
+    private static NConfirmButton? PreviewConfirm(NCardGridSelectionScreen screen)
+    {
+        var fields = FieldsOf(screen);
+        return RoomUtil.OptionalUsableButton<NConfirmButton>(screen, fields.PreviewConfirms, Paths(fields, PreviewConfirmPaths));
+    }
 
-    private static NConfirmButton? MainConfirm(NCardGridSelectionScreen screen) =>
-        RoomUtil.UsableButton<NConfirmButton>(screen, new[] { "_confirmButton" }, "%Confirm", "Confirm");
+    private static NConfirmButton? MainConfirm(NCardGridSelectionScreen screen)
+    {
+        var fields = FieldsOf(screen);
+        if (fields.MainConfirm == null) return null;
+        return RoomUtil.OptionalUsableButton<NConfirmButton>(screen, new[] { fields.MainConfirm }, Paths(fields, new[] { "%Confirm", "Confirm" }));
+    }
+
+    private static NBackButton? CloseButton(NCardGridSelectionScreen screen)
+    {
+        var fields = FieldsOf(screen);
+        if (fields.Close == null) return null;
+        return RoomUtil.OptionalUsableButton<NBackButton>(screen, new[] { fields.Close }, Paths(fields, new[] { "%Close" }));
+    }
 
     private static string Purpose(NCardGridSelectionScreen screen, Prefs prefs)
     {
@@ -257,7 +305,7 @@ internal static class CardGridSelection
     {
         var text = ModelText.Loc(prefs.Prompt);
         if (text.Length > 0) return text;
-        return RoomUtil.LabelText(RoomUtil.NodeOf<Control>(screen, "_infoLabel", "%BottomLabel"));
+        return RoomUtil.LabelText(RoomUtil.OptionalNodeOf<Control>(screen, "_infoLabel", "%BottomLabel"));
     }
 
     private static List<List<(CardModel card, CardInfo info)>> Groups(List<CardModel> cards, List<CardInfo> infos, Func<CardModel, bool> include)
@@ -297,19 +345,113 @@ internal static class CardGridSelection
         catch (Exception) { return false; }
     }
 
-    /// <summary>Clicks one card: its holder when the grid shows it, else the screen's own click handler.</summary>
-    private static ActionResult ClickCard(NCardGridSelectionScreen screen, CardModel card)
+    /// <summary>
+    /// Clicks one card and reports success only when <paramref name="effect"/> shows up (the selection count changed, a
+    /// preview opened or the screen closed), never from a call's return value. Order: the card's holder when the grid
+    /// has one; else the grid is scrolled until it has one (virtualized grids only allocate holders near the scroll
+    /// position); the screen's own <c>OnCardClicked</c> only as the last resort (it can throw inside the game for a
+    /// card without a holder).
+    /// </summary>
+    private static async Task<ActionResult> ClickCard(NCardGridSelectionScreen screen, CardModel card, Func<bool> effect, CancellationToken ct)
+    {
+        var holder = HolderOf(screen, card) ?? await ScrollIntoView(screen, card, ct);
+        if (holder != null && SceneUtil.Alive(screen))
+        {
+            var clicked = UiActions.ClickHolder(holder, "card");
+            if (clicked.Success && await MainThread.WaitUntil(effect, TimeSpan.FromSeconds(5), ct)) return ActionResult.Ok();
+            if (effect()) return ActionResult.Ok();
+            if (!clicked.Success) ModLog.Warn("grid card click failed: " + clicked.Message);
+        }
+        if (!SceneUtil.Alive(screen)) return ActionResult.Fail("selection screen is gone");
+        // Last resort: what a holder press ends in (protected OnCardClicked(CardModel)).
+        Reflect.TryCallOptional(screen, "OnCardClicked", out _, card);
+        if (await MainThread.WaitUntil(effect, TimeSpan.FromSeconds(3), ct)) return ActionResult.Ok();
+        return ActionResult.Fail(holder != null ? "the card click had no effect" : "card is not on screen and could not be scrolled into view");
+    }
+
+    private static NGridCardHolder? HolderOf(NCardGridSelectionScreen screen, CardModel card)
     {
         NGridCardHolder? holder = null;
         try { holder = Grid(screen)?.GetCardHolder(card); }
         catch (Exception) { /* not displayed */ }
-        if (!SceneUtil.Alive(holder))
-            holder = SceneUtil.Descendants<NGridCardHolder>(screen).FirstOrDefault(h => ReferenceEquals(h.CardModel, card));
-        if (SceneUtil.Alive(holder)) return UiActions.ClickHolder(holder, "card");
-        // Off-screen card of a virtualized grid: OnCardClicked(CardModel) is what a holder press ends in (protected).
-        return Reflect.TryCall(screen, "OnCardClicked", out _, card)
-            ? ActionResult.Ok()
-            : ActionResult.Fail("card is not on screen and the grid's click handler is unavailable");
+        if (SceneUtil.Alive(holder) && ReferenceEquals(holder!.CardModel, card)) return holder;
+        return SceneUtil.Descendants<NGridCardHolder>(screen).FirstOrDefault(h => ReferenceEquals(h.CardModel, card));
+    }
+
+    /// <summary>
+    /// Scrolls the grid so that it allocates a holder for <paramref name="card"/> (<see cref="NCardGrid.SetScrollPosition"/>),
+    /// then returns that holder (null when it never appears). The jump is computed from a displayed holder's row and the
+    /// row height; both sign conventions of the scroll value are tried.
+    /// </summary>
+    private static async Task<NGridCardHolder?> ScrollIntoView(NCardGridSelectionScreen screen, CardModel card, CancellationToken ct)
+    {
+        var grid = Grid(screen);
+        if (!SceneUtil.Alive(grid)) return null;
+        var container = Reflect.GetOptional<Control>(grid, "_scrollContainer");
+        var order = Reflect.GetOptional<IList<CardModel>>(grid, "_cards");
+        int target = IndexOf(order, card);
+        if (!SceneUtil.Alive(container) || order == null || target < 0) return null;
+        var displayed = new List<(NGridCardHolder holder, int index)>();
+        try
+        {
+            foreach (var h in grid!.CurrentlyDisplayedCardHolders)
+                if (SceneUtil.Alive(h) && IndexOf(order, h.CardModel) is var i and >= 0) displayed.Add((h, i));
+        }
+        catch (Exception) { return null; }
+        if (displayed.Count == 0) return null;
+
+        int columns = Reflect.GetOptional<object>(grid, "Columns") is int c && c > 0
+            ? c
+            : Math.Max(1, displayed.Count(d => Math.Abs(d.holder.GlobalPosition.Y - displayed[0].holder.GlobalPosition.Y) < 4));
+        float rowHeight = RowHeight(grid, displayed, columns);
+        if (rowHeight <= 1) return null;
+
+        int targetRow = target / columns;
+        var reference = displayed.OrderBy(d => Math.Abs(d.index / columns - targetRow)).First();
+        int deltaRows = targetRow - reference.index / columns;
+        float y = container!.Position.Y;
+        float wanted = y - deltaRows * rowHeight;
+        foreach (var scroll in new[] { wanted, -wanted })
+        {
+            try { grid.SetScrollPosition(scroll); }
+            catch (Exception ex)
+            {
+                ModLog.Warn("grid scroll failed: " + ex.Message);
+                return null;
+            }
+            await MainThread.WaitUntil(() => HolderOf(screen, card) != null || !SceneUtil.Alive(screen), TimeSpan.FromSeconds(0.6), ct);
+            if (HolderOf(screen, card) is { } holder)
+            {
+                await MainThread.Frames(3); // let the reallocated row settle before the press
+                return HolderOf(screen, card) ?? holder;
+            }
+        }
+        return null;
+    }
+
+    private static int IndexOf(IList<CardModel>? order, CardModel? card)
+    {
+        if (order == null || card == null) return -1;
+        for (int i = 0; i < order.Count; i++)
+            if (ReferenceEquals(order[i], card)) return i;
+        return -1;
+    }
+
+    /// <summary>Distance between grid rows: measured from two displayed rows, else the grid's card size + padding.</summary>
+    private static float RowHeight(NCardGrid grid, List<(NGridCardHolder holder, int index)> displayed, int columns)
+    {
+        foreach (var a in displayed)
+        foreach (var b in displayed)
+        {
+            int rows = b.index / columns - a.index / columns;
+            if (rows <= 0) continue;
+            float dy = Math.Abs(b.holder.GlobalPosition.Y - a.holder.GlobalPosition.Y) / rows;
+            if (dy > 1) return dy;
+        }
+        if (Reflect.GetOptional<object>(grid, "_cardSize") is Vector2 size && size.Y > 0)
+            return size.Y + (Reflect.GetOptional<object>(grid, "CardPadding") is float pad ? pad : 0f);
+        var first = displayed[0].holder;
+        return first.Size.Y * first.Scale.Y;
     }
 
     private static async Task<ActionResult> Select(NCardGridSelectionScreen screen, List<CardModel> group, bool autoConfirm, CancellationToken ct)
@@ -322,10 +464,7 @@ internal static class CardGridSelection
         if (!Candidates(screen).Contains(card)) return ActionResult.Fail("card is no longer offered");
 
         int before = selected?.Count ?? -1;
-        var clicked = ClickCard(screen, card);
-        if (!clicked.Success) return clicked;
-        var r = await UiActions.Expect(() => Closed(screen) || PreviewOpen(screen) || (before >= 0 && SelectedCount(screen) != before),
-            "select card", TimeSpan.FromSeconds(5), ct);
+        var r = await ClickCard(screen, card, () => Closed(screen) || PreviewOpen(screen) || (before >= 0 && SelectedCount(screen) != before), ct);
         if (!r.Success) return r;
         if (autoConfirm && !Closed(screen))
         {
@@ -344,9 +483,7 @@ internal static class CardGridSelection
         var card = group.FirstOrDefault(c => selected != null && selected.Contains(c));
         if (card == null) return ActionResult.Fail("card is not selected");
         int before = selected!.Count;
-        var clicked = ClickCard(screen, card);
-        if (!clicked.Success) return clicked;
-        var r = await UiActions.Expect(() => Closed(screen) || SelectedCount(screen) != before, "deselect card", TimeSpan.FromSeconds(5), ct);
+        var r = await ClickCard(screen, card, () => Closed(screen) || SelectedCount(screen) != before, ct);
         await MainThread.Frames(3);
         return r;
     }
@@ -373,7 +510,7 @@ internal static class CardGridSelection
                 return r;
             }
             if (cooldown > 0) cooldown--;
-            else if (mainClicks < 2 && MainConfirm(screen) is { } main)
+            else if (mainClicks < 2 && !PreviewOpen(screen) && MainConfirm(screen) is { } main)
             {
                 var p = UiActions.Press(main, "confirm");
                 if (!p.Success) return p;

@@ -95,6 +95,41 @@ internal static class Reflect
         }
     }
 
+    /// <summary>
+    /// Like <see cref="Get{T}"/>, for members that only some types or game versions have (per-subclass probes,
+    /// version-specific fields): an absent member returns default without being listed in <see cref="MissingMembers"/>,
+    /// so expected absences do not bury the real ones.
+    /// </summary>
+    public static T? GetOptional<T>(object? target, string name)
+    {
+        if (target == null) return default;
+        try
+        {
+            object? value = Find(target.GetType(), name) switch
+            {
+                FieldInfo f => f.GetValue(f.IsStatic ? null : target),
+                PropertyInfo p when p.GetMethod != null => p.GetValue(p.GetMethod.IsStatic ? null : target),
+                _ => null,
+            };
+            return value is T t ? t : default;
+        }
+        catch (Exception)
+        {
+            return default;
+        }
+    }
+
+    /// <summary>True when <paramref name="type"/> or one of its base types declares a field or property with this name.</summary>
+    public static bool HasMember(Type type, string name) => Find(type, name) != null;
+
+    /// <summary><see cref="TryCall"/> for optional methods: an absent method returns false without a warning.</summary>
+    public static bool TryCallOptional(object? target, string name, out object? result, params object?[] args)
+    {
+        result = null;
+        if (target == null || FindMethod(target.GetType(), name, args.Length) == null) return false;
+        return TryCall(target, name, out result, args);
+    }
+
     public static bool Set(object? target, string name, object? value)
     {
         if (target == null) return false;

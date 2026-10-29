@@ -64,6 +64,16 @@ internal static class RoomUtil
         L10n.Add("rooms.selection_wait", "选择界面尚未就绪。", "The selection screen is not ready yet.");
         L10n.Add("rooms.chest_wait", "宝箱遗物尚未就绪。", "The chest relics are not ready yet.");
         L10n.Add("rooms.bundle", "卡包 {0}: {1}", "Pack {0}: {1}");
+        L10n.Add("rooms.open_map", "打开地图（本房间已结束）", "Open the map (this room is finished)");
+        L10n.Add("rooms.map_close_wait", "地图盖在房间上且暂不能移动；{0} 秒后才提供关闭地图。",
+            "The map is open over the room with travel disabled; closing it is offered in {0} s.");
+        L10n.Add("rooms.map_after_proceed", "已从本房间离开，地图等待队友/游戏开放移动。",
+            "You already left this room; the map waits for teammates / the game to enable travel.");
+        L10n.Add("rooms.rewards_recover", "离开奖励界面（继续按钮未启用：恢复操作）",
+            "Leave the rewards screen (proceed stays disabled: recovery)");
+        L10n.Add("rooms.rewards_reopen_skipped", "重新打开被跳过的卡牌奖励（此处不允许跳过）: {0}",
+            "Re-open the skipped card reward (skipping is not allowed here): {0}");
+        L10n.Add("rooms.chest_opening", "宝箱正在打开…", "The chest is opening…");
     }
 
     /// <summary><see cref="L10n.T"/> that guarantees this class's strings are registered first.</summary>
@@ -168,6 +178,73 @@ internal static class RoomUtil
             if (SceneUtil.Valid(viaPath)) return viaPath;
         }
         return null;
+    }
+
+    /// <summary>
+    /// <see cref="NodeOf{T}"/> for fields that only some screen types or game versions have: an absent field is not
+    /// reported as a missing member (see <see cref="Reflect.GetOptional{T}"/>).
+    /// </summary>
+    public static T? OptionalNodeOf<T>(Node? owner, string? field, params string[] paths) where T : Node
+    {
+        if (!SceneUtil.Alive(owner)) return null;
+        if (field != null)
+        {
+            var viaField = Reflect.GetOptional<T>(owner, field);
+            if (SceneUtil.Valid(viaField)) return viaField;
+        }
+        foreach (var path in paths)
+        {
+            var viaPath = SceneUtil.Get<T>(owner, path);
+            if (SceneUtil.Valid(viaPath)) return viaPath;
+        }
+        return null;
+    }
+
+    /// <summary><see cref="UsableButton{T}"/> with optional (quiet) field lookups.</summary>
+    public static T? OptionalUsableButton<T>(Node? owner, IEnumerable<string> fields, params string[] paths) where T : NClickableControl
+    {
+        if (!SceneUtil.Alive(owner)) return null;
+        foreach (var f in fields)
+        {
+            var b = OptionalNodeOf<T>(owner, f);
+            if (SceneUtil.Usable(b)) return b;
+        }
+        foreach (var p in paths)
+        {
+            var b = OptionalNodeOf<T>(owner, null, p);
+            if (SceneUtil.Usable(b)) return b;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Visible in the tree and not faded out: the product of the node's and its ancestors' <c>Modulate.A</c> is above
+    /// 1 %. Fade-out tweens leave overlays "visible" at alpha 0.
+    /// </summary>
+    public static bool Shown(CanvasItem? item)
+    {
+        if (!SceneUtil.VisibleInTree(item)) return false;
+        try
+        {
+            float alpha = 1f;
+            Node? n = item;
+            for (int depth = 0; n != null && depth < 32; depth++, n = n.GetParent())
+            {
+                if (n is CanvasItem ci) alpha *= ci.Modulate.A;
+                else break; // a CanvasLayer / Viewport ends the modulate chain
+                if (alpha <= 0.01f) return false;
+            }
+            return alpha > 0.01f;
+        }
+        catch (Exception) { return true; }
+    }
+
+    /// <summary>True in a real co-op run: a host / client session with more than one player.</summary>
+    public static bool MultiplayerRun()
+    {
+        if (!IsMultiplayer()) return false;
+        try { return Run() is { } run && run.Players.Count > 1; }
+        catch (Exception) { return false; }
     }
 
     /// <summary>The first usable (visible + enabled) button among the given fields / paths.</summary>
@@ -309,7 +386,7 @@ internal static class RoomUtil
     {
         try
         {
-            var banner = NodeOf<NCommonBanner>(screen, "_banner", "%Banner", "Banner");
+            var banner = OptionalNodeOf<NCommonBanner>(screen, "_banner", "%Banner", "Banner");
             return banner?.label is { } label ? LabelText(label) : "";
         }
         catch (Exception) { return ""; }
