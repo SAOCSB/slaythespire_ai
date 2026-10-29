@@ -62,7 +62,7 @@ Rules that keep this robust:
   synchronizers, real buttons). Never mutate game state directly, never cancel running actions in co-op,
   never declare INetMessage types in this assembly.
 - **Owner rules are menu filters, not prompt text.** Character allow-list and ascension, "no potions for
-  teammates" (in and out of combat), saved runs of disallowed characters: `OwnerRules` removes the actions before
+  teammates", saved runs of disallowed characters: `OwnerRules` removes the actions before
   any model sees the menu — the built-in one or an external agent (see "Owner rules and external agents").
 - **Things the human opened are the human's.** Popups over the pause menu / settings / viewers, abandon / quit /
   disconnect confirmations, and anything outside a run when menus are not the AI's to handle get no actions.
@@ -79,7 +79,9 @@ either (`-p:Sts2GameVersion=0.107|0.111`), with `#if STS2_V0107` / `#if STS2_V01
 Version guard: on the first frame where the game's version can be read, the runtime compares its major.minor with
 the branch the DLL was compiled for (`Diagnostics.CompiledFor`). On a mismatch (e.g. the 0.107 build on game 0.111) it
 logs an error, forces mode Off, never starts the pilot, and the overlay / status names the build to install;
-`POST /mode` answers 409 `version_mismatch`.
+`POST /mode` answers 409 `version_mismatch` and `GET /status` carries `versionMismatch` (`POST /act` itself is not
+blocked; the MCP server refuses to act on it). The other way round (the 0.111 build on game 0.107) the guard is not
+expected to run at all: that manifest's `min_game_version` is 0.111.0, which the game's mod loader checks first.
 
 ## Snapshot conventions
 
@@ -115,10 +117,12 @@ logs an error, forces mode Off, never starts the pilot, and the overlay / status
   Two actions with the same key must be interchangeable (identical cards).
 - `unpredictable: true` for anything whose outcome cannot be foreseen (draw / random / choices / screen changes).
 - Potions outside combat (map, rewards, shop, rest site, event, treasure) are offered where the game allows the potion
-  there, with the same `potion:` keys as in combat; at rewards with a full belt, using a potion sits next to
-  discarding one so a potion reward can be taken without wasting one. Teammate targets, where the game allows them,
-  carry `@P:<netId>`, so "no potions for teammates" and fulfilled-request tracking work as in combat. The rule-based
-  fallback never drinks potions outside combat.
+  there, next to the screen's own actions (never on a choice overlay, and a potion alone never makes a screen
+  actionable). They aim at the local player (`potion:<ID>@P:<own netId>`) or at no creature (`potion:<ID>@-`):
+  teammates are never offered as targets outside combat, so potions for teammates exist only in combat, where
+  "no potions for teammates" filters them. At rewards with a full belt, "drink potion X (belt is full; frees a slot
+  for the reward …)" sits next to discarding one, so a potion reward can be taken without wasting one. The
+  rule-based fallback never drinks potions outside combat.
 - Executors: re-check `GodotObject.IsInstanceValid` for every node they captured, perform the action through the
   game's own path, then wait for an observable effect (`UiActions.Expect`) and `UiActions.WaitSettled`. Return
   `ActionResult.Fail(reason)` instead of throwing; never report success when nothing happened.
@@ -194,7 +198,9 @@ Emotes (`Game/Reactions.cs`), both ways:
 - Out: requests → "!", ask / offer potion → "?", accept → thumbs up, decline → thumbs down; chat and route
   suggestions have none. A message none of whose addressees runs SpirePilot is not sent as text (Team tab, AI
   messages, `POST /chat`): the emote is shown instead, and `/chat` answers
-  `{"delivered": false, "emote": <name>|null, "reason": "no_reader"}`.
+  `{"delivered": false, "emote": <name>|null, "reason": "no_reader"}`. `emote` is null when the kind has none, when
+  an AI sender (`from_ai`, the default) has spent its budget or signalled the same kind to the same recipient in the
+  last 3 minutes, or when the game could not show it (not in a run, no reaction synchronizer, no frame within 2 s).
 - In: a guarded Harmony postfix on the game's reaction handler (`ReactionSynchronizer.HandleReactionMessage`) turns
   a teammate's thumbs up / down into Accept / Decline replying to the AI's newest open request to that teammate (or
   to everyone), and "!" / "?" into a short human chat line. They go through `TeamChatHub.Receive`, so dedupe and

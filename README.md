@@ -37,6 +37,7 @@
 
 不确定自己的版本？游戏主菜单角落会显示版本号。
 装错了包（例如在 0.111 的游戏上装了 game0.107 的包）时，AI 不会启动，面板会提示应该安装哪个包。
+反过来在 0.107 的游戏上装 game0.111 的包时，游戏多半不会加载这个 Mod（包里写明了最低游戏版本 0.111），也就没有面板提示。
 
 ## 2. 安装
 
@@ -73,7 +74,7 @@
 
 其他选项：单步模式（每一步都等你点“单步”）、操作间隔（方便观看）、打完自动开下一局及局数上限、
 一次性指令（例如“这回合先用火焰药水”，优先级最高）。
-药水不只在战斗中用：在地图、奖励、商店、篝火、事件等界面，游戏允许使用的药水也会出现在菜单里；
+药水不只在战斗中用：在地图、奖励、商店、篝火、事件等界面，游戏允许使用的药水也会出现在菜单里（战斗外只对自己使用）；
 奖励界面药水栏满时，AI 可以先喝掉一瓶再拿新药水，而不只是丢弃。
 AI 失败时的保护：同一操作在同一局面反复无效（包括来回循环）/ 连续失败 / API 配置错误会**自动暂停**并提示原因。
 配置错误包括密钥无效、地址不对、模型名写错、账户余额不足（含 HTTP 402，以及 DeepSeek、智谱 GLM、OpenRouter、Gemini、
@@ -102,7 +103,7 @@ AI 思考时你点暂停或切换模式，这一步会立即取消，不会在�
 - 存档里的角色不在允许列表中时，AI 不会点“继续”（会提示你自行处理存档）；你“保存并退出”或联机断开后，AI 不会自动继续或开新局。
 - 联机当房主时，人数不足 2 人 AI 不会准备出发。
 - 这些限制（以及“不允许把药水给队友”）是从操作菜单里直接去掉的，对内置 AI 和外部 AI（HTTP 接口 / MCP）同样生效。
-- 角色页的“提示词内容”开关：遗物 / 药水 / 能量球的效果说明（关掉省 token，但 AI 看不到这些效果）、战斗中的抽牌堆 / 弃牌堆、保留的历史条数。
+- 角色页的“提示词内容”开关：遗物 / 药水 / 充能球的效果说明（关掉省 token，但 AI 看不到这些效果）、战斗中的抽牌堆 / 弃牌堆、保留的历史条数。
 
 ### 多人模式与队友交流
 - 游戏本身没有文字聊天。SpirePilot 通过游戏自带的联机通道发送自己的消息包，**只发给同样安装了 SpirePilot 的队友**
@@ -120,7 +121,7 @@ AI 思考时你点暂停或切换模式，这一步会立即取消，不会在�
 - 战斗外收到的队友消息会以屏幕提示显示，“AI”按钮和队友页上显示未读条数（打开队友页后清零）；战斗中显示为角色头顶的气泡。
 - 为了不刷屏：AI 每分钟消息数有上限、记得自己发过的请求不会重复、不回复“好的/不行”这类回答，两个 AI 队友不会互相无限聊天；
   对“所有人”的求助，一个队友接下后其他 AI 不会重复帮忙。
-- 你选择“不允许把药水给队友”时，这类操作（战斗内外都一样）直接从 AI 的菜单里去掉，而不仅仅是提示。
+- 你选择“不允许把药水给队友”时，这类操作直接从 AI 的菜单里去掉，而不仅仅是提示（战斗外的药水只会对自己用，本来就没有给队友的选项）。
 
 ### AI 接口
 - 预设：Anthropic Claude（原生 Messages API，默认 `claude-opus-5-5`）、OpenAI、DeepSeek、通义千问、Kimi、智谱 GLM、
@@ -150,14 +151,15 @@ AI 思考时你点暂停或切换模式，这一步会立即取消，不会在�
 | `POST /mode {"mode":"FullAuto"}` | 切换模式（只接受模式名）；Mod 包与游戏版本不匹配时拒绝开启 AI（409 `version_mismatch`） |
 | `POST /instruction {"text":"..."}` | 给内置 AI 一次性指令 |
 | `GET /chat` / `POST /chat {"text":"...","to":"all"}` | 读取 / 发送队友消息，见下 |
-| `GET /status` | 状态、token 统计、最近错误 |
+| `GET /status` | 状态、token 统计、最近错误；装错了游戏版本对应的包时有 `versionMismatch` |
 | `GET /compendium?kind=cards` | 卡牌 / 遗物 / 药水 / 能力图鉴 |
 | `GET /diagnostics` | 生成诊断报告（版本、补丁、缺失的游戏成员、当前界面、日志尾部；不含 API Key） |
 
 `POST /chat`：`kind` 可选 `chat`、`request_potion`、`offer_potion`、`ask_need_potion`、`request_debuff`、`request_focus`、
 `request_block`、`accept`、`decline`，可带 `potion`、`debuff`、`target`；回答某条消息时带 `reply_to`（`GET /chat` 里那条消息的 `id`）；
 `to` 写错会返回 400 和队友名单；`from_ai` 默认 true。成功返回 `{"delivered":true,"id":"..."}`。
-联机时收件的队友都没装 SpirePilot：不发文字，改为显示对应的游戏表情，返回 `{"delivered":false,"emote":<表情名或 null>,"reason":"no_reader"}`。
+联机时收件的队友都没装 SpirePilot：不发文字，改为显示对应的游戏表情，返回 `{"delivered":false,"emote":<表情名或 null>,"reason":"no_reader"}`；
+`emote` 为 null 表示没有显示表情（聊天没有对应表情；AI 几分钟内刚对同一对象发过同类表情或消息额度已用完；或游戏暂时显示不了）。
 
 ```bash
 curl "http://localhost:17654/state?format=text"
@@ -190,15 +192,17 @@ giving is off) are applied first. `GET /prompt` is exactly the prompt the built-
 positions in one snapshot's menu, so when that menu changed since the given sequence the call is refused with 409
 `code: "stale"` and the fresh menu. An action an owner rule removed is refused with 403 `code: "owner_rule"`. Other
 409 codes: `pilot_active`, `busy`; `POST /mode` answers 409 `version_mismatch` when this build does not match the
-game version. Requests with an `Origin` header are refused; POST bodies must be `application/json` (else 415), at most
-64 KB, e.g.
+game version (`GET /status` then carries `versionMismatch`). Requests with an `Origin` header are refused; POST bodies
+must be `application/json` (else 415), at most 64 KB, e.g.
 `curl -X POST http://localhost:17654/act -H "Content-Type: application/json" -d '{"semantic_key":"end_turn"}'`.
 `POST /chat` takes `text`, `to`, `kind` (`chat`, `request_potion`, `offer_potion`, `ask_need_potion`, `request_debuff`,
 `request_focus`, `request_block`, `accept`, `decline`), `potion`, `debuff`, `target`, `reply_to` (the `id` of the
 message answered, from `GET /chat`) and an optional `from_ai` (default true); it rejects an unknown recipient with 400
 and the teammates' names and answers `{"delivered": true, "id": ...}`. In co-op, when no addressed teammate runs
 SpirePilot, the text is not sent: the vanilla emote for the kind is shown instead and the answer is
-`{"delivered": false, "emote": <name or null>, "reason": "no_reader"}`.
+`{"delivered": false, "emote": <name or null>, "reason": "no_reader"}`; `emote` is null when nothing was shown (chat
+has no emote, an AI sender showed the same kind to them in the last 3 minutes or spent its budget, or the game could
+not show one).
 
 ## 5. 文件位置
 
@@ -246,21 +250,22 @@ dotnet run --project tools/SpirePilot.Bench -- --settings 你的配置.json
 
 ## English summary
 
-SpirePilot is a Slay the Spire 2 mod that lets an LLM play the game. It reads the complete game state, offers the
-model a menu of legal actions, and executes the chosen one through the game's own buttons and synchronized
-multiplayer paths. An in-game panel (F8) controls the mode (full auto / combat only / out-of-combat only / advisor /
-step), routing (presets, custom room weights, routes or a chosen next node pinned to the current run), character
-restrictions (allow-list, pick policy, ascension, auto-restart — enforced as menu filters for the built-in pilot and
-external agents alike, never only as prompt text), co-op teammate communication (request/offer potions, request
-debuffs on an enemy identified by its shared combat id, focus fire, protection — over a mod-to-mod channel on the
-game's own network, shown as speech bubbles in combat and as a toast with an unread count elsewhere; vanilla reaction
-emotes to and from teammates without the mod, whose thumbs up / down answer the AI's open request; answers even after
-ending its turn, and can undo the end of turn to help), and the AI endpoint (any OpenAI-compatible API or Anthropic's
-native Messages API, multiple profiles, proxy, headers, extra body; wrong keys, model names or an empty balance stop
-the pilot with a "fix your settings" message). Potions are also used outside combat where the game allows it.
-An optional localhost HTTP API and an MCP server expose state and actions to external agents, and an offline benchmark
-scores a model on 28 decision fixtures. Builds exist for game 0.107 (main) and 0.111 (beta); a build started on the
-other game version refuses to run the pilot and names the build to install. Start with the in-game test plan in
+SpirePilot is a Slay the Spire 2 mod that lets an LLM play the game. It reads the complete game state, offers the model
+a menu of legal actions, and executes the chosen one through the game's own buttons and synchronized multiplayer paths.
+An in-game panel (F8) controls the mode (full auto / combat only / out-of-combat only / advisor / step), routing
+(presets, custom room weights, routes or a chosen next node pinned to the current run), character restrictions
+(allow-list, pick policy, ascension, auto-restart — enforced as menu filters for the built-in pilot and external agents
+alike, never only as prompt text), co-op teammate communication (request/offer potions, request debuffs on an enemy
+identified by its shared combat id, focus fire, protection — over a mod-to-mod channel on the game's own network, shown
+as speech bubbles in combat and as a toast with an unread count elsewhere; vanilla reaction emotes to and from teammates
+without the mod, whose thumbs up / down answer the AI's open request; answers even after ending its turn, and can undo
+the end of turn to help), and the AI endpoint (any OpenAI-compatible API or Anthropic's native Messages API, multiple
+profiles, proxy, headers, extra body; wrong keys, model names or an empty balance stop the pilot with a "fix your
+settings" message). Potions are also used outside combat (on its own character) where the game allows it. An optional
+localhost HTTP API and an MCP server expose state and actions to external agents, and an offline benchmark scores a
+model on 28 decision fixtures. Builds exist for game 0.107 (main) and 0.111 (beta); the 0.107 build started on game
+0.111 refuses to run the pilot and names the build to install (the 0.111 build declares 0.111 as its minimum game
+version, so an older game is not expected to load it at all). Start with the in-game test plan in
 [docs/TESTING.md](docs/TESTING.md).
 
 ## License & credits
