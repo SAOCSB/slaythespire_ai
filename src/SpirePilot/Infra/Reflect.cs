@@ -130,4 +130,7 @@ internal static class Reflect
         var key = type.FullName + "." + name;
         if (Warned.TryAdd(key, true)) ModLog.Warn("reflection: member not found " + key + " (game version changed?)");
     }
+
+    /// <summary>Non-public members that were looked up but do not exist in the running game (for diagnostics).</summary>
+    public static IReadOnlyCollection<string> MissingMembers => Warned.Keys.ToList();
 }

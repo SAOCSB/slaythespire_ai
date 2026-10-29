@@ -24,6 +24,7 @@ namespace SpirePilot.Api;
 ///   POST /instruction {"text":"..."}                     one-shot instruction for the built-in pilot
 ///   GET  /chat                recent team chat;  POST /chat {"text":"...","to":"all","kind":"chat"}
 ///   GET  /compendium?kind=cards|relics|potions|powers|characters   every game model with localized text
+///   GET  /diagnostics         diagnostics report (markdown; no secrets)
 /// With a token configured, every request needs "Authorization: Bearer &lt;token&gt;".
 /// </summary>
 internal sealed class LocalHttpApi : IDisposable
@@ -104,7 +105,7 @@ internal sealed class LocalHttpApi : IDisposable
             switch ((method, path))
             {
                 case ("GET", ""):
-                    await Send(res, 200, new { mod = PilotRuntime.ModId, version = PilotRuntime.Version, endpoints = new[] { "/status", "/state", "/prompt", "/act", "/mode", "/instruction", "/chat", "/compendium" } });
+                    await Send(res, 200, new { mod = PilotRuntime.ModId, version = PilotRuntime.Version, endpoints = new[] { "/status", "/state", "/prompt", "/act", "/mode", "/instruction", "/chat", "/compendium", "/diagnostics" } });
                     break;
                 case ("GET", "/status"):
                     await Send(res, 200, StatusObject());
@@ -136,6 +137,17 @@ internal sealed class LocalHttpApi : IDisposable
                     var kind = (ctx.Request.QueryString["kind"] ?? "cards").ToLowerInvariant();
                     var list = await MainThread.Run(() => Compendium(kind));
                     await Send(res, list == null ? 400 : 200, (object?)list ?? new { error = "kind must be cards, relics, potions, powers or characters" });
+                    break;
+                }
+                case ("GET", "/diagnostics"):
+                {
+                    var report = await MainThread.Run(Diagnostics.Build);
+                    var bytes = Encoding.UTF8.GetBytes(report);
+                    res.StatusCode = 200;
+                    res.ContentType = "text/markdown; charset=utf-8";
+                    res.ContentLength64 = bytes.Length;
+                    await res.OutputStream.WriteAsync(bytes);
+                    res.Close();
                     break;
                 }
                 case ("POST", "/act"):

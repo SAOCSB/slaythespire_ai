@@ -133,6 +133,17 @@ internal static class PilotRuntime
         SaveSettings(s);
     }
 
+    /// <summary>Writes a diagnostics report (main thread) and returns its path, or null on failure.</summary>
+    public static string? WriteDiagnostics()
+    {
+        try { return Diagnostics.Write(); }
+        catch (Exception ex)
+        {
+            ModLog.Error("diagnostics failed: " + ex);
+            return null;
+        }
+    }
+
     /// <summary>Resume after a pause / error.</summary>
     public static void Resume()
     {
