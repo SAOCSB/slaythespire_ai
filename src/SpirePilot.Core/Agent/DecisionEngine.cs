@@ -274,12 +274,13 @@ public sealed class DecisionEngine
         if (s.Screen != ScreenKind.CharacterSelect) _picks.Reset();
         if (s.Screen == ScreenKind.CharacterSelect && CharacterRules(s, settings, _picks) is { } characterRule)
             return characterRule;
-        if (s.Screen == ScreenKind.MainMenu && settings.Characters.Allowed.Count > 0 && s.SavedRun is { CharacterId.Length: > 0 } saved &&
-            !settings.Characters.Allowed.Contains(saved.CharacterId, StringComparer.OrdinalIgnoreCase))
+        if (s.Screen == ScreenKind.MainMenu && settings.Characters.Allowed.Count > 0 && s.Actions.Any(a => a.Kind == ActionKind.ContinueRun) &&
+            (s.SavedRun is not { CharacterId.Length: > 0 } saved || !settings.Characters.Allowed.Contains(saved.CharacterId, StringComparer.OrdinalIgnoreCase)))
         {
-            // Continuing would play a character the owner did not allow; abandoning the save is the human's call.
-            if (s.Actions.RemoveAll(a => a.Kind == ActionKind.ContinueRun) > 0)
-                s.Notes.Add(L10n.T("status.saved_run_not_allowed", saved.CharacterName ?? saved.CharacterId));
+            // Continuing would (or might: the save could not be read) play a character the owner did not allow;
+            // abandoning the save is the human's call. The restriction is never silently widened.
+            s.Actions.RemoveAll(a => a.Kind == ActionKind.ContinueRun);
+            s.Notes.Add(L10n.T("status.saved_run_not_allowed", s.SavedRun?.CharacterName ?? s.SavedRun?.CharacterId ?? "?"));
         }
         if (!settings.Team.AllowGivingPotions)
         {

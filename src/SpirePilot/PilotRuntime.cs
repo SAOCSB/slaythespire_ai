@@ -189,12 +189,14 @@ internal static class PilotRuntime
     /// A pinned route belongs to the map it was drawn on; a new run has a different map. Raised on the pilot's worker
     /// thread: the settings change runs on the main thread.
     /// </summary>
-    private static void OnNewRunDetected() => MainThread.Post(() =>
+    private static void OnNewRunDetected(string seed) => MainThread.Post(() =>
     {
-        if (Settings.Route.PinnedPath.Count == 0) return;
+        // A pin made in this very run (e.g. while the pilot was paused) stays; only another run's pin goes.
+        var route = Settings.Route;
+        if (route.PinnedPath.Count == 0 || route.PinnedSeed == seed) return;
         try
         {
-            UpdateSettings(s => s.Route.PinnedPath.Clear());
+            UpdateSettings(s => { s.Route.PinnedPath.Clear(); s.Route.PinnedSeed = ""; });
             ModLog.Info("new run: pinned route cleared");
         }
         catch (Exception ex) { ModLog.Warn("clearing the pinned route failed: " + ex.Message); }

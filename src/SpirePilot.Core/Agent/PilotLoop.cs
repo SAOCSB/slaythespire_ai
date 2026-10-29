@@ -111,8 +111,11 @@ public sealed class PilotLoop : IDisposable
     public event Action<DecisionTrace>? DecisionTraced;
     /// <summary>Raised after the pilot embarked on a new run (the mod persists the round-robin cursor).</summary>
     public event Action? RunStarted;
-    /// <summary>Raised when the loop sees a different run than before (started by anyone); run memory is already reset.</summary>
-    public event Action? NewRunDetected;
+    /// <summary>
+    /// Raised with the new run's seed when the loop sees a different run than before (started by anyone); run memory
+    /// is already reset.
+    /// </summary>
+    public event Action<string>? NewRunDetected;
 
     public PilotLoop(IGameBridge bridge, DecisionEngine engine, TeamChatHub team, Func<PilotSettings> settings, IPilotLog log)
     {
@@ -208,6 +211,9 @@ public sealed class PilotLoop : IDisposable
             {
                 _runEndedSinceEnabled = false;
                 _leftRunWithoutGameOver = false;
+                _wasInRun = false;
+                _lastRunMultiplayer = false;
+                _runIdentity = null; // a run started while the pilot was off is not "new" to it
                 AutoRunsStarted = 0;
             }
             _lastMode = mode;
@@ -274,6 +280,9 @@ public sealed class PilotLoop : IDisposable
 
         SetStatus(PilotState.Thinking, L10n.T("status.thinking"));
         var instruction = LiveInstruction;
+        // Taken before the engine applies owner rules to this snapshot's menu: fresh captures are unfiltered, so a
+        // fingerprint of the filtered snapshot would never match and advisor / step waits would end at once.
+        var stateFingerprint = Fingerprint(snap);
         // The pin as it was when the model started; a pin the owner sets while it thinks takes over the move.
         var pinnedBefore = snap.Map is { } mapBefore
             ? Route.RoutePlanner.PinnedNext(mapBefore, settings.Route, snap.Run?.Act ?? 0, snap.Run?.Seed)
@@ -331,7 +340,7 @@ public sealed class PilotLoop : IDisposable
             AdviceAction = action;
             var advice = action.Label + (decision.Messages.Count > 0 ? "  💬 " + string.Join(" / ", decision.Messages.Select(m => m.Text)) : "");
             SetStatus(PilotState.Advising, L10n.T("status.advice", advice));
-            await WaitForChangeAsync(snap, waitForStep: false, ct).ConfigureAwait(false);
+            await WaitForChangeAsync(stateFingerprint, waitForStep: false, ct).ConfigureAwait(false);
             // The advice was for that state only: never leave it executable in the next one.
             Advice = null;
             AdviceAction = null;
@@ -342,7 +351,7 @@ public sealed class PilotLoop : IDisposable
         if (settings.Control.StepMode)
         {
             SetStatus(PilotState.StepReady, L10n.T("status.step_ready", action.Label));
-            bool stepped = await WaitForChangeAsync(snap, waitForStep: true, ct).ConfigureAwait(false);
+            bool stepped = await WaitForChangeAsync(stateFingerprint, waitForStep: true, ct).ConfigureAwait(false);
             if (!stepped)
             {
                 _engine.Memory.ClearPlan();
@@ -514,7 +523,7 @@ public sealed class PilotLoop : IDisposable
         {
             _engine.Memory.Reset();
             _log.Info("new run detected; run memory cleared");
-            try { NewRunDetected?.Invoke(); } catch (Exception ex) { _log.Warn("new-run handler failed: " + ex.Message); }
+            try { NewRunDetected?.Invoke(run.Seed!); } catch (Exception ex) { _log.Warn("new-run handler failed: " + ex.Message); }
         }
         _runIdentity = identity;
     }
@@ -524,7 +533,7 @@ public sealed class PilotLoop : IDisposable
     {
         // A finished combat room (only its Proceed button left) is out of combat: no fight is running.
         bool combatDecision = s.Screen is ScreenKind.Combat && s.Combat != null || s.Screen is ScreenKind.HandSelect ||
-                              s.Combat != null && s.Screen is ScreenKind.ChooseOne or ScreenKind.CardGridSelect or ScreenKind.Popup;
+                              s.Combat != null && s.Screen is ScreenKind.ChooseOne or ScreenKind.CardGridSelect or ScreenKind.Popup or ScreenKind.Map;
         return mode switch
         {
             PilotMode.FullAuto or PilotMode.Advisor => true,
@@ -556,6 +565,8 @@ public sealed class PilotLoop : IDisposable
     {
         if (s.InRun)
         {
+            // A new stretch of play (continued or started by anyone): the last exit no longer blocks auto-restart.
+            if (!_wasInRun) _leftRunWithoutGameOver = false;
             _wasInRun = true;
             _lastRunMultiplayer = s.IsMultiplayer;
         }
@@ -602,9 +613,8 @@ public sealed class PilotLoop : IDisposable
     /// Waits until the situation changes (returns false) or, with <paramref name="waitForStep"/>, until the user
     /// presses Step (returns true).
     /// </summary>
-    private async Task<bool> WaitForChangeAsync(GameSnapshot snap, bool waitForStep, CancellationToken ct)
+    private async Task<bool> WaitForChangeAsync(string fingerprint, bool waitForStep, CancellationToken ct)
     {
-        var fingerprint = Fingerprint(snap);
         Task<bool> step;
         lock (_lock)
         {

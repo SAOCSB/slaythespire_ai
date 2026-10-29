@@ -318,6 +318,8 @@ internal static class EventReader
         bool Left() => RoomUtil.CurrentScreen() is not NEventRoom || RoomUtil.ModalOpen();
 
         var button = ProceedButton(SceneUtil.Alive(room) ? room : null);
+        // Leaving is our own proceed: the map reader must not offer "close map" while teammates finish.
+        UiActions.NoteOwnProceed();
         if (button != null && SceneUtil.Usable(button))
             return await RoomUtil.PressAndWait(button, "leave event", Left, UiActions.DefaultTimeout, ct);
 

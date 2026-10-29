@@ -75,7 +75,9 @@ public static class FallbackPolicy
                 return Of(ActionKind.Proceed) ?? actions[0];
 
             case ScreenKind.Event:
-                return SafeEventOption(s) ?? Of(ActionKind.Proceed) ?? actions[0];
+                // Minigames (Crystal Sphere): pick a cell rather than toggling tools back and forth.
+                return SafeEventOption(s) ?? actions.FirstOrDefault(a => a.SemanticKey.StartsWith("crystal:cell:", StringComparison.Ordinal))
+                       ?? Of(ActionKind.Proceed) ?? actions[0];
 
             case ScreenKind.RestSite:
             {
