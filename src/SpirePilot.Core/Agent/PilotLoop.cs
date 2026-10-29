@@ -420,10 +420,16 @@ public sealed class PilotLoop : IDisposable
         SetStatus(PilotState.Acting, L10n.T("status.acting", target.Label));
         var result = await _bridge.ExecuteAsync(target, ct).ConfigureAwait(false);
         _engine.Memory.AddHistory(HistoryLine(fresh, target, result, decision.Source));
-        // Taking the turn back is only the first step of helping: the request stays unread so the next decision,
-        // with the full menu, acts on it.
+        // Taking the turn back is only the first step of helping: the requests it was taken for become promises the
+        // next decision (with the full menu) sees as "accepted earlier" — not unread mail that could trigger another undo.
         bool undid = target.Kind == ActionKind.UndoEndTurn && result.Success;
-        if (!undid) _team.MarkRead(decision.HandledInboxIds);
+        if (undid)
+        {
+            var handled = decision.HandledInboxIds.ToHashSet();
+            foreach (var m in _team.PeekAiInbox().Where(m => handled.Contains(m.Id) && DecisionEngine.IsActionable(m)))
+                _engine.Memory.TrackAccepted(m);
+        }
+        _team.MarkRead(decision.HandledInboxIds);
         if (instruction != null && decision.Source == DecisionSource.Llm && result.Success && !undid)
         {
             // The model saw the instruction and its decision got executed: consume it.
@@ -596,6 +602,8 @@ public sealed class PilotLoop : IDisposable
     public static ActionOption? Revalidate(ActionOption action, GameSnapshot old, GameSnapshot fresh)
     {
         if (fresh.Sequence == old.Sequence) return fresh.FindAction(action.Id) ?? action;
+        // Another screen opened while the model was thinking: whatever was chosen belongs to the old one.
+        if (fresh.Screen != old.Screen || !string.Equals(fresh.ScreenName, old.ScreenName, StringComparison.Ordinal)) return null;
         if (!string.IsNullOrEmpty(action.SemanticKey))
             return fresh.Actions.FirstOrDefault(a => a.SemanticKey == action.SemanticKey);
         return fresh.Actions.FirstOrDefault(a => a.Kind == action.Kind && a.Label == action.Label &&

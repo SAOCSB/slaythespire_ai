@@ -714,7 +714,10 @@ internal static class CombatReader
     private static void AddFinishedRoomProceed(ScreenProbe probe, ActionSink sink)
     {
         if (probe.Screen is not NCombatRoom room || !SceneUtil.Alive(room)) return;
-        if (!SceneUtil.Usable(RoomProceedButton(room)))
+        // Co-op: once we proceeded, the room waits for the others; pressing again could take our vote back.
+        bool waitingForOthers = Rooms.RoomUtil.MultiplayerRun() &&
+                                Rooms.RoomUtil.Shown(Reflect.GetOptional<Control>(room, "_waitingForOtherPlayersOverlay"));
+        if (waitingForOthers || !SceneUtil.Usable(RoomProceedButton(room)))
         {
             _proceedSince = null;
             return;
@@ -729,7 +732,9 @@ internal static class CombatReader
             return;
         }
         if (Stopwatch.GetElapsedTime(since.At, now) < ProceedSettle) return;
-        sink.Add(ActionKind.Proceed, L10n.T("act.combat_proceed"), "proceed", ct => ProceedFromRoom(room, ct), unpredictable: true);
+        // Own key: a plain "proceed" would re-validate onto the rewards screen's proceed (forfeiting the rewards) if
+        // that overlay opened while the model was thinking.
+        sink.Add(ActionKind.Proceed, L10n.T("act.combat_proceed"), "combat:proceed", ct => ProceedFromRoom(room, ct), unpredictable: true);
     }
 
     /// <summary>How long the finished room's proceed button must stay usable before it is offered.</summary>

@@ -170,3 +170,19 @@ public class CoopRegressionTests
         Assert.Equal(new[] { TeamMessageKind.RequestBlock }, bridge.Signals);
     }
 }
+
+public class RevalidateTests
+{
+    [Fact]
+    public void An_action_never_carries_over_to_another_screen()
+    {
+        var old = new GameSnapshot { Screen = ScreenKind.Combat, ScreenName = "NCombatRoom", Sequence = 1 };
+        old.Actions.Add(new ActionOption { Id = "a0", Kind = ActionKind.Proceed, SemanticKey = "proceed" });
+        var rewards = new GameSnapshot { Screen = ScreenKind.CombatRewards, ScreenName = "NRewardsScreen", Sequence = 2 };
+        rewards.Actions.Add(new ActionOption { Id = "a3", Kind = ActionKind.Proceed, SemanticKey = "proceed" });
+        Assert.Null(PilotLoop.Revalidate(old.Actions[0], old, rewards));
+        var same = new GameSnapshot { Screen = ScreenKind.Combat, ScreenName = "NCombatRoom", Sequence = 3 };
+        same.Actions.Add(new ActionOption { Id = "a1", Kind = ActionKind.Proceed, SemanticKey = "proceed" });
+        Assert.Equal("a1", PilotLoop.Revalidate(old.Actions[0], old, same)!.Id);
+    }
+}

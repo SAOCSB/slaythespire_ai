@@ -124,7 +124,7 @@ internal static class CombatFlow
     /// player of the fight) are ignored: they run in their own queues and do not block this player, and whatever they
     /// change shows up in the snapshot's stability signature. Actions owned by the local player or by no player (the
     /// game's own) count. An action parked in <see cref="GameActionState.GatheringPlayerChoice"/> is not running; when
-    /// it is not a teammate's, or the local player's queue is paused, the result is <see cref="QueueState.OwnChoice"/>.
+    /// it is not a teammate's, the result is <see cref="QueueState.OwnChoice"/>.
     /// <c>GetReadyAction</c> throws while an action executes; that counts as busy unless the running action is a
     /// teammate's or a parked one (STS2-Agent lesson). In co-op the local player's own queue is also read, since the
     /// next ready action may be a teammate's while ours waits behind it.
@@ -190,8 +190,8 @@ internal static class CombatFlow
                     what = queued;
                     return QueueState.Busy;
                 }
-                try { if (set.ActionQueueIsPaused(id)) ownChoice = true; }
-                catch (Exception) { /* unknown: no extra signal */ }
+                // A paused queue alone is not a pending choice: the game may keep queues paused around turn phases, and
+                // treating that as "waiting for a choice" would stop the AI for good. Only a parked action counts.
             }
             return ownChoice ? QueueState.OwnChoice : QueueState.Idle;
         }

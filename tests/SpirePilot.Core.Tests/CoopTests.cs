@@ -148,6 +148,24 @@ public class CoopTests
     }
 
     [Fact]
+    public async Task An_undo_without_an_accept_still_remembers_the_request()
+    {
+        var (loop, bridge, client, hub, transport, _) = Make();
+        var s = Waiting();
+        s.CanAct = true;
+        s.Actions.Add(new ActionOption { Id = "a0", Kind = ActionKind.UndoEndTurn, Label = "Undo end turn", SemanticKey = "undo_end_turn" });
+        bridge.Set(s);
+        client.Answer = _ => "{\"thought\":\"help Bob\",\"actions\":[\"a0\"]}";
+        hub.Receive(new TeamMessage { From = 2, To = 1, FromName = "Bob", Kind = TeamMessageKind.RequestPotion, Text = "heal me" });
+        loop.Start();
+        await Until(() => bridge.Executed.Count == 1);
+        await Task.Delay(50);
+        loop.Stop();
+        Assert.Single(loop.Memory.OpenRequests);
+        Assert.Empty(hub.PeekAiInbox()); // read: no second undo for the same request
+    }
+
+    [Fact]
     public async Task Teammates_without_the_mod_get_an_emote_instead_of_text()
     {
         var (loop, bridge, client, hub, transport, _) = Make();
