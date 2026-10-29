@@ -18,24 +18,15 @@ internal static class Reactions
 {
     private static bool _warned;
 
-    /// <summary>The emote closest to a team message kind, or null when none fits (chat, route suggestions).</summary>
-    public static ReactionType? For(TeamMessageKind kind) => kind switch
+    /// <summary>The emote closest to a team message kind (<see cref="TeamEmotes.ReactionFor"/>), or null when none fits.</summary>
+    public static ReactionType? For(TeamMessageKind kind) => TeamEmotes.ReactionFor(kind) switch
     {
-        TeamMessageKind.Accept => ReactionType.ThumbUp,
-        TeamMessageKind.Decline => ReactionType.ThumbDown,
-        TeamMessageKind.RequestPotion or TeamMessageKind.RequestBlock or TeamMessageKind.RequestDebuff or
-            TeamMessageKind.RequestFocus => ReactionType.Exclamation,
-        TeamMessageKind.AskNeedPotion or TeamMessageKind.OfferPotion => ReactionType.QuestionMark,
+        "ThumbUp" => ReactionType.ThumbUp,
+        "ThumbDown" => ReactionType.ThumbDown,
+        "Exclamation" => ReactionType.Exclamation,
+        "QuestionMark" => ReactionType.QuestionMark,
         _ => null,
     };
-
-    /// <summary>Whether <paramref name="kind"/> has an emote (no game types in the signature).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static bool Has(TeamMessageKind kind) => For(kind) != null;
-
-    /// <summary>The game's name of the emote for <paramref name="kind"/> ("ThumbUp", "Exclamation" ...), or null.</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static string? Name(TeamMessageKind kind) => For(kind)?.ToString();
 
     /// <summary>
     /// Main thread. Sends the emote for <paramref name="kind"/> from above the local player's creature (the viewport

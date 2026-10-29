@@ -67,6 +67,12 @@ public sealed class TeamMessage
     public string? Emote { get; set; }
     [JsonIgnore]
     public bool IsEmote => Emote != null;
+    /// <summary>
+    /// An emote from a teammate who runs SpirePilot: aimed at someone who cannot read text, so context only for us.
+    /// Local only, like <see cref="Emote"/>.
+    /// </summary>
+    [JsonIgnore]
+    public bool EmoteForOthers { get; set; }
 
     public static string NewId() => Guid.NewGuid().ToString("N")[..12];
 
@@ -109,6 +115,7 @@ public sealed class TeamMessage
             ReplyTo = IdOf(ReplyTo),
             Time = Time,
             Emote = Cut(Emote, 32),
+            EmoteForOthers = EmoteForOthers,
         };
     }
 }

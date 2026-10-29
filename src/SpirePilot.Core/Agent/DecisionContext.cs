@@ -17,7 +17,7 @@ public sealed class DecisionContext
     public string? PinnedNext { get; set; }
     /// <summary>Team messages already answered or informational (accept / decline / AI chat): context only.</summary>
     public List<TeamMessage> InboxInfo { get; set; } = new();
-    /// <summary>Requests / offers / questions this AI sent that are still unanswered or unfulfilled.</summary>
+    /// <summary>Requests / offers / questions this player sent (the AI, or its owner) that are still unanswered or unfulfilled.</summary>
     public List<TeamMessage> OutgoingRequests { get; set; } = new();
     /// <summary>Our own requests that the current inbox answers (closed now; shown so answers have their question).</summary>
     public List<TeamMessage> AnsweredOutgoing { get; set; } = new();
@@ -64,6 +64,10 @@ public sealed class PlanGuard
 public sealed class AgentMemory
 {
     public const int MaxMemoLength = 400;
+    /// <summary>How many accepted requests are kept (oldest dropped first).</summary>
+    public const int MaxOpenRequests = 6;
+    /// <summary>How long our own requests and accepted ones stay open at most (and emotes shown for them count).</summary>
+    public static readonly TimeSpan RequestMaxAge = TimeSpan.FromMinutes(5);
 
     private readonly object _lock = new();
     private readonly List<string> _history = new();
@@ -71,6 +75,10 @@ public sealed class AgentMemory
     private readonly List<Team.TeamMessage> _outgoing = new();
     /// <summary>Where each tracked request was made: fight (null = no fight running), round, made while waiting.</summary>
     private readonly Dictionary<string, (string? fight, int round, bool waiting)> _scopes = new();
+    /// <summary>Teammates who answered one of our questions to everyone that stays open for the others.</summary>
+    private readonly Dictionary<string, HashSet<ulong>> _answeredBy = new();
+    /// <summary>Requests shown to teammates as a vanilla emote, newest last: what a thumbs up can answer.</summary>
+    private readonly List<(string Id, ulong To, long Time)> _signals = new();
     private string? _requestsCombat;
     private string? _fight;
     private int _round;
@@ -113,14 +121,20 @@ public sealed class AgentMemory
             if (_openRequests.Any(r => r.Id == request.Id)) return;
             _openRequests.Add(request);
             _scopes[request.Id] = (_fight, _round, whileWaiting);
-            while (_openRequests.Count > 6) Forget(_openRequests, 0);
+            while (_openRequests.Count > MaxOpenRequests) Remove(_openRequests, _openRequests[0]);
         }
     }
 
-    private void Forget(List<Team.TeamMessage> list, int index)
+    private void Remove(List<Team.TeamMessage> list, Team.TeamMessage m)
     {
-        _scopes.Remove(list[index].Id);
-        list.RemoveAt(index);
+        list.Remove(m);
+        _scopes.Remove(m.Id);
+        _answeredBy.Remove(m.Id);
+    }
+
+    private void RemoveWhere(List<Team.TeamMessage> list, Func<Team.TeamMessage, bool> gone)
+    {
+        foreach (var m in list.Where(gone).ToList()) Remove(list, m);
     }
 
     /// <summary>Drops accepted requests and our own requests older than <paramref name="maxAge"/>.</summary>
@@ -129,8 +143,8 @@ public sealed class AgentMemory
         var cutoff = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - (long)maxAge.TotalMilliseconds;
         lock (_lock)
         {
-            _openRequests.RemoveAll(r => r.Time != 0 && r.Time < cutoff);
-            _outgoing.RemoveAll(r => r.Time != 0 && r.Time < cutoff);
+            RemoveWhere(_openRequests, r => r.Time != 0 && r.Time < cutoff);
+            RemoveWhere(_outgoing, r => r.Time != 0 && r.Time < cutoff);
         }
     }
 
@@ -141,27 +155,47 @@ public sealed class AgentMemory
     /// </summary>
     public void NoteCombat(string? fight, int round)
     {
-        var scope = fight == null ? null : fight + ":" + round;
+        var scope = CombatScope(fight, round);
         lock (_lock)
         {
             if (scope == _requestsCombat) return;
             _fight = fight;
             _round = round;
             _requestsCombat = scope;
-            static bool PerRound(Team.TeamMessage m) =>
-                m.Kind is Team.TeamMessageKind.RequestDebuff or Team.TeamMessageKind.RequestFocus or Team.TeamMessageKind.RequestBlock;
-            bool Ended(Team.TeamMessage m)
-            {
-                if (!_scopes.TryGetValue(m.Id, out var at)) return false;
-                if (at.fight == null) return false;                   // made outside a fight: valid until it expires
-                if (at.fight != fight) return true;                   // that fight is over
-                return PerRound(m) && round > at.round + (at.waiting ? 1 : 0);
-            }
-            for (int i = _openRequests.Count - 1; i >= 0; i--)
-                if (Ended(_openRequests[i])) Forget(_openRequests, i);
-            for (int i = _outgoing.Count - 1; i >= 0; i--)
-                if (_outgoing[i].Kind is not (Team.TeamMessageKind.SuggestRoute or Team.TeamMessageKind.Chat) && Ended(_outgoing[i]))
-                    Forget(_outgoing, i);
+            RemoveWhere(_openRequests, m => Ended(m, fight, round));
+            RemoveWhere(_outgoing, m => EndsWithFight(m) && Ended(m, fight, round));
+        }
+    }
+
+    private static string? CombatScope(string? fight, int round) => fight == null ? null : fight + ":" + round;
+
+    /// <summary>Route suggestions and chat are not about a fight.</summary>
+    private static bool EndsWithFight(Team.TeamMessage m) =>
+        m.Kind is not (Team.TeamMessageKind.SuggestRoute or Team.TeamMessageKind.Chat);
+
+    /// <summary>Caller holds the lock.</summary>
+    private bool Ended(Team.TeamMessage m, string? fight, int round)
+    {
+        if (!_scopes.TryGetValue(m.Id, out var at)) return false;
+        if (at.fight == null) return false;                   // made outside a fight: valid until it expires
+        if (at.fight != fight) return true;                   // that fight is over
+        bool perRound = m.Kind is Team.TeamMessageKind.RequestDebuff or Team.TeamMessageKind.RequestFocus or Team.TeamMessageKind.RequestBlock;
+        return perRound && round > at.round + (at.waiting ? 1 : 0);
+    }
+
+    /// <summary>
+    /// Accepted requests and our own open requests as <see cref="ExpireRequests"/> with <paramref name="maxAge"/> and
+    /// <see cref="NoteCombat"/> at <paramref name="combat"/> (null: not noted) would leave them; changes nothing.
+    /// </summary>
+    public (List<Team.TeamMessage> Open, List<Team.TeamMessage> Outgoing) LiveRequests(TimeSpan maxAge, (string? Fight, int Round)? combat)
+    {
+        var cutoff = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - (long)maxAge.TotalMilliseconds;
+        lock (_lock)
+        {
+            bool noted = combat is { } c && CombatScope(c.Fight, c.Round) != _requestsCombat;
+            bool Gone(Team.TeamMessage m, bool fightBound) =>
+                m.Time != 0 && m.Time < cutoff || noted && fightBound && Ended(m, combat!.Value.Fight, combat.Value.Round);
+            return (_openRequests.Where(m => !Gone(m, true)).ToList(), _outgoing.Where(m => !Gone(m, EndsWithFight(m))).ToList());
         }
     }
 
@@ -170,19 +204,53 @@ public sealed class AgentMemory
     {
         lock (_lock)
         {
-            _openRequests.RemoveAll(r => r.From == player && r.Kind is Team.TeamMessageKind.RequestPotion);
-            _outgoing.RemoveAll(r => (r.To == player || r.To == 0) && r.Kind is Team.TeamMessageKind.OfferPotion or Team.TeamMessageKind.AskNeedPotion);
+            RemoveWhere(_openRequests, r => r.From == player && r.Kind is Team.TeamMessageKind.RequestPotion);
+            RemoveWhere(_outgoing, r => (r.To == player || r.To == 0) && r.Kind is Team.TeamMessageKind.OfferPotion or Team.TeamMessageKind.AskNeedPotion);
         }
     }
 
     /// <summary>Remembers a request / offer / question we sent (delivered), so answers to it can be matched.</summary>
-    public void TrackOutgoing(Team.TeamMessage sent, bool whileWaiting = false)
+    /// <param name="signalled">It was also shown as a vanilla emote, so a thumbs up can answer it.</param>
+    public void TrackOutgoing(Team.TeamMessage sent, bool whileWaiting = false, bool signalled = false)
     {
         lock (_lock)
         {
             _outgoing.Add(sent);
             _scopes[sent.Id] = (_fight, _round, whileWaiting);
-            while (_outgoing.Count > 8) Forget(_outgoing, 0);
+            while (_outgoing.Count > 8) Remove(_outgoing, _outgoing[0]);
+        }
+        if (signalled) NoteSignal(sent.Id, sent.To);
+    }
+
+    /// <summary>
+    /// An emote that asked teammates something was shown for <paramref name="id"/> (an untracked id when nobody can
+    /// answer it, e.g. the owner's own "!" button): from now on a thumbs up answers this, never an older request.
+    /// </summary>
+    public void NoteSignal(string id, ulong to)
+    {
+        lock (_lock)
+        {
+            _signals.Add((id, to, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+            while (_signals.Count > 16) _signals.RemoveAt(0);
+        }
+    }
+
+    /// <summary>
+    /// The newest request shown to <paramref name="teammate"/> (or everyone) as an emote within <see cref="RequestMaxAge"/>,
+    /// and whether it is still open; null when there is none.
+    /// </summary>
+    public (string Id, bool Open)? LastSignalTo(ulong teammate)
+    {
+        var cutoff = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - (long)RequestMaxAge.TotalMilliseconds;
+        lock (_lock)
+        {
+            for (int i = _signals.Count - 1; i >= 0; i--)
+            {
+                var s = _signals[i];
+                if (s.Time < cutoff) break;
+                if (s.To == teammate || s.To == 0) return (s.Id, _outgoing.Any(m => m.Id == s.Id));
+            }
+            return null;
         }
     }
 
@@ -196,7 +264,27 @@ public sealed class AgentMemory
     public void CloseOutgoing(string? id)
     {
         if (string.IsNullOrEmpty(id)) return;
-        lock (_lock) _outgoing.RemoveAll(m => m.Id == id);
+        lock (_lock) RemoveWhere(_outgoing, m => m.Id == id);
+    }
+
+    /// <summary>
+    /// <paramref name="teammate"/> answered our request <paramref name="id"/>, which stays open for the others (a
+    /// potion question to everyone: each "yes" is its own promise).
+    /// </summary>
+    public void NoteAnswer(string id, ulong teammate)
+    {
+        lock (_lock)
+        {
+            if (!_outgoing.Any(m => m.Id == id)) return;
+            if (!_answeredBy.TryGetValue(id, out var who)) _answeredBy[id] = who = new HashSet<ulong>();
+            who.Add(teammate);
+        }
+    }
+
+    /// <summary>Teammates who already answered our open request <paramref name="id"/>.</summary>
+    public IReadOnlyCollection<ulong> AnsweredBy(string id)
+    {
+        lock (_lock) return _answeredBy.TryGetValue(id, out var who) ? who.ToList() : Array.Empty<ulong>();
     }
 
     /// <summary>True when we already asked <paramref name="to"/> (or everyone) the same kind of thing and it is still open.</summary>
@@ -268,6 +356,8 @@ public sealed class AgentMemory
             _openRequests.Clear();
             _outgoing.Clear();
             _scopes.Clear();
+            _answeredBy.Clear();
+            _signals.Clear();
             _requestsCombat = null;
             _fight = null;
             _round = 0;

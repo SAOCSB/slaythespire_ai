@@ -114,26 +114,24 @@ public class TeamApiTests
         new() { Id = id, Kind = kind, To = to, Text = "?", Time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() };
 
     [Fact]
-    public void A_thumbs_up_answers_the_newest_open_request_to_that_teammate_or_everyone()
+    public void A_thumbs_up_answers_the_newest_request_shown_to_that_teammate_or_everyone()
     {
-        var outgoing = new List<TeamMessage>
-        {
-            Open("old", TeamMessageKind.RequestBlock, 2),
-            Open("toall", TeamMessageKind.AskNeedPotion, 0),
-            Open("other", TeamMessageKind.RequestDebuff, 3),
-        };
-        var up = TeamEmotes.ToMessage("ThumbUp", 2, "Bob", 1, outgoing);
+        var memory = new AgentMemory();
+        memory.TrackOutgoing(Open("old", TeamMessageKind.RequestBlock, 2), signalled: true);
+        memory.TrackOutgoing(Open("toall", TeamMessageKind.AskNeedPotion, 0), signalled: true);
+        memory.TrackOutgoing(Open("other", TeamMessageKind.RequestDebuff, 3), signalled: true);
+        var up = TeamEmotes.ToMessage("ThumbUp", 2, "Bob", 1, memory.LastSignalTo(2));
         Assert.Equal(TeamMessageKind.Accept, up.Kind);
         Assert.Equal("toall", up.ReplyTo);
         Assert.Equal(1ul, up.To);
         Assert.True(up.IsEmote);
         Assert.Contains("Bob", up.Text);
 
-        var down = TeamEmotes.ToMessage("ThumbDown", 3, "Cid", 1, outgoing);
+        var down = TeamEmotes.ToMessage("ThumbDown", 3, "Cid", 1, memory.LastSignalTo(3));
         Assert.Equal(TeamMessageKind.Decline, down.Kind);
         Assert.Equal("other", down.ReplyTo);
 
-        var nothingOpen = TeamEmotes.ToMessage("ThumbUp", 2, "Bob", 1, new List<TeamMessage>());
+        var nothingOpen = TeamEmotes.ToMessage("ThumbUp", 2, "Bob", 1, null);
         Assert.Equal(TeamMessageKind.Accept, nothingOpen.Kind);
         Assert.Null(nothingOpen.ReplyTo);
         Assert.Equal(0ul, nothingOpen.To);
@@ -146,7 +144,7 @@ public class TeamApiTests
     [InlineData("SadSlime", "SadSlime", false)]
     public void Other_emotes_are_short_human_chat_and_only_bang_and_question_ask_for_a_reaction(string reaction, string shown, bool actionable)
     {
-        var m = TeamEmotes.ToMessage(reaction, 2, "Bob", 1, new List<TeamMessage> { Open("q", TeamMessageKind.AskNeedPotion, 2) });
+        var m = TeamEmotes.ToMessage(reaction, 2, "Bob", 1, ("q", true));
         Assert.Equal(TeamMessageKind.Chat, m.Kind);
         Assert.False(m.FromAi);
         Assert.Null(m.ReplyTo);
@@ -166,13 +164,13 @@ public class TeamApiTests
         snap.CanAct = false;
         snap.Players.Add(new PlayerInfo { NetId = 2, Name = "Bob", Hp = 10, MaxHp = 70 });
 
-        for (int i = 0; i < 3; i++) hub.Receive(TeamEmotes.ToMessage("Heart", 2, "Bob", 1, engine.Memory.OutgoingRequests));
+        for (int i = 0; i < 3; i++) hub.Receive(TeamEmotes.ToMessage("Heart", 2, "Bob", 1, engine.Memory.LastSignalTo(2)));
         Assert.Single(hub.PeekAiInbox());
         Assert.False(engine.HasActionableInbox(snap));
         var line = engine.PreviewPrompt(snap, null).User.Split('\n').Single(l => l.Contains('❤'));
         Assert.Contains("| chat (no reply needed): Bob", line);
 
-        hub.Receive(TeamEmotes.ToMessage("Exclamation", 2, "Bob", 1, engine.Memory.OutgoingRequests));
+        hub.Receive(TeamEmotes.ToMessage("Exclamation", 2, "Bob", 1, engine.Memory.LastSignalTo(2)));
         Assert.True(engine.HasActionableInbox(snap));
     }
 
@@ -181,18 +179,18 @@ public class TeamApiTests
     {
         var hub = new TeamChatHub { LocalNetId = 1 };
         var t0 = DateTimeOffset.FromUnixTimeSeconds(1_800_000_000);
-        var first = TeamEmotes.ToMessage("Exclamation", 2, "Bob", 1, new List<TeamMessage>(), t0);
+        var first = TeamEmotes.ToMessage("Exclamation", 2, "Bob", 1, null, now: t0);
         Assert.Equal(12, first.Id.Length);
         Assert.Equal(first.Id, first.Sanitized().Id);
         Assert.True(hub.Receive(first));
         // Within the same 10-second window: the same id, dropped by the hub's dedupe (log and inbox).
-        Assert.False(hub.Receive(TeamEmotes.ToMessage("Exclamation", 2, "Bob", 1, new List<TeamMessage>(), t0.AddSeconds(3))));
+        Assert.False(hub.Receive(TeamEmotes.ToMessage("Exclamation", 2, "Bob", 1, null, now: t0.AddSeconds(3))));
         Assert.Single(hub.Log);
         // Another emote, another teammate: new messages.
-        Assert.True(hub.Receive(TeamEmotes.ToMessage("QuestionMark", 2, "Bob", 1, new List<TeamMessage>(), t0.AddSeconds(3))));
-        Assert.True(hub.Receive(TeamEmotes.ToMessage("Exclamation", 3, "Cid", 1, new List<TeamMessage>(), t0.AddSeconds(3))));
+        Assert.True(hub.Receive(TeamEmotes.ToMessage("QuestionMark", 2, "Bob", 1, null, now: t0.AddSeconds(3))));
+        Assert.True(hub.Receive(TeamEmotes.ToMessage("Exclamation", 3, "Cid", 1, null, now: t0.AddSeconds(3))));
         // Later, while the first is still unread: it replaces that one instead of piling up.
-        var later = TeamEmotes.ToMessage("Exclamation", 2, "Bob", 1, new List<TeamMessage>(), t0.AddSeconds(30));
+        var later = TeamEmotes.ToMessage("Exclamation", 2, "Bob", 1, null, now: t0.AddSeconds(30));
         Assert.True(hub.Receive(later));
         var inbox = hub.PeekAiInbox();
         Assert.Equal(3, inbox.Count);
@@ -206,9 +204,9 @@ public class TeamApiTests
         var settings = Settings();
         var hub = new TeamChatHub { LocalNetId = 1 };
         var engine = new DecisionEngine(() => settings, hub, new NullLog());
-        engine.Memory.TrackOutgoing(Open("ask1", TeamMessageKind.AskNeedPotion, 2));
+        engine.Memory.TrackOutgoing(Open("ask1", TeamMessageKind.AskNeedPotion, 2), signalled: true);
 
-        Assert.True(hub.Receive(TeamEmotes.ToMessage("ThumbUp", 2, "Bob", 1, engine.Memory.OutgoingRequests)));
+        Assert.True(hub.Receive(TeamEmotes.ToMessage("ThumbUp", 2, "Bob", 1, engine.Memory.LastSignalTo(2))));
         var yes = Assert.Single(hub.PeekAiInbox());
         Assert.Equal("ask1", yes.ReplyTo);
         Assert.True(yes.IsEmote);
@@ -220,14 +218,14 @@ public class TeamApiTests
     {
         var hub = new TeamChatHub { LocalNetId = 1 };
         foreach (var reaction in new[] { "Exclamation", "Skull", "ThumbDown", "SadSlime", "QuestionMark", "Heart", "ThumbUp", "HappyCultist" })
-            hub.Receive(TeamEmotes.ToMessage(reaction, 2, "Bob", 1, new List<TeamMessage>()));
+            hub.Receive(TeamEmotes.ToMessage(reaction, 2, "Bob", 1, null));
         Assert.Equal(5, hub.PeekAiInbox().Count);
     }
 
     [Fact]
     public void The_emote_mark_never_travels_on_the_wire()
     {
-        var m = TeamEmotes.ToMessage("ThumbUp", 2, "Bob", 1, new List<TeamMessage>());
+        var m = TeamEmotes.ToMessage("ThumbUp", 2, "Bob", 1, null);
         Assert.True(m.Sanitized().IsEmote);
         Assert.Equal(TeamWire.ParseOutcome.Ok, TeamWire.TryDecode(TeamWire.Encode(m), out var back));
         Assert.False(back!.IsEmote);

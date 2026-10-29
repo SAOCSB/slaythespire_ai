@@ -356,5 +356,6 @@ internal static class UiStrings
         ("ui.misc.log_prompts", "把完整提示词写入日志（调试用）", "Write full prompts to the log (debugging)"),
         ("ui.misc.version", "SpirePilot v{0}", "SpirePilot v{0}"),
         ("ui.misc.settings_file", "设置文件: {0}", "Settings file: {0}"),
+        ("ui.team.sent_and_emote", "已发送（没有 SpirePilot 的队友看到了对应的表情）", "Sent (teammates without SpirePilot saw the matching emote)"),
     };
 }

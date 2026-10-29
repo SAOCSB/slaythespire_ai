@@ -143,6 +143,9 @@ internal sealed class TeamPage : Page
         bool sent = false;
         try { sent = PilotRuntime.Bridge.TrySignal(kind); }
         catch (Exception) { /* reported below */ }
+        // A "!" or "?" asks something the AI does not know: a thumbs up after it must not answer an older AI request.
+        if (sent && kind is not (TeamMessageKind.Accept or TeamMessageKind.Decline))
+            PilotRuntime.Loop.Memory.NoteSignal(TeamMessage.NewId(), SelectedRecipient());
         Note(sent ? L10n.T("ui.team.emote_sent") : L10n.T("ui.team.emote_failed"), sent ? UiTheme.Muted : UiTheme.Warn);
     }
 
@@ -205,15 +208,17 @@ internal sealed class TeamPage : Page
     }
 
     /// <summary>
-    /// Who can read a message to the selected recipient: teammates with SpirePilot only. Shows the "link unavailable"
-    /// hint and the emote buttons when nobody addressed can (co-op only), or the note about the last send.
+    /// Who can read a message to the selected recipient: teammates with SpirePilot only. Shows the emote buttons when
+    /// someone addressed cannot (co-op only), the "link unavailable" hint when nobody addressed can, or the note about
+    /// the last send.
     /// </summary>
     private void RefreshReach()
     {
         if (_toHint == null || _emotes == null) return;
         var to = SelectedRecipient();
-        bool unreachable = Unreachable(Snap, to);
-        _emotes.Visible = unreachable;
+        var (addressed, readers) = Reach(Snap, to);
+        bool unreachable = addressed > 0 && readers == 0;
+        _emotes.Visible = addressed > readers;
         if (_note is { } n && (n.Input != _input.Text.Trim() || n.To != to || Time.GetTicksMsec() > n.Until)) _note = null;
         if (_note is { } note)
         {
@@ -228,9 +233,12 @@ internal sealed class TeamPage : Page
         _toHint.Visible = _note != null || unreachable;
     }
 
-    /// <summary>Co-op, and no teammate who runs SpirePilot would read a message to <paramref name="to"/> (0 = everyone).</summary>
-    private static bool Unreachable(GameSnapshot? snap, ulong to) =>
-        snap is { IsMultiplayer: true } && snap.Teammates.Any() && !TeamLink.HasReader(to);
+    /// <summary>
+    /// In co-op: the teammates a message to <paramref name="to"/> (0 = everyone) addresses, and how many of them run
+    /// SpirePilot by the live roster (the rule every sender uses, <see cref="TeamDelivery"/>).
+    /// </summary>
+    private static (int Addressed, int Readers) Reach(GameSnapshot? snap, ulong to) =>
+        snap is { IsMultiplayer: true } ? TeamDelivery.Reach(snap, to, TeamLink.HasReader) : (0, 0);
 
     private void RenderAllChat()
     {
@@ -419,7 +427,7 @@ internal sealed class TeamPage : Page
     {
         var text = _input.Text.Trim();
         if (text.Length == 0) return;
-        if (!Send(new TeamMessage { Kind = TeamMessageKind.Chat, Text = text }))
+        if (Send(new TeamMessage { Kind = TeamMessageKind.Chat, Text = text }).NoReader)
         {
             // Kept in the box: another recipient or an emote is the user's call.
             Note(L10n.T("ui.team.not_sent"), UiTheme.Warn);
@@ -502,16 +510,11 @@ internal sealed class TeamPage : Page
             default:
                 return;
         }
-        if (Send(msg))
-        {
-            Hint(L10n.T("ui.team.sent") + ": " + msg.Text, UiTheme.Muted);
-            return;
-        }
-        // Nobody addressed runs SpirePilot: the closest vanilla emote is all they can see.
-        bool emoted = false;
-        try { emoted = PilotRuntime.Bridge.TrySignal(kind); }
-        catch (Exception) { /* hint below */ }
-        Hint(emoted ? L10n.T("ui.team.sent_emote") : L10n.T("ui.team.not_sent"), UiTheme.Warn);
+        var sent = Send(msg);
+        if (sent.NoReader)
+            Hint(sent.Emote != null ? L10n.T("ui.team.sent_emote") : L10n.T("ui.team.not_sent"), UiTheme.Warn);
+        else
+            Hint(L10n.T(sent.Emote != null ? "ui.team.sent_and_emote" : "ui.team.sent") + ": " + msg.Text, UiTheme.Muted);
     }
 
     /// <summary>
@@ -522,19 +525,18 @@ internal sealed class TeamPage : Page
         (snap == null ? null : PilotLoop.NormalizeTarget(e.Key, snap)) ?? e.Name;
 
     /// <summary>
-    /// Sends to the selected recipient. In co-op nothing is sent when nobody addressed runs SpirePilot (they would
-    /// never see the text; on a client the host would drop it): returns false then, so the caller can use an emote.
+    /// Sends to the selected recipient by the rule every sender uses: text to teammates who run SpirePilot, the kind's
+    /// vanilla emote to the others, no text when nobody addressed can read it. The AI remembers it like its own message.
     /// </summary>
-    private bool Send(TeamMessage msg)
+    private Delivery Send(TeamMessage msg)
     {
         msg.To = SelectedRecipient();
         var snap = Snap;
         RefreshReach();
-        if (Unreachable(snap, msg.To)) return false;
-        var entry = PilotRuntime.Team.Send(msg, fromAi: false);
-        if (entry != null && Draft.Team.SpeechBubbles && snap is { IsMultiplayer: true })
+        var sent = PilotRuntime.Loop.SendForPlayer(msg, snap, fromAi: false, TeamLink.HasReader);
+        if (sent.Entry != null && Draft.Team.SpeechBubbles && snap is { IsMultiplayer: true })
             PilotRuntime.Bridge.ShowSpeech(snap.LocalPlayerId, msg.Text);
-        return true;
+        return sent;
     }
 
     private void Hint(string text, Color color)
