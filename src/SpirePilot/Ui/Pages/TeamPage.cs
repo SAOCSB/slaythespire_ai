@@ -402,7 +402,14 @@ internal sealed class TeamPage : Page
     {
         var text = _input.Text.Trim();
         if (text.Length == 0) return;
-        Send(new TeamMessage { Kind = TeamMessageKind.Chat, Text = text });
+        if (!Send(new TeamMessage { Kind = TeamMessageKind.Chat, Text = text }))
+        {
+            // Kept in the box: another recipient or an emote is the user's call.
+            UiKit.SetText(_toHint, L10n.T("ui.team.not_sent"));
+            UiKit.SetColor(_toHint, UiTheme.Warn);
+            _toHint.Visible = true;
+            return;
+        }
         _input.Text = "";
         _input.ReleaseFocus();
     }
@@ -499,16 +506,20 @@ internal sealed class TeamPage : Page
     private static string EnemyRef(CreatureInfo e, GameSnapshot? snap) =>
         (snap == null ? null : PilotLoop.NormalizeTarget(e.Key, snap)) ?? e.Name;
 
-    /// <summary>Sends to the selected recipient; returns false when nobody addressed can read it (co-op).</summary>
+    /// <summary>
+    /// Sends to the selected recipient. In co-op nothing is sent when nobody addressed runs SpirePilot (they would
+    /// never see the text; on a client the host would drop it): returns false then, so the caller can use an emote.
+    /// </summary>
     private bool Send(TeamMessage msg)
     {
         msg.To = SelectedRecipient();
-        var entry = PilotRuntime.Team.Send(msg, fromAi: false);
         var snap = Snap;
+        RefreshReach();
+        if (snap is { IsMultiplayer: true } && Readers(snap, msg.To).Count == 0) return false;
+        var entry = PilotRuntime.Team.Send(msg, fromAi: false);
         if (entry != null && Draft.Team.SpeechBubbles && snap is { IsMultiplayer: true })
             PilotRuntime.Bridge.ShowSpeech(snap.LocalPlayerId, msg.Text);
-        RefreshReach();
-        return entry is { Delivered: true } || snap is not { IsMultiplayer: true } || Readers(snap, msg.To).Count > 0;
+        return true;
     }
 
     private void Hint(string text, Color color)

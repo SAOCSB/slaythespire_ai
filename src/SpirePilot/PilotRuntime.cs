@@ -1,5 +1,8 @@
+using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using Godot;
 using HarmonyLib;
+using MegaCrit.Sts2.Core.Debug;
 using MegaCrit.Sts2.Core.Localization;
 using SpirePilot.Api;
 using SpirePilot.Core.Agent;
@@ -35,6 +38,22 @@ internal static class PilotRuntime
     /// <summary>Raised (on the saving thread) after settings were saved.</summary>
     public static event Action<PilotSettings>? SettingsChanged;
 
+    /// <summary>
+    /// Set when this build is for another game version than the one running: the AI stays off and the overlay says
+    /// which build to install. Null otherwise (also while the game version is not known yet).
+    /// </summary>
+    public static string? VersionProblem =>
+        _wrongGameVersion is { } v ? L10n.T("status.version_mismatch", Diagnostics.CompiledFor, v, GameVersion.Branch(v) ?? v) : null;
+
+    /// <summary><see cref="VersionProblem"/> in English, for the log and the HTTP API.</summary>
+    public static string? VersionProblemEnglish =>
+        _wrongGameVersion is { } v
+            ? $"this SpirePilot build is for game {Diagnostics.CompiledFor}, but the game is {v}: the AI stays off; install the {GameVersion.Branch(v) ?? v} build"
+            : null;
+
+    private static volatile string? _wrongGameVersion;
+    private static bool _versionChecked;
+    private static int _versionAttempts;
     private static bool _initialized;
     private static volatile string? _gameLanguage;
     private static readonly object SettingsLock = new();
@@ -53,7 +72,12 @@ internal static class PilotRuntime
         Store = new SettingsStore(Path.Combine(DataDir, "settings.json"));
         Store.Load();
         if (Store.LoadError != null) ModLog.Warn("settings file unreadable, using defaults: " + Store.LoadError);
-        if (!File.Exists(Store.Path)) Store.Save();
+        if (!File.Exists(Store.Path))
+        {
+            // An unwritable data folder must not cost the whole mod: run on the in-memory settings.
+            try { Store.Save(); }
+            catch (Exception ex) { ModLog.Warn("could not write the first settings file (using in-memory settings): " + ex.Message); }
+        }
         Store.Saved += s => SettingsChanged?.Invoke(s);
         L10n.Configure(Settings.Ui.Language, null);
 
@@ -84,10 +108,46 @@ internal static class PilotRuntime
         TryInit("overlay", () => Overlay.Initialize(Harmony));
         MainThread.Frame += OnFrame;
 
+        CheckGameVersion();
         ApplyHttpApi();
-        Loop.Start();
         ModLog.Info("SpirePilot ready");
     }
+
+    /// <summary>
+    /// Main thread, until it has decided: compares the game's major.minor with the branch this DLL was compiled for
+    /// and starts the pilot when they match (or when the version cannot be read at all). A build for another branch
+    /// would fail at the first game member that changed (character select, potions ...), so the AI is switched off
+    /// and stays off instead.
+    /// </summary>
+    private static void CheckGameVersion()
+    {
+        if (_versionChecked) return;
+        string? version;
+        try { version = ReadGameVersion(); }
+        catch (Exception) { version = null; }
+        var matches = GameVersion.Matches(version, Diagnostics.CompiledFor);
+        if (matches == null)
+        {
+            // Not readable yet; a build without release info never is: then run unchecked after a while.
+            if (++_versionAttempts < 600) return;
+            ModLog.Warn($"game version unreadable ({version ?? "none"}): running without the version check");
+        }
+        _versionChecked = true;
+        if (matches != false)
+        {
+            Loop.Start();
+            return;
+        }
+        _wrongGameVersion = version;
+        ModLog.Error(VersionProblemEnglish!);
+        if (Settings.Control.Mode == PilotMode.Off) return;
+        try { SetMode(PilotMode.Off); }
+        catch (Exception ex) { ModLog.Warn("saving mode Off failed (it still applies): " + ex.Message); }
+    }
+
+    /// <summary>Its own method: a game update that changes the release info breaks this call, not the caller.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static string? ReadGameVersion() => ReleaseInfoManager.Instance?.ReleaseInfo?.Version;
 
     private static void TryInit(string what, Action init)
     {
@@ -100,6 +160,11 @@ internal static class PilotRuntime
         // Localization is not ready when mods load, and the player can switch the game language later: keep
         // following it (cheap; checked a few times per second), so the 'auto' language setting follows the game.
         if (_gameLanguage == null || MainThread.FrameCount % 20 == 0) TrackGameLanguage();
+        if (!_versionChecked)
+        {
+            try { CheckGameVersion(); }
+            catch (Exception ex) { ThrottledLog.Warn("version.check", "game version check failed: " + ex.Message); }
+        }
         try { TeamLink.Tick(); } catch (Exception ex) { ThrottledLog.Warn("teamlink.tick", "team link tick failed: " + ex.Message); }
         try { Overlay.Tick(); } catch (Exception ex) { ThrottledLog.Warn("overlay.tick", "overlay tick failed: " + ex.Message); }
         try { HttpApi?.Pump(); } catch (Exception ex) { ThrottledLog.Warn("http.pump", "http api failed: " + ex.Message); }
@@ -121,16 +186,20 @@ internal static class PilotRuntime
     /// The one way to change settings: clones the live settings, applies <paramref name="mutate"/>, saves and applies
     /// the result, all under one lock, so concurrent writers (UI, HTTP API threads, the pilot's worker) never lose each
     /// other's changes. Side effects that touch Godot or the HTTP listener run on the main thread. Any thread.
-    /// Throws when the file cannot be written (the new settings still apply for this session).
+    /// Throws when the file cannot be written, after applying the new settings for this session all the same.
     /// </summary>
     public static PilotSettings UpdateSettings(Action<PilotSettings> mutate)
     {
         PilotSettings saved;
+        ExceptionDispatchInfo? saveError = null;
         lock (SettingsLock)
         {
             var s = SettingsStore.Clone(Store.Current);
             mutate(s);
-            Store.Save(s);
+            if (_wrongGameVersion != null) s.Control.Mode = PilotMode.Off;
+            // The store takes the new settings before it writes the file: they are live even when writing fails.
+            try { Store.Save(s); }
+            catch (Exception ex) { saveError = ExceptionDispatchInfo.Capture(ex); }
             saved = Store.Current;
             L10n.Configure(saved.Ui.Language, _gameLanguage);
             Team.MaxAiMessagesPerMinute = saved.Team.MaxAiMessagesPerMinute;
@@ -139,20 +208,30 @@ internal static class PilotRuntime
         // threads, which Dispose would wait on).
         if (MainThread.IsMainThread) ApplyHttpApi();
         else MainThread.Post(ApplyHttpApi);
+        saveError?.Throw();
         return saved;
     }
 
-    /// <summary>Convenience for the UI and the HTTP API: change the mode and persist it. Any thread.</summary>
+    /// <summary>
+    /// Convenience for the UI and the HTTP API: change the mode and persist it. Any thread. Throws when the file cannot
+    /// be written; the mode applies all the same.
+    /// </summary>
     public static void SetMode(PilotMode mode)
     {
-        UpdateSettings(s => s.Control.Mode = mode);
-        if (mode != PilotMode.Off) Loop.Paused = false;
+        try { UpdateSettings(s => s.Control.Mode = mode); }
+        finally
+        {
+            if (mode != PilotMode.Off && _wrongGameVersion == null) Loop.Paused = false;
+        }
     }
 
-    /// <summary>Writes a diagnostics report (main thread) and returns its path, or null on failure.</summary>
-    public static string? WriteDiagnostics()
+    /// <summary>
+    /// Writes a diagnostics report and returns its path, or null on failure. Any thread; the game is read on the main
+    /// thread, the log and the file are handled off it.
+    /// </summary>
+    public static async Task<string?> WriteDiagnosticsAsync()
     {
-        try { return Diagnostics.Write(); }
+        try { return await Diagnostics.WriteAsync().ConfigureAwait(false); }
         catch (Exception ex)
         {
             ModLog.Error("diagnostics failed: " + ex);

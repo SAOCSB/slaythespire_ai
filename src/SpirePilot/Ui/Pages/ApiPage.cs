@@ -15,7 +15,9 @@ namespace SpirePilot.Ui.Pages;
 /// </summary>
 internal sealed class ApiPage : Page
 {
-    private static readonly string[] Efforts = { "", "none", "minimal", "low", "medium", "high", "xhigh", "max" };
+    private static readonly string[] OpenAiEfforts = { "", "none", "minimal", "low", "medium", "high", "xhigh", "max" };
+    /// <summary>The values of Anthropic's output_config.effort.</summary>
+    private static readonly string[] AnthropicEfforts = { "", "low", "medium", "high", "xhigh", "max" };
 
     private OptionButton _active = null!;
     private List<string> _profileNames = new();
@@ -45,6 +47,8 @@ internal sealed class ApiPage : Page
     private bool _dirty;
     private bool _loading;
     private string _effortCustom = "", _combatEffortCustom = "";
+    /// <summary>The effort values the drop-downs offer: those of the provider in the editor.</summary>
+    private string[] _efforts = OpenAiEfforts;
 
     public override string TitleKey => "ui.tab.api";
     public override ulong SnapshotIntervalMs => 0;
@@ -158,8 +162,11 @@ internal sealed class ApiPage : Page
         {
             _editName = p.Name;
             UiKit.SetText(_editorTitle, L10n.T("ui.api.editor", p.Name));
-            Put(_rename, p.Name);
+            // A reload of the same profile (any settings save) must not wipe a name being typed.
+            if (switched) Put(_rename, p.Name);
+            else UiKit.SetText(_rename, p.Name);
             UiKit.SelectId(_provider, (int)p.Provider);
+            _efforts = EffortsFor(p.Provider);
             Put(_baseUrl, p.BaseUrl);
             Put(_apiKey, p.ApiKey);
             Put(_model, p.Model);
@@ -195,28 +202,33 @@ internal sealed class ApiPage : Page
         if (e.Text != text) e.Text = text;
     }
 
-    /// <summary>Fills an effort drop-down; returns the custom value when it is not one of the known ones.</summary>
-    private static string FillEffort(OptionButton o, string value)
+    private static string[] EffortsFor(LlmProvider provider) => provider == LlmProvider.Anthropic ? AnthropicEfforts : OpenAiEfforts;
+
+    /// <summary>
+    /// Fills an effort drop-down with the provider's values; returns the custom value when it is not one of them (kept
+    /// and shown as it is, e.g. "minimal" after switching to Anthropic).
+    /// </summary>
+    private string FillEffort(OptionButton o, string value)
     {
         value = (value ?? "").Trim();
-        var items = Efforts.Select((e, i) => (e.Length == 0 ? L10n.T("ui.api.effort_default") : e, i)).ToList();
-        int index = Array.IndexOf(Efforts, value.ToLowerInvariant());
+        var items = _efforts.Select((e, i) => (e.Length == 0 ? L10n.T("ui.api.effort_default") : e, i)).ToList();
+        int index = Array.IndexOf(_efforts, value.ToLowerInvariant());
         string custom = "";
         if (index < 0)
         {
             custom = value;
-            items.Add((value, Efforts.Length));
-            index = Efforts.Length;
+            items.Add((value, _efforts.Length));
+            index = _efforts.Length;
         }
         UiKit.SetItems(o, items);
         o.Select(index);
         return custom;
     }
 
-    private static string EffortOf(OptionButton o, string custom)
+    private string EffortOf(OptionButton o, string custom)
     {
         int id = o.Selected >= 0 ? o.GetItemId(o.Selected) : 0;
-        return id >= 0 && id < Efforts.Length ? Efforts[id] : custom;
+        return id >= 0 && id < _efforts.Length ? _efforts[id] : custom;
     }
 
     // ---------------------------------------------------------------- editing
@@ -228,6 +240,12 @@ internal sealed class ApiPage : Page
         var url = _baseUrl.Text.Trim().TrimEnd('/');
         if (id == (int)LlmProvider.Anthropic && (url.Length == 0 || url == openAi)) _baseUrl.Text = anthropic;
         else if (id == (int)LlmProvider.OpenAiCompatible && (url.Length == 0 || url == anthropic)) _baseUrl.Text = openAi;
+        // Each protocol offers its own effort values; the chosen ones stay.
+        var general = EffortOf(_effort, _effortCustom);
+        var combat = EffortOf(_combatEffort, _combatEffortCustom);
+        _efforts = EffortsFor((LlmProvider)id);
+        _effortCustom = FillEffort(_effort, general);
+        _combatEffortCustom = FillEffort(_combatEffort, combat);
         OnFieldChanged();
     }
 
@@ -388,35 +406,17 @@ internal sealed class ApiPage : Page
         UiKit.SetColor(_testResult, UiTheme.Muted);
         var resultLabel = _testResult;
         var button = _test;
+        // Combat turns send their own effort: a value the server rejects would only show in the first fight.
+        var combat = profile.CombatReasoningEffort.Trim();
+        bool testCombat = combat.Length > 0 && !combat.Equals(profile.ReasoningEffort.Trim(), StringComparison.OrdinalIgnoreCase);
         Task.Run(async () =>
         {
-            var sw = Stopwatch.StartNew();
-            string text;
-            bool ok;
-            try
+            var (text, color) = await TestOnce(profile, null).ConfigureAwait(false);
+            if (testCombat && color != UiTheme.Bad)
             {
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(Math.Clamp(profile.TimeoutSeconds, 10, 900) + 5));
-                var response = await LlmClientFactory.TestAsync(profile, cts.Token).ConfigureAwait(false);
-                var reply = (response.Text ?? "").Trim().Replace('\n', ' ');
-                if (reply.Length > 80) reply = reply[..80] + "…";
-                var secs = response.Elapsed > TimeSpan.Zero ? response.Elapsed.TotalSeconds : sw.Elapsed.TotalSeconds;
-                text = L10n.T("ui.api.test_ok", secs, string.IsNullOrEmpty(response.Model) ? profile.Model : response.Model, reply);
-                ok = true;
-            }
-            catch (LlmException ex)
-            {
-                text = L10n.T("ui.api.test_fail", sw.Elapsed.TotalSeconds, (ex.StatusCode is { } code ? $"HTTP {code}: " : "") + ex.Message);
-                ok = false;
-            }
-            catch (OperationCanceledException)
-            {
-                text = L10n.T("ui.api.test_fail", sw.Elapsed.TotalSeconds, "timeout");
-                ok = false;
-            }
-            catch (Exception ex)
-            {
-                text = L10n.T("ui.api.test_fail", sw.Elapsed.TotalSeconds, ex.GetType().Name + ": " + ex.Message);
-                ok = false;
+                var (combatText, combatColor) = await TestOnce(profile, combat).ConfigureAwait(false);
+                text += "\n" + combatText;
+                if (combatColor != UiTheme.Good) color = combatColor;
             }
             MainThread.Post(() => UiKit.Guard("api.test.result", () =>
             {
@@ -424,9 +424,54 @@ internal sealed class ApiPage : Page
                 if (SceneUtil.Valid(button)) button.Disabled = false;
                 if (!SceneUtil.Valid(resultLabel)) return;
                 UiKit.SetText(resultLabel, text);
-                UiKit.SetColor(resultLabel, ok ? UiTheme.Good : UiTheme.Bad);
+                UiKit.SetColor(resultLabel, color);
             }));
         });
+    }
+
+    /// <summary>
+    /// One test request, with the general effort or (<paramref name="combatEffort"/> set) the combat one. Good, Warn
+    /// when the server took another effort than configured (the client falls back quietly), Bad on failure.
+    /// </summary>
+    private static async Task<(string Text, Color Color)> TestOnce(LlmProfile profile, string? combatEffort)
+    {
+        var sw = Stopwatch.StartNew();
+        string Failed(string why) => combatEffort == null
+            ? L10n.T("ui.api.test_fail", sw.Elapsed.TotalSeconds, why)
+            : L10n.T("ui.api.test_combat_fail", combatEffort, sw.Elapsed.TotalSeconds, why);
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(Math.Clamp(profile.TimeoutSeconds, 10, 900) + 5));
+            var response = await LlmClientFactory.TestAsync(profile, cts.Token, combatEffort).ConfigureAwait(false);
+            var secs = response.Elapsed > TimeSpan.Zero ? response.Elapsed.TotalSeconds : sw.Elapsed.TotalSeconds;
+            string text;
+            if (combatEffort == null)
+            {
+                var reply = (response.Text ?? "").Trim().Replace('\n', ' ');
+                if (reply.Length > 80) reply = reply[..80] + "…";
+                text = L10n.T("ui.api.test_ok", secs, string.IsNullOrEmpty(response.Model) ? profile.Model : response.Model, reply);
+            }
+            else
+            {
+                text = L10n.T("ui.api.test_combat_ok", combatEffort, secs);
+            }
+            var wanted = (combatEffort ?? profile.ReasoningEffort).Trim();
+            if (wanted.Length > 0 && !wanted.Equals(response.Effort, StringComparison.OrdinalIgnoreCase))
+                return (text + "\n" + L10n.T("ui.api.effort_rejected", wanted, response.Effort ?? L10n.T("ui.api.effort_default")), UiTheme.Warn);
+            return (text, UiTheme.Good);
+        }
+        catch (LlmException ex)
+        {
+            return (Failed((ex.StatusCode is { } code ? $"HTTP {code}: " : "") + ex.Message), UiTheme.Bad);
+        }
+        catch (OperationCanceledException)
+        {
+            return (Failed("timeout"), UiTheme.Bad);
+        }
+        catch (Exception ex)
+        {
+            return (Failed(ex.GetType().Name + ": " + ex.Message), UiTheme.Bad);
+        }
     }
 
     // ---------------------------------------------------------------- profile list

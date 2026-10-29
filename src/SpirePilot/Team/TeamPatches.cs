@@ -4,6 +4,7 @@ using HarmonyLib;
 using MegaCrit.Sts2.Core.Entities.Multiplayer;
 using MegaCrit.Sts2.Core.Multiplayer;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
+using MegaCrit.Sts2.Core.Multiplayer.Messages.Game.Flavor;
 using MegaCrit.Sts2.Core.Multiplayer.Transport;
 using MegaCrit.Sts2.Core.Platform;
 using SpirePilot.Infra;
@@ -31,6 +32,9 @@ internal static class TeamPatches
 
     /// <summary>The host learns each client's mod list from its handshake (0.111 only).</summary>
     public static bool HostDiscovery { get; private set; }
+
+    /// <summary>Teammates' vanilla reaction emotes reach the AI inbox.</summary>
+    public static bool ReactionReceive { get; private set; }
 
     public static void Install(Harmony harmony)
     {
@@ -72,6 +76,12 @@ internal static class TeamPatches
                 new[] { typeof(ulong), typeof(PeerVersionInfo) }),
             postfix: nameof(HostHandshakePostfix));
 #endif
+
+        // Emotes of teammates without SpirePilot. The handler is private (verified in the 0.111 listing only): on a
+        // version where it is missing or differs, the hook is skipped and logged once.
+        ReactionReceive = Patch(harmony, "ReactionSynchronizer.HandleReactionMessage",
+            () => AccessTools.Method(typeof(ReactionSynchronizer), "HandleReactionMessage", new[] { typeof(ReactionMessage), typeof(ulong) }),
+            postfix: nameof(ReactionPostfix));
 
         // Session end. Optional: Tick also polls IsConnected and the host's peer list.
         Patch(harmony, "NetClientGameService.OnDisconnectedFromHost",
@@ -211,6 +221,15 @@ internal static class TeamPatches
         catch (Exception ex) { ThrottledLogWarn("team link: host handshake hook failed: " + ex.Message); }
     }
 #endif
+
+    // ---- teammates' emotes ----
+
+    /// <summary>Private <c>ReactionSynchronizer.HandleReactionMessage(ReactionMessage, ulong senderId)</c>, bound by position.</summary>
+    private static void ReactionPostfix(ReactionSynchronizer __instance, ReactionMessage __0, ulong __1)
+    {
+        try { TeamLink.OnReaction(__instance?.NetService, __1, __0.type.ToString()); }
+        catch (Exception ex) { ThrottledLogWarn("team link: reaction hook failed: " + ex.Message); }
+    }
 
     // ---- session end ----
 

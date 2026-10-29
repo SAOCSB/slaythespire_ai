@@ -21,6 +21,8 @@ public sealed class OpenAiCompatibleClient : ILlmClient
     private bool _dropResponseFormat;
     private bool _dropReasoningEffort;
     private bool _triedTokenFieldSwap;
+    /// <summary>Reasoning effort of the last request built (null = none sent).</summary>
+    private string? _lastEffort;
 
     public OpenAiCompatibleClient(LlmProfile profile)
     {
@@ -50,7 +52,9 @@ public sealed class OpenAiCompatibleClient : ILlmClient
                 else if (!TryAdapt(ex.Message)) throw;
             }
         }
-        return Parse(body, sw.Elapsed);
+        var response = Parse(body, sw.Elapsed);
+        response.Effort = _lastEffort;
+        return response;
     }
 
     /// <summary>
@@ -145,8 +149,8 @@ public sealed class OpenAiCompatibleClient : ILlmClient
             body["response_format"] = new JsonObject { ["type"] = "json_object" };
         var effort = string.IsNullOrWhiteSpace(request.Effort) ? _profile.ReasoningEffort : request.Effort;
         // Only send reasoning_effort when the user configured one (general or combat): many servers reject the field.
-        if (!string.IsNullOrWhiteSpace(effort) && !_dropReasoningEffort)
-            body["reasoning_effort"] = effort!.Trim();
+        _lastEffort = string.IsNullOrWhiteSpace(effort) || _dropReasoningEffort ? null : effort!.Trim();
+        if (_lastEffort != null) body["reasoning_effort"] = _lastEffort;
         LlmHttp.MergeExtraBody(body, _profile.ExtraBodyJson);
 
         var http = new HttpRequestMessage(HttpMethod.Post, LlmHttp.JoinUrl(_profile.BaseUrl, "chat/completions"))

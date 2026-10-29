@@ -252,9 +252,7 @@ internal sealed class ControlPage : Page
         }
         catch (Exception ex)
         {
-            // Not written to the file, but the mode applies for this session (the store keeps the new settings);
-            // finish what SetMode would have done after saving, and show the failure in the footer.
-            if (mode != PilotMode.Off) PilotRuntime.Loop.Paused = false;
+            // Not written to the file, but the mode applies for this session: show the failure in the footer.
             SettingsDraft.Report(ex);
         }
     }

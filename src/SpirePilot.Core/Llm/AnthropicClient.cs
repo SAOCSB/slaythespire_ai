@@ -54,7 +54,9 @@ public sealed class AnthropicClient : ILlmClient
                 // retry once with the offending feature removed (older models / gateways)
             }
         }
-        return Parse(body, sw.Elapsed);
+        var response = Parse(body, sw.Elapsed);
+        response.Effort = _lastEffort;
+        return response;
     }
 
     private bool TryAdapt(string error)

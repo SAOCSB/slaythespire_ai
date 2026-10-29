@@ -30,6 +30,28 @@ internal static class ModLog
 
     public static string? FilePath => _filePath;
 
+    /// <summary>
+    /// The last <paramref name="count"/> lines of the log file (empty without one). Reads only the end of the file, so
+    /// it stays cheap however large the log grew; a line longer than that window is cut. Any thread.
+    /// </summary>
+    public static List<string> Tail(int count)
+    {
+        const int Window = 256 * 1024;
+        var path = _filePath;
+        if (path == null || !File.Exists(path)) return new List<string>();
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        long length = stream.Length;
+        long start = Math.Max(0, length - Window);
+        stream.Seek(start, SeekOrigin.Begin);
+        var bytes = new byte[length - start];
+        int read = 0, n;
+        while (read < bytes.Length && (n = stream.Read(bytes, read, bytes.Length - read)) > 0) read += n;
+        var lines = Encoding.UTF8.GetString(bytes, 0, read).Split('\n').Select(l => l.TrimEnd('\r')).ToList();
+        if (start > 0 && lines.Count > 0) lines.RemoveAt(0); // starts mid-line
+        if (lines.Count > 0 && lines[^1].Length == 0) lines.RemoveAt(lines.Count - 1);
+        return lines.Skip(Math.Max(0, lines.Count - count)).ToList();
+    }
+
     public static void Info(string message)
     {
         try { Log.Info(Prefix + message); } catch (Exception) { Godot.GD.Print(Prefix + message); }

@@ -1,6 +1,7 @@
 using System.Text;
 using SpirePilot.Core.Config;
 using SpirePilot.Core.Model;
+using SpirePilot.Core.Route;
 using SpirePilot.Core.Team;
 
 namespace SpirePilot.Core.Agent;
@@ -98,16 +99,7 @@ public static class PromptBuilder
         sb.AppendLine("[STATE]");
         sb.Append(formatter.Format(snapshot));
 
-        if (context.RouteSuggestions.Count > 0)
-        {
-            sb.AppendLine("[ROUTES] best paths from here by the route planner (M monster, E elite, R rest, $ shop, ? event, T treasure)");
-            for (int i = 0; i < context.RouteSuggestions.Count; i++)
-            {
-                var p = context.RouteSuggestions[i];
-                sb.Append(i + 1).Append(". ").Append(string.Join(">", p.Nodes)).Append(" [").Append(p.Summary).Append("] score ").Append(p.Score).AppendLine();
-            }
-            if (context.PinnedNext != null) sb.Append("The owner pinned a route; its next node is ").Append(context.PinnedNext).AppendLine(".");
-        }
+        AppendRoutes(sb, context.RouteSuggestions, context.PinnedNext);
 
         sb.AppendLine("[MENU]");
         foreach (var a in snapshot.Actions)
@@ -118,6 +110,19 @@ public static class PromptBuilder
         }
         sb.Append("Reply with the JSON object only.");
         return sb.ToString().Replace("\r\n", "\n");
+    }
+
+    /// <summary>The [ROUTES] block: the planner's best paths from here and the pinned route's next node (none: nothing).</summary>
+    public static void AppendRoutes(StringBuilder sb, IReadOnlyList<RoutePath> routes, string? pinnedNext)
+    {
+        if (routes.Count == 0) return;
+        sb.AppendLine("[ROUTES] best paths from here by the route planner (M monster, E elite, R rest, $ shop, ? event, T treasure)");
+        for (int i = 0; i < routes.Count; i++)
+        {
+            var p = routes[i];
+            sb.Append(i + 1).Append(". ").Append(string.Join(">", p.Nodes)).Append(" [").Append(p.Summary).Append("] score ").Append(p.Score).AppendLine();
+        }
+        if (pinnedNext != null) sb.Append("The owner pinned a route; its next node is ").Append(pinnedNext).AppendLine(".");
     }
 
     private static void AppendMessage(StringBuilder sb, TeamMessage m, GameSnapshot s, DecisionContext ctx, bool needsAnswer, bool header = true)

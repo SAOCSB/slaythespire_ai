@@ -1,13 +1,16 @@
+using System.Diagnostics;
 using System.Net;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using MegaCrit.Sts2.Core.Models;
 using SpirePilot.Core.Agent;
 using SpirePilot.Core.Config;
 using SpirePilot.Core.Model;
 using SpirePilot.Core.Team;
+using SpirePilot.Game;
 using SpirePilot.Infra;
 
 namespace SpirePilot.Api;
@@ -17,22 +20,27 @@ namespace SpirePilot.Api;
 /// can read the full game state and act through the same legal-action menu the built-in pilot uses.
 ///
 ///   GET  /status              pilot status, mode, token usage, last error
-///   GET  /state               fresh snapshot (state + legal actions); ?format=text → the pilot's state text + menu
-///                             (text/plain); ?include=text → the JSON plus that text as "text", from the same capture
-///   GET  /prompt              the prompt the built-in pilot would send for the current state
+///   GET  /state               fresh snapshot (state + legal actions); ?format=text → the pilot's state text, routes
+///                             and menu (text/plain); ?include=text → the JSON plus that text as "text", from the same
+///                             capture. The menu is the built-in pilot's: the owner's rules already removed actions.
+///   GET  /prompt              exactly what the built-in pilot would send now (owner rules, inbox, open requests,
+///                             routes, pin, live instruction); nothing is marked read
 ///   POST /act    {"semantic_key":"..."} or {"id":"a3","sequence":123}   execute a legal action (pilot must be Off /
 ///                             Advisor / paused). With "sequence" (the snapshot the id was read from) an id whose menu
-///                             changed since is refused with 409 "stale" instead of running whatever has that id now.
+///                             changed since is refused with 409 "stale" instead of running whatever has that id now;
+///                             an action an owner rule removed is refused with 403 "owner_rule".
 ///   POST /mode   {"mode":"FullAuto"|"CombatOnly"|"OutOfCombatOnly"|"Advisor"|"Off"}
 ///   POST /instruction {"text":"..."}                     one-shot instruction for the built-in pilot
 ///   GET  /chat                recent team chat
 ///   POST /chat   {"text":"...","to":"all","kind":"chat","potion":..,"debuff":..,"target":..,"reply_to":..,"from_ai":true}
+///                             → {"delivered", "id"}; in co-op, when nobody addressed runs SpirePilot, nothing is sent
+///                             and the kind's vanilla emote is shown instead: {"delivered": false, "emote", "reason"}
 ///   GET  /compendium?kind=cards|relics|potions|powers|characters   every game model with localized text
 ///   GET  /diagnostics         diagnostics report (markdown; no secrets)
 /// With a token configured, every request needs "Authorization: Bearer &lt;token&gt;". Requests from web pages are
 /// refused (any Origin header, a Host other than loopback), and POST bodies must be JSON (Content-Type
 /// application/json, at most 64 KB), so a browser can never drive the game.
-/// Error bodies are {"error": "...", "code": "..."}; 409 codes: "pilot_active", "busy", "stale".
+/// Error bodies are {"error": "...", "code": "..."}; 409 codes: "pilot_active", "busy", "stale", "version_mismatch".
 /// </summary>
 internal sealed class LocalHttpApi : IDisposable
 {
@@ -186,27 +194,20 @@ internal sealed class LocalHttpApi : IDisposable
                 {
                     var snap = await PilotRuntime.Bridge.CaptureAsync(CancellationToken.None);
                     if (snap == null) { await Send(res, 503, Error("no game state yet", "no_state")); break; }
-                    var s = PilotRuntime.Settings;
-                    var ctxObj = new DecisionContext { History = PilotRuntime.Engine.Memory.History, Memo = PilotRuntime.Engine.Memory.Memo };
-                    await Send(res, 200, new
-                    {
-                        system = PromptBuilder.CoreSystem,
-                        owner = PromptBuilder.BuildOwnerBlock(s, PilotRuntime.ResolveMessageLanguage(s), CharacterGuide.For(snap.LocalPlayer?.CharacterId)),
-                        user = PromptBuilder.BuildUser(snap, ctxObj, Formatter(s)),
-                        schema = JsonNode.Parse(DecisionParser.Schema),
-                    });
+                    var (system, owner, user) = PilotRuntime.Engine.PreviewPrompt(snap, PilotRuntime.Loop.LiveInstruction);
+                    await Send(res, 200, new { system, owner, user, schema = JsonNode.Parse(DecisionParser.Schema) });
                     break;
                 }
                 case ("GET", "/compendium"):
                 {
                     var kind = (req.QueryString["kind"] ?? "cards").ToLowerInvariant();
-                    var list = await MainThread.Run(() => Compendium(kind));
+                    var list = await CompendiumAsync(kind);
                     await Send(res, list == null ? 400 : 200, list ?? Error("kind must be cards, relics, potions, powers or characters", "bad_request"));
                     break;
                 }
                 case ("GET", "/diagnostics"):
                 {
-                    var report = await MainThread.Run(Diagnostics.Build);
+                    var report = await Diagnostics.BuildAsync();
                     await SendText(res, 200, report, "text/markdown; charset=utf-8");
                     break;
                 }
@@ -223,8 +224,17 @@ internal sealed class LocalHttpApi : IDisposable
                         await Send(res, 400, Error("unknown mode (use FullAuto, CombatOnly, OutOfCombatOnly, Advisor or Off)", "bad_request"));
                         break;
                     }
-                    PilotRuntime.SetMode(m);
-                    await Send(res, 200, StatusObject());
+                    if (m != PilotMode.Off && PilotRuntime.VersionProblemEnglish is { } problem)
+                    {
+                        await Send(res, 409, Error(problem, "version_mismatch"));
+                        break;
+                    }
+                    string? saveError = null;
+                    try { PilotRuntime.SetMode(m); }
+                    catch (Exception ex) { saveError = ex.Message; } // the mode applies all the same
+                    var status = JsonSerializer.SerializeToNode(StatusObject(), Json)!.AsObject();
+                    if (saveError != null) status["saveError"] = "settings file not written: " + saveError;
+                    await Send(res, 200, status);
                     break;
                 }
                 case ("POST", "/instruction"):
@@ -272,30 +282,36 @@ internal sealed class LocalHttpApi : IDisposable
 
     private static async Task State(HttpListenerResponse res, string? format, string? include)
     {
-        var snap = await PilotRuntime.Bridge.CaptureAsync(CancellationToken.None);
-        if (snap == null)
+        var raw = await PilotRuntime.Bridge.CaptureAsync(CancellationToken.None);
+        if (raw == null)
         {
             await Send(res, 503, Error("no game state yet", "no_state"));
             return;
         }
+        // The menu the built-in pilot chooses from: the owner's hard rules removed what it may not do.
+        var settings = PilotRuntime.Settings;
+        var snap = OwnerRules.Filtered(raw, settings);
         if (string.Equals(format, "text", StringComparison.OrdinalIgnoreCase))
         {
-            await SendText(res, 200, StateText(snap), "text/plain; charset=utf-8");
+            await SendText(res, 200, StateText(snap, settings), "text/plain; charset=utf-8");
             return;
         }
         if (string.Equals(include, "text", StringComparison.OrdinalIgnoreCase))
         {
             // Same capture for both, so the ids in the text are the ids in the JSON menu.
             var node = JsonSerializer.SerializeToNode(snap, Json) as JsonObject ?? new JsonObject();
-            node["text"] = StateText(snap);
+            node["text"] = StateText(snap, settings);
             await Send(res, 200, node);
             return;
         }
         await Send(res, 200, snap);
     }
 
-    /// <summary>The state text the built-in pilot's prompt uses, then its menu ("aN | label" lines, as in [MENU]).</summary>
-    private static string StateText(GameSnapshot snap)
+    /// <summary>
+    /// The state text the built-in pilot's prompt uses, its route lines on the map, then its menu ("aN | label" lines,
+    /// as in [MENU]).
+    /// </summary>
+    private static string StateText(GameSnapshot snap, PilotSettings settings)
     {
         var sb = new StringBuilder();
         if (!snap.CanAct) sb.Append("WAITING: ").Append(snap.WaitReason ?? "the game is busy").Append('\n');
@@ -303,9 +319,11 @@ internal sealed class LocalHttpApi : IDisposable
             // Co-op, turn already ended: acting is possible, but only to take the end turn back.
             sb.Append("NOTE: ").Append(snap.WaitReason ?? "waiting for teammates")
               .Append(". You already ended your turn; undo it only if a teammate needs you to act this turn.\n");
-        var state = Formatter(PilotRuntime.Settings).Format(snap);
+        var state = Formatter(settings).Format(snap);
         sb.Append(state);
         if (state.Length > 0 && !state.EndsWith('\n')) sb.Append('\n');
+        var (routes, pinnedNext) = DecisionEngine.Routes(snap, settings);
+        PromptBuilder.AppendRoutes(sb, routes, pinnedNext);
         sb.Append("Menu:\n");
         foreach (var a in snap.Actions)
         {
@@ -354,30 +372,29 @@ internal sealed class LocalHttpApi : IDisposable
             await Send(res, 409, new { error = "cannot act now: " + snap.WaitReason, code = "busy", sequence = snap.Sequence });
             return;
         }
-        ActionOption? action;
-        if (!string.IsNullOrWhiteSpace(key))
+        // The same menu GET /state serves: what an owner rule removed cannot be run from outside either.
+        var menu = OwnerRules.Filtered(snap, settings);
+        // Semantic keys mean the same thing in every snapshot: the preferred way to name an action.
+        if (string.IsNullOrWhiteSpace(key) && sequence is { } seen && !PilotRuntime.Bridge.MenuUnchangedSince(seen, snap))
         {
-            // Semantic keys mean the same thing in every snapshot: the preferred way to name an action.
-            action = snap.Actions.FirstOrDefault(a => a.SemanticKey == key);
-        }
-        else
-        {
-            if (sequence is { } seen && !PilotRuntime.Bridge.MenuUnchangedSince(seen, snap))
+            await Send(res, 409, new
             {
-                await Send(res, 409, new
-                {
-                    error = $"stale id: the menu changed since snapshot {seen}; choose again from this menu",
-                    code = "stale",
-                    sequence = snap.Sequence,
-                    legal = Menu(snap),
-                });
-                return;
-            }
-            action = snap.FindAction(id!.Trim());
+                error = $"stale id: the menu changed since snapshot {seen}; choose again from this menu",
+                code = "stale",
+                sequence = snap.Sequence,
+                legal = Menu(menu),
+            });
+            return;
+        }
+        var action = OwnerRules.Find(menu, snap, key, id, out bool removedByOwner);
+        if (removedByOwner)
+        {
+            await Send(res, 403, new { error = "the owner's settings do not allow this action", code = "owner_rule", sequence = snap.Sequence, legal = Menu(menu) });
+            return;
         }
         if (action == null)
         {
-            await Send(res, 404, new { error = "no such legal action", code = "no_action", sequence = snap.Sequence, legal = Menu(snap) });
+            await Send(res, 404, new { error = "no such legal action", code = "no_action", sequence = snap.Sequence, legal = Menu(menu) });
             return;
         }
         var result = await PilotRuntime.Bridge.ExecuteAsync(action, CancellationToken.None);
@@ -409,11 +426,29 @@ internal sealed class LocalHttpApi : IDisposable
                 return;
             }
         }
+        var kind = DecisionParser.ParseKind(body?["kind"]?.ToString());
+        if (snap is { IsMultiplayer: true } && !snap.Teammates.Any(p => p.HasTeamLink && (to == 0 || p.NetId == to)))
+        {
+            // Nobody addressed runs SpirePilot: they would never see the text (and on a client the host drops it).
+            // The kind's vanilla emote is all they can see.
+            string? emote = null;
+            if (Reactions.Has(kind))
+            {
+                if (fromAi && !PilotRuntime.Team.TryUseAiBudget($"emote|{kind}|{to}"))
+                {
+                    await Send(res, 429, Error("rate limited", "rate_limited"));
+                    return;
+                }
+                if (PilotRuntime.Bridge.TrySignal(kind)) emote = Reactions.Name(kind);
+            }
+            await Send(res, 200, new JsonObject { ["delivered"] = false, ["emote"] = emote, ["reason"] = "no_reader" });
+            return;
+        }
         var target = body?["target"]?.ToString();
         var msg = new TeamMessage
         {
             Text = text,
-            Kind = DecisionParser.ParseKind(body?["kind"]?.ToString()),
+            Kind = kind,
             To = to,
             Potion = body?["potion"]?.ToString(),
             Debuff = body?["debuff"]?.ToString(),
@@ -435,26 +470,48 @@ internal sealed class LocalHttpApi : IDisposable
                t is "所有人" or "全体";
     }
 
-    /// <summary>All models of one kind with localized text (main thread).</summary>
-    private static object? Compendium(string kind)
+    /// <summary>
+    /// All models of one kind with localized text; null for an unknown kind. Formatting every card takes a noticeable
+    /// time, so it runs on the main thread in slices of a few milliseconds spread over frames instead of freezing the game.
+    /// </summary>
+    private static async Task<List<object>?> CompendiumAsync(string kind)
     {
-        object Safe<T>(IEnumerable<T> models, Func<T, object> map) where T : class
+        var items = await MainThread.Run(() => CompendiumItems(kind));
+        if (items == null) return null;
+        var list = new List<object>(items.Count);
+        for (int next = 0; next < items.Count;)
         {
-            var list = new List<object>();
-            foreach (var m in models)
+            int from = next;
+            next = await MainThread.Run(() =>
             {
-                try { list.Add(map(m)); }
-                catch (Exception) { /* skip models that cannot render outside a run */ }
-            }
-            return list;
+                var sw = Stopwatch.StartNew();
+                int i = from;
+                do
+                {
+                    try { list.Add(items[i]()); }
+                    catch (Exception) { /* skip models that cannot render outside a run */ }
+                    i++;
+                } while (i < items.Count && sw.ElapsedMilliseconds < CompendiumSliceMs);
+                return i;
+            });
         }
+        return list;
+    }
+
+    private const int CompendiumSliceMs = 4;
+
+    /// <summary>One formatter per model of <paramref name="kind"/> (main thread).</summary>
+    private static List<Func<object>>? CompendiumItems(string kind)
+    {
+        static List<Func<object>> Each<T>(IEnumerable<T> models, Func<T, object> map) =>
+            models.Select(m => (Func<object>)(() => map(m))).ToList();
         return kind switch
         {
-            "cards" => Safe(MegaCrit.Sts2.Core.Models.ModelDb.AllCards, c => Game.ModelText.Card(c, "", inCombat: false)),
-            "relics" => Safe(MegaCrit.Sts2.Core.Models.ModelDb.AllRelics, r => Game.ModelText.Relic(r)),
-            "potions" => Safe(MegaCrit.Sts2.Core.Models.ModelDb.AllPotions, p => (object?)Game.ModelText.Potion(p, -1, inCombat: false) ?? new { }),
-            "powers" => Safe(MegaCrit.Sts2.Core.Models.ModelDb.AllPowers, p => Game.ModelText.Power(p)),
-            "characters" => Safe(MegaCrit.Sts2.Core.Models.ModelDb.AllCharacters, c => new { id = Game.ModelText.SafeId(c), name = Game.ModelText.Loc(c.Title) }),
+            "cards" => Each(ModelDb.AllCards, c => ModelText.Card(c, "", inCombat: false)),
+            "relics" => Each(ModelDb.AllRelics, r => ModelText.Relic(r)),
+            "potions" => Each(ModelDb.AllPotions, p => (object?)ModelText.Potion(p, -1, inCombat: false) ?? new { }),
+            "powers" => Each(ModelDb.AllPowers, p => ModelText.Power(p)),
+            "characters" => Each(ModelDb.AllCharacters, c => new { id = ModelText.SafeId(c), name = ModelText.Loc(c.Title) }),
             _ => null,
         };
     }
@@ -476,6 +533,7 @@ internal sealed class LocalHttpApi : IDisposable
             cachedTokens = engine.TotalCachedTokens,
             lastError = engine.LastLlmError,
             profile = PilotRuntime.Settings.Active?.Name,
+            versionMismatch = PilotRuntime.VersionProblemEnglish,
         };
     }
 

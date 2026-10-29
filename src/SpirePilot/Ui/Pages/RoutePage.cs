@@ -34,7 +34,14 @@ internal sealed class RoutePage : Page
     private VBoxContainer _plans = null!;
     private Label _pinned = null!;
     private Button _clearPin = null!;
+    private OptionButton _nextNode = null!;
+    private Button _pinNext = null!;
+    private readonly List<string> _nextNodes = new();
+    private string _nextKey = "";
     private string _planKey = "";
+
+    /// <summary>Id of the placeholder item ("no next node"). Not -1: Godot replaces a -1 id with the item's index.</summary>
+    private const int NoItemId = 10_000;
 
     /// <summary>The map the plans were last drawn from (static: survives a rebuild of the panel).</summary>
     private static MapInfo? _cachedMap;
@@ -84,6 +91,11 @@ internal sealed class RoutePage : Page
         _clearPin = UiKit.Button(L10n.T("ui.clear"), ClearPin, UiTheme.ButtonKind.Small);
         _clearPin.SizeFlagsVertical = Control.SizeFlags.ShrinkCenter;
         pinned.AddChild(UiKit.Row(_pinned, _clearPin));
+        // Any next node, not only the first step of a suggested route (a particular shop, the other elite ...).
+        _nextNode = UiKit.Options(_ => { }, "route.next");
+        _pinNext = UiKit.Button(L10n.T("ui.route.pin_next"), PinNext, UiTheme.ButtonKind.Small);
+        _pinNext.Disabled = true;
+        UiKit.Field(pinned, L10n.T("ui.route.next_node"), UiKit.Row(_nextNode, _pinNext));
 
         var plans = UiKit.Card(Body, L10n.T("ui.route.plans"));
         _plansHint = UiKit.Muted(L10n.T("ui.route.no_map"));
@@ -114,6 +126,7 @@ internal sealed class RoutePage : Page
         if (!slow) return;
         UpdatePlans();
         UpdatePinned();
+        UpdateNextNodes();
     }
 
     private void ShowWeights(RouteSettings route)
@@ -291,6 +304,42 @@ internal sealed class RoutePage : Page
         UiKit.SetColor(_pinned, otherRun ? UiTheme.Warn : otherAct ? UiTheme.Muted : UiTheme.Gold);
         UiKit.SetText(_clearPin, L10n.T(otherRun ? "ui.route.clear_stale" : "ui.clear"));
         _clearPin.Visible = true;
+    }
+
+    /// <summary>The nodes the party can travel to next, left to right, to pin one by hand.</summary>
+    private void UpdateNextNodes()
+    {
+        var map = CurrentMap(Snap)?.Map;
+        var next = map == null
+            ? new List<MapNodeInfo>()
+            : map.Reachable.Select(map.Find).OfType<MapNodeInfo>().OrderBy(n => n.Col).ToList();
+        var key = map?.Current + "|" + string.Join(";", next.Select(n => n.Key + ":" + n.Type));
+        if (key == _nextKey) return;
+        _nextKey = key;
+        var from = map?.Current is { } current ? map.Find(current) : null;
+        _nextNodes.Clear();
+        _nextNodes.AddRange(next.Select(n => n.Key));
+        UiKit.SetItems(_nextNode, next.Count == 0
+            ? new[] { (L10n.T("ui.route.no_next"), NoItemId) }
+            : next.Select((n, i) => (NodeLabel(n, from), i)));
+        _pinNext.Disabled = next.Count == 0;
+    }
+
+    /// <summary>"Elite · left (3,1)": the room type and where it lies from the current node (the map shows no coordinates).</summary>
+    private static string NodeLabel(MapNodeInfo node, MapNodeInfo? from)
+    {
+        var label = L10n.T("ui.route.short." + node.Type);
+        if (from != null)
+            label += " · " + L10n.T(node.Col < from.Col ? "ui.route.dir.left" : node.Col > from.Col ? "ui.route.dir.right" : "ui.route.dir.ahead");
+        return label + $" ({node.Key})";
+    }
+
+    private void PinNext()
+    {
+        int i = _nextNode.Selected >= 0 ? _nextNode.GetItemId(_nextNode.Selected) : -1;
+        if (CurrentMap(Snap) is not { } view || i < 0 || i >= _nextNodes.Count) return;
+        // Stored like a pinned route of one node: it is followed for this step, then the AI / planner choose again.
+        Pin(new List<string> { _nextNodes[i] }, view.Act, view.Seed);
     }
 
     private void Pin(List<string> nodes, int act, string seed)

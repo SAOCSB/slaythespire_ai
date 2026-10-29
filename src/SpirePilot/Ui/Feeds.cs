@@ -30,6 +30,9 @@ internal static class Feeds
     /// <summary>Main thread: chat entries received since the team page last drained them.</summary>
     public static readonly List<ChatEntry> NewChat = new();
 
+    /// <summary>Main thread: teammates' messages received since the overlay last drained them (toast, unread count).</summary>
+    public static readonly List<ChatEntry> NewTeamMessages = new();
+
     /// <summary>Increments whenever <see cref="Log"/> lost items at the front (views must re-render).</summary>
     public static int LogTrimVersion { get; private set; }
 
@@ -51,8 +54,14 @@ internal static class Feeds
             LogTrimVersion++;
         }
         n = 0;
-        while (n++ < 200 && IncomingChat.TryDequeue(out var c)) NewChat.Add(c);
+        while (n++ < 200 && IncomingChat.TryDequeue(out var c))
+        {
+            NewChat.Add(c);
+            // Received from a teammate: system notes are Incoming too, but never delivered and have no sender.
+            if (c.Incoming && c.Delivered && c.Message.From != 0) NewTeamMessages.Add(c);
+        }
         if (NewChat.Count > 400) NewChat.RemoveRange(0, NewChat.Count - 400);
+        if (NewTeamMessages.Count > 100) NewTeamMessages.RemoveRange(0, NewTeamMessages.Count - 100);
     }
 
     public static void ClearLog()

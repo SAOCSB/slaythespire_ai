@@ -33,6 +33,10 @@ internal static class Reactions
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static bool Has(TeamMessageKind kind) => For(kind) != null;
 
+    /// <summary>The game's name of the emote for <paramref name="kind"/> ("ThumbUp", "Exclamation" ...), or null.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static string? Name(TeamMessageKind kind) => For(kind)?.ToString();
+
     /// <summary>
     /// Main thread. Sends the emote for <paramref name="kind"/> from above the local player's creature (the viewport
     /// centre when it is not on screen). True only when it was handed to the synchronizer, in a co-op run.

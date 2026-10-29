@@ -426,14 +426,21 @@ public sealed class DecisionEngine
             History = Memory.History,
             Memo = Memory.Memo,
         };
-        if (s.Screen == ScreenKind.Map && s.Map is { } map)
-        {
-            var me = s.LocalPlayer;
-            double hp = me is { MaxHp: > 0 } ? (double)me.Hp / me.MaxHp : 1;
-            ctx.RouteSuggestions = RoutePlanner.Plan(map, settings.Route, hp, me?.Gold ?? 0, 3);
-            ctx.PinnedNext = RoutePlanner.PinnedNext(map, settings.Route, s.Run?.Act ?? 0, s.Run?.Seed);
-        }
+        (ctx.RouteSuggestions, ctx.PinnedNext) = Routes(s, settings);
         return ctx;
+    }
+
+    /// <summary>
+    /// What the prompt's [ROUTES] block shows on the map screen: the planner's best paths from here and the pinned
+    /// route's next node. Nothing on other screens.
+    /// </summary>
+    public static (List<RoutePath> Routes, string? PinnedNext) Routes(GameSnapshot s, PilotSettings settings)
+    {
+        if (s.Screen != ScreenKind.Map || s.Map is not { } map) return (new List<RoutePath>(), null);
+        var me = s.LocalPlayer;
+        double hp = me is { MaxHp: > 0 } ? (double)me.Hp / me.MaxHp : 1;
+        return (RoutePlanner.Plan(map, settings.Route, hp, me?.Gold ?? 0, 3),
+            RoutePlanner.PinnedNext(map, settings.Route, s.Run?.Act ?? 0, s.Run?.Seed));
     }
 
     /// <summary>True while the breaker is open. Changed LLM settings close it at once: the old failures were about the old ones.</summary>

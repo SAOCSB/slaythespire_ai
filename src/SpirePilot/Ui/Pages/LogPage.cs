@@ -33,6 +33,7 @@ internal sealed class LogPage : Page
     private Label _diagResult = null!;
     private Button _diagCopy = null!, _diagOpen = null!;
     private string? _diagPath;
+    private bool _diagWriting;
     private OptionButton _language = null!;
     private OptionButton _toggleKey = null!;
     private string _customKey = "";
@@ -184,16 +185,27 @@ internal sealed class LogPage : Page
         Edit(s => s.Ui.ToggleKey = name, now: true);
     }
 
-    /// <summary>Writes the diagnostics report (main thread: it reads the screen and builds a snapshot) and shows where.</summary>
+    /// <summary>Writes the diagnostics report (the log and the file are handled off the main thread) and shows where.</summary>
     private void WriteDiagnostics()
     {
-        var path = PilotRuntime.WriteDiagnostics();
-        _diagPath = path;
+        if (_diagWriting) return;
+        _diagWriting = true;
         _diagResult.Visible = true;
-        UiKit.SetText(_diagResult, path != null ? L10n.T("ui.log.diag_written", path) : L10n.T("ui.log.diag_failed"));
-        UiKit.SetColor(_diagResult, path != null ? UiTheme.Good : UiTheme.Bad);
-        UiKit.SetText(_diagCopy, L10n.T("ui.log.copy"));
-        _diagCopy.Visible = _diagOpen.Visible = path != null;
+        UiKit.SetText(_diagResult, L10n.T("ui.log.diag_writing"));
+        UiKit.SetColor(_diagResult, UiTheme.Muted);
+        _diagCopy.Visible = _diagOpen.Visible = false;
+        PilotRuntime.WriteDiagnosticsAsync().ContinueWith(t => MainThread.Post(() => UiKit.Guard("log.diag", () =>
+        {
+            _diagWriting = false;
+            // The page may have been rebuilt meanwhile (language change): its old controls are gone.
+            if (!SceneUtil.Valid(_diagResult)) return;
+            var path = t.Result;
+            _diagPath = path;
+            UiKit.SetText(_diagResult, path != null ? L10n.T("ui.log.diag_written", path) : L10n.T("ui.log.diag_failed"));
+            UiKit.SetColor(_diagResult, path != null ? UiTheme.Good : UiTheme.Bad);
+            UiKit.SetText(_diagCopy, L10n.T("ui.log.copy"));
+            _diagCopy.Visible = _diagOpen.Visible = path != null;
+        })), TaskScheduler.Default);
     }
 
     private static void OpenFolderOf(string? path)
