@@ -274,6 +274,10 @@ public sealed class PilotLoop : IDisposable
 
         SetStatus(PilotState.Thinking, L10n.T("status.thinking"));
         var instruction = LiveInstruction;
+        // The pin as it was when the model started; a pin the owner sets while it thinks takes over the move.
+        var pinnedBefore = snap.Map is { } mapBefore
+            ? Route.RoutePlanner.PinnedNext(mapBefore, settings.Route, snap.Run?.Act ?? 0, snap.Run?.Seed)
+            : null;
         AgentDecision? decision;
         // Pausing or switching modes while the model thinks cancels the call: the human may already be playing.
         using (var decideCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
@@ -370,11 +374,13 @@ public sealed class PilotLoop : IDisposable
             return;
         }
 
-        if (target.Kind == ActionKind.ChooseMapNode && fresh.Map is { } map &&
-            Route.RoutePlanner.PinnedNext(map, settings.Route, fresh.Run?.Act ?? 0, fresh.Run?.Seed) is { } pinned && pinned != target.Arg(ActionArgs.Node) &&
+        // A route pinned while the model was thinking wins — but never over a live instruction, which the pin
+        // (a soft rule) always yields to; an unchanged pin was already weighed by the engine.
+        if (target.Kind == ActionKind.ChooseMapNode && instruction == null && fresh.Map is { } map &&
+            Route.RoutePlanner.PinnedNext(map, settings.Route, fresh.Run?.Act ?? 0, fresh.Run?.Seed) is { } pinned &&
+            pinned != pinnedBefore && pinned != target.Arg(ActionArgs.Node) &&
             fresh.Actions.FirstOrDefault(a => a.Kind == ActionKind.ChooseMapNode && a.Arg(ActionArgs.Node) == pinned) is { } pinnedMove)
         {
-            // The owner pinned a route while the model was thinking: the pin wins.
             Emit(PilotEventKind.Info, "pinned route overrides the model's map choice");
             target = pinnedMove;
         }

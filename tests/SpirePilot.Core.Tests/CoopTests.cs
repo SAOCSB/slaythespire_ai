@@ -287,3 +287,72 @@ public class CoopTests
         Assert.Empty(memory.OpenRequests);
     }
 }
+
+public class PinnedRouteLoopTests
+{
+    private sealed class MapBridge : IGameBridge
+    {
+        private readonly Func<GameSnapshot> _make;
+        private long _seq;
+        public List<ActionOption> Executed { get; } = new();
+        public MapBridge(Func<GameSnapshot> make) => _make = make;
+        public Task<GameSnapshot?> CaptureAsync(CancellationToken ct)
+        {
+            if (Executed.Count > 0) return Task.FromResult<GameSnapshot?>(new GameSnapshot { Screen = ScreenKind.Map, CanAct = false, WaitReason = "map travel" });
+            var s = _make();
+            s.Sequence = ++_seq;
+            return Task.FromResult<GameSnapshot?>(s);
+        }
+        public Task<ActionResult> ExecuteAsync(ActionOption action, CancellationToken ct) { Executed.Add(action); return Task.FromResult(ActionResult.Ok()); }
+        public void ShowSpeech(ulong playerNetId, string text) { }
+        public void PingMapNode(string nodeKey) { }
+    }
+
+    private sealed class FixedAnswer : SpirePilot.Core.Llm.ILlmClient
+    {
+        private readonly string _answer;
+        public FixedAnswer(string answer) => _answer = answer;
+        public string Describe => "fixed";
+        public Task<SpirePilot.Core.Llm.LlmResponse> CompleteAsync(SpirePilot.Core.Llm.LlmRequest request, CancellationToken ct) =>
+            Task.FromResult(new SpirePilot.Core.Llm.LlmResponse { Text = _answer });
+    }
+
+    private sealed class NullLog : IPilotLog
+    {
+        public void Info(string message) { }
+        public void Warn(string message) { }
+        public void Error(string message) { }
+    }
+
+    private static GameSnapshot MapSnap()
+    {
+        var s = new GameSnapshot { Screen = ScreenKind.Map, CanAct = true, InRun = true, Map = TestData.Map(), Run = new RunInfo { Act = 1, Floor = 3, Seed = "S1" } };
+        s.Players.Add(new PlayerInfo { IsLocal = true, Hp = 70, MaxHp = 80 });
+        s.Actions.Add(new ActionOption { Id = "a0", Kind = ActionKind.ChooseMapNode, Label = "0,0", SemanticKey = "map:0,0", Args = { [ActionArgs.Node] = "0,0" } });
+        s.Actions.Add(new ActionOption { Id = "a1", Kind = ActionKind.ChooseMapNode, Label = "1,0", SemanticKey = "map:1,0", Args = { [ActionArgs.Node] = "1,0" } });
+        return s;
+    }
+
+    [Fact]
+    public async Task A_live_instruction_beats_the_pinned_route_all_the_way_to_execution()
+    {
+        var settings = new PilotSettings();
+        settings.Profiles[0].ApiKey = "k";
+        settings.Control.Mode = PilotMode.FullAuto;
+        settings.Control.ActionDelayMs = 0;
+        settings.Route.PinnedPath = new() { "1,0" };
+        settings.Route.PinnedAct = 1;
+        settings.Route.PinnedSeed = "S1";
+        settings.Normalize();
+        var bridge = new MapBridge(MapSnap);
+        var hub = new TeamChatHub { LocalNetId = 1 };
+        var engine = new DecisionEngine(() => settings, hub, new NullLog(), _ => new FixedAnswer("{\"thought\":\"owner said so\",\"actions\":[\"a0\"]}"));
+        var loop = new PilotLoop(bridge, engine, hub, () => settings, new NullLog()) { IdleDelay = TimeSpan.FromMilliseconds(10) };
+        loop.SetLiveInstruction("ignore the pin, go to 0,0");
+        loop.Start();
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (bridge.Executed.Count == 0 && DateTime.UtcNow < deadline) await Task.Delay(10);
+        loop.Stop();
+        Assert.Equal("0,0", Assert.Single(bridge.Executed).Arg(ActionArgs.Node));
+    }
+}
