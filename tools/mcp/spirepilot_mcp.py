@@ -824,12 +824,6 @@ async def read_chat(limit: int = 20) -> str:
 _EVERYONE = ("all", "everyone", "所有人", "全体")
 
 
-def _anyone_without_the_mod() -> bool:
-    """The last state the model saw lists a teammate who does not run SpirePilot."""
-    players = (_last_seen or {}).get("players") or []
-    return any(not p.get("isLocal") and p.get("hasTeamLink") is False for p in players)
-
-
 def _message_id(text: str | None) -> str | None:
     """The bare id of a team message: models copy the decoration read_chat shows ("#4f2a9c01d2e3", "re #...")."""
     return re.sub(r"^(?:(?:re|id)\b|[\s#\[(:])+", "", (text or "").strip(), flags=re.IGNORECASE).rstrip(" ])") or None
@@ -860,7 +854,9 @@ async def send_chat(
     drops exact repeats. Teammates without the mod cannot read text: they get the game's emote for the kind instead
     (requests "!", potion offers / questions "?", accept / decline thumbs up / down; chat has none). In a mixed team,
     also for "all", the text goes to the teammates with the mod and the emote to the others (not again within 3
-    minutes for the same kind and recipient); the result names the emote they saw.
+    minutes for the same kind and recipient); the result names the emote they saw, or says why none was shown. An
+    offer_potion or ask_need_potion answering a request_potion goes out as accept (it is the yes, and like any answer
+    goes to everyone when the request was for everyone); the result then says so.
 
     Args:
         text: the human-readable message (required; human teammates only read this).
@@ -871,7 +867,8 @@ async def send_chat(
             accept / decline (answer a teammate's request or question; reply_to is required).
         recipient: "all" (default), or a teammate's name, name prefix or character. An unknown name is refused with the
             list of teammates. With reply_to and "all", the answer goes to the asker, or to everyone when the
-            question was for everyone; a potion offer or question goes to the asker only.
+            question was for everyone; a potion offer or question goes to the asker only, unless it answers a
+            request_potion (then it is an accept).
         potion: potion id or name, for potion kinds.
         debuff: debuff / power name, for request_debuff.
         target: enemy name or key ("e0"), for request_debuff / request_focus.
@@ -907,31 +904,44 @@ async def send_chat(
         )
     data = _expect(status_code, data, "Sending the message")
     emote = data.get("emote")
+    sent = data.get("kind") or kind
+    promised = (
+        f"\nIt went out as accept, not {kind}: an offer answering a potion request is the yes, so you promised to "
+        "use the potion on them."
+        if sent != kind
+        else ""
+    )
     if data.get("reason") == "no_reader":
         if emote:
             shown = f"they see the game's {emote} emote instead"
-        elif kind == "chat":
+        elif sent == "chat":
             shown = "chat has no emote, so they see nothing"
-        else:
+        elif data.get("emoteLimited"):
             shown = (
-                "no emote was shown either (the same kind went to them in the last few minutes, the AI message budget "
-                "is spent, or the game could not show one right now), so nothing reached them"
+                "no emote was shown either (the same kind went to them in the last 3 minutes, or the AI message "
+                "budget is spent), so nothing reached them"
             )
-        return f"Text not sent: no teammate you addressed runs SpirePilot; {shown}."
-    # A mixed team: the text went to the teammates with the mod, the emote to the others.
+        elif data.get("emoteFailed"):
+            shown = "no emote was shown either (the game could not show one right now), so nothing reached them"
+        else:
+            shown = "no emote was shown either, so nothing reached them"
+        return f"Text not sent: no teammate you addressed runs SpirePilot; {shown}.{promised}"
+    # A mixed team: the text went to the teammates with the mod, the emote to the others (the text paid for it, so
+    # only a repeat stops it).
     others = f"\nTeammates without SpirePilot saw the game's {emote} emote instead." if emote else ""
+    if data.get("emoteLimited"):
+        others = "\nTeammates without SpirePilot saw no emote: the same kind was shown to them in the last 3 minutes."
+    elif data.get("emoteFailed"):
+        others = "\nTeammates without SpirePilot saw no emote: the game could not show one right now."
     everyone = body["to"].lower() in _EVERYONE
-    # Sent to everyone (not an answer, which may have gone to the asker alone) with a kind that has an emote, yet none
-    # was shown although the last state listed a teammate without the mod.
-    if not emote and kind != "chat" and everyone and not reply_to and _anyone_without_the_mod():
-        others = (
-            "\nTeammates without SpirePilot saw no emote: the same kind was shown to them in the last 3 minutes, or "
-            "the game could not show one right now."
-        )
     if data.get("delivered"):
         to = f"in answer to #{reply_to}" if reply_to and everyone else f"to {body['to']}"
-        return f"Sent {to} ({kind}): {text.strip()}{others}"
-    return "Logged locally but not delivered: no teammate runs SpirePilot (or you are not in a co-op game)." + others
+        return f"Sent {to} ({sent}): {text.strip()}{others}{promised}"
+    return (
+        "Logged locally but not delivered: no teammate runs SpirePilot (or you are not in a co-op game)."
+        + others
+        + promised
+    )
 
 
 @mcp.tool(annotations=READ_ONLY, structured_output=False)

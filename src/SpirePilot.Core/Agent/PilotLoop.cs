@@ -95,6 +95,8 @@ public sealed class PilotLoop : IDisposable
     private DateTime _nextReplyCheck = DateTime.MinValue;
     /// <summary>A fight the mode leaves to the human, and when it was last seen running (local unix ms).</summary>
     private (string Key, long SeenMs)? _humanFight;
+    /// <summary>Messages the player answered (Team tab, POST /chat), newest last, at most 64: the AI does not answer them again.</summary>
+    private readonly Queue<string> _answeredByPlayer = new();
 
     public PilotStatus Status { get; private set; } = new(PilotState.Off, "");
     public AgentDecision? Advice { get; private set; }
@@ -694,10 +696,13 @@ public sealed class PilotLoop : IDisposable
 
     /// <summary>
     /// Remembered as our open request, so a teammate's answer finds its question: anything new we ask, and a potion offer
-    /// or question also when it answers someone (a "yes" to it asks us to act).
+    /// or question also when it answers someone (a "yes" to it asks us to act). Not an AI's answer to a teammate whose
+    /// AI plays: that AI takes it for a counter-request it need not answer, and no yes would come.
     /// </summary>
-    private static bool Tracked(TeamMessage m) =>
-        IsRequestKind(m.Kind) && m.ReplyTo == null || m.Kind is TeamMessageKind.OfferPotion or TeamMessageKind.AskNeedPotion;
+    private static bool Tracked(TeamMessage m, GameSnapshot? snap) =>
+        IsRequestKind(m.Kind) && m.ReplyTo == null ||
+        m.Kind is TeamMessageKind.OfferPotion or TeamMessageKind.AskNeedPotion &&
+        !(m.FromAi && m.ReplyTo != null && snap?.Players.FirstOrDefault(p => p.NetId == m.To) is { IsAiControlled: true });
 
     /// <summary>A teammate's message whose acceptance is a promise for us to keep: not their offer to us, not an answer.</summary>
     private static bool IsPromiseForUs(TeamMessage m) =>
@@ -710,19 +715,27 @@ public sealed class PilotLoop : IDisposable
     private void SendMessages(AgentDecision decision, GameSnapshot snap, PilotSettings settings)
     {
         var inbox = _team.PeekAiInbox();
-        bool waiting = Waiting(snap);
         foreach (var intent in decision.Messages)
         {
             var answered = intent.ReplyTo == null ? null : inbox.FirstOrDefault(m => m.Id == intent.ReplyTo);
-            ulong to = answered != null ? TeamDelivery.ReplyRecipient(answered, intent.Kind) : ResolveRecipient(intent.To, snap);
-            if (IsRequestKind(intent.Kind) && intent.ReplyTo == null && _engine.Memory.HasOpenOutgoing(intent.Kind, to))
+            // The player answered it while the model was thinking about it: a second answer could contradict theirs. A
+            // later word on an answer the player gave (taking back their yes) still goes out.
+            if (answered == null && intent.ReplyTo is { } id && decision.HandledInboxIds.Contains(id) && AnsweredByPlayer(id))
+            {
+                _log.Info("AI reply not sent (the player already answered): " + intent.Text);
+                _engine.Memory.AddHistory("(reply not sent: that message was already answered for you) " + intent.Text);
+                continue;
+            }
+            var kind = TeamDelivery.AnswerKind(answered, intent.Kind);
+            ulong to = answered != null ? TeamDelivery.ReplyRecipient(answered, kind) : ResolveRecipient(intent.To, snap);
+            if (IsRequestKind(kind) && intent.ReplyTo == null && _engine.Memory.HasOpenOutgoing(kind, to))
             {
                 _log.Info("AI request not repeated (still open): " + intent.Text);
                 continue;
             }
             var msg = new TeamMessage
             {
-                Kind = intent.Kind,
+                Kind = kind,
                 Text = intent.Text,
                 Potion = intent.Potion,
                 Debuff = intent.Debuff,
@@ -743,7 +756,7 @@ public sealed class PilotLoop : IDisposable
                     : "(teammate cannot read messages; not sent) " + intent.Text);
             else if (sent.Entry is { Delivered: false })
                 _engine.Memory.AddHistory("(team message not delivered) " + intent.Text);
-            if (sent.Reached) Remember(sent, answered, waiting, DecisionEngine.FightAndRound(snap));
+            if (sent.Reached) Remember(sent, answered, snap);
             Emit(PilotEventKind.TeamMessage, (sent.Entry is { Delivered: true } ? "💬 " : "💬✘ ") + intent.Text);
             if (sent.Entry != null && settings.Team.SpeechBubbles)
             {
@@ -754,17 +767,32 @@ public sealed class PilotLoop : IDisposable
     }
 
     /// <summary>What a message someone saw commits us to: an accepted request is a promise, our request waits for its answer.</summary>
-    /// <param name="at">Where it was said (<see cref="DecisionEngine.FightAndRound"/>): the fight and round a request holds for.</param>
-    private void Remember(Delivery sent, TeamMessage? answered, bool waiting, (string? Fight, int Round)? at)
+    /// <param name="snap">
+    /// The capture it was said in: the fight and round a request holds for (<see cref="DecisionEngine.FightAndRound"/>),
+    /// whether we can act on it now, and who plays with an active AI.
+    /// </param>
+    private void Remember(Delivery sent, TeamMessage? answered, GameSnapshot? snap)
     {
         var m = sent.Message;
+        bool waiting = snap != null && Waiting(snap);
+        var at = DecisionEngine.FightAndRound(snap);
         if (m.Kind == TeamMessageKind.Accept && answered != null)
         {
-            if (IsPromiseForUs(answered)) _engine.Memory.TrackAccepted(answered, waiting, at);
+            if (IsPromiseForUs(answered))
+            {
+                var promise = answered;
+                // A yes that names a potion promised that one (an offer sent as the yes names the one offered).
+                if (m.Potion != null && m.Potion != answered.Potion)
+                {
+                    promise = answered.Sanitized();
+                    promise.Potion = m.Potion;
+                }
+                _engine.Memory.TrackAccepted(promise, waiting, at);
+            }
             else if (answered.Kind is TeamMessageKind.OfferPotion or TeamMessageKind.AskNeedPotion)
                 _engine.Memory.AddHistory($"(you said yes to {PromptBuilder.Safe(answered.FromName)}'s potion offer: they use it on you, not you on them)");
         }
-        if (Tracked(m)) _engine.Memory.TrackOutgoing(m, waiting, signalled: sent.Emote != null, at);
+        if (Tracked(m, snap)) _engine.Memory.TrackOutgoing(m, waiting, signalled: sent.Emote != null, at);
         // A "!" or "?" for something we do not track (a request in answer to someone): a thumbs up after it answers
         // nothing we know of, never an older request.
         else if (TeamEmotes.Asks(sent.Emote)) _engine.Memory.NoteSignal(m.Id, m.To);
@@ -785,14 +813,27 @@ public sealed class PilotLoop : IDisposable
         var sent = TeamDelivery.Send(_team, snap, msg, fromAi, _bridge.TrySignal, reads);
         if (!sent.Reached) return sent;
         var m = sent.Message;
-        Remember(sent, answered, snap != null && Waiting(snap), DecisionEngine.FightAndRound(snap));
-        if (m.ReplyTo != null) _team.MarkRead(new[] { m.ReplyTo });
+        Remember(sent, answered, snap);
+        if (m.ReplyTo != null)
+        {
+            _team.MarkRead(new[] { m.ReplyTo });
+            lock (_lock)
+            {
+                _answeredByPlayer.Enqueue(m.ReplyTo);
+                while (_answeredByPlayer.Count > 64) _answeredByPlayer.Dequeue();
+            }
+        }
         if (m.Kind == TeamMessageKind.Chat) return sent;
         var to = m.To == 0 ? "everyone"
             : snap?.Players.FirstOrDefault(p => p.NetId == m.To) is { } mate ? (mate.Name.Length > 0 ? mate.Name : mate.CharacterName)
             : m.To.ToString();
         _engine.Memory.AddHistory($"({(fromAi ? "sent via the API" : "owner")} → {PromptBuilder.Safe(to)}) {DecisionParser.KindToWire(m.Kind)}: {m.Text}");
         return sent;
+    }
+
+    private bool AnsweredByPlayer(string id)
+    {
+        lock (_lock) return _answeredByPlayer.Contains(id);
     }
 
     /// <summary>

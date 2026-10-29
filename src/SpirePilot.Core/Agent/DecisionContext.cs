@@ -157,13 +157,15 @@ public sealed class AgentMemory
     /// Combat-bound requests end with their turn or fight: debuff / focus / block requests hold for the round they were
     /// accepted in (or the next one, when accepted while waiting); anything accepted in a fight ends with that fight.
     /// Requests accepted outside a fight (a potion on the map) carry over into the next fight, where they can be done.
+    /// Outside a fight it always looks: a fight the AI did not play (the owner's, who talked from the Team tab) was
+    /// never noted, and its requests end at the first decision after it.
     /// </summary>
     public void NoteCombat(string? fight, int round)
     {
         var scope = CombatScope(fight, round);
         lock (_lock)
         {
-            if (scope == _requestsCombat) return;
+            if (scope == _requestsCombat && fight != null) return;
             _fight = fight;
             _round = round;
             _requestsCombat = scope;
@@ -197,7 +199,7 @@ public sealed class AgentMemory
         var cutoff = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - (long)maxAge.TotalMilliseconds;
         lock (_lock)
         {
-            bool noted = combat is { } c && CombatScope(c.Fight, c.Round) != _requestsCombat;
+            bool noted = combat is { } c && (c.Fight == null || CombatScope(c.Fight, c.Round) != _requestsCombat);
             bool Gone(Team.TeamMessage m, bool fightBound) =>
                 m.Time != 0 && m.Time < cutoff || noted && fightBound && Ended(m, combat!.Value.Fight, combat.Value.Round);
             return (_openRequests.Where(m => !Gone(m, true)).ToList(), _outgoing.Where(m => !Gone(m, EndsWithFight(m))).ToList());
@@ -271,6 +273,18 @@ public sealed class AgentMemory
             return _outgoing.LastOrDefault(m => (m.To == teammate || m.To == 0) && (m.Time == 0 || m.Time >= cutoff)) is { } last
                 ? (last.Id, true)
                 : null;
+    }
+
+    /// <summary>
+    /// A teammate's emote, seen here. A linked player's "!" or "?" (its AI's too) asks a teammate without the mod
+    /// something and is from now on the newest question (<see cref="NoteSignal"/>): a thumbs up after it answers none of
+    /// ours. Returns the request a thumbs up from <paramref name="from"/> answers: for a linked teammate the newest open
+    /// one it read (<see cref="LastOpenTo"/>), else the newest one shown to them as an emote (<see cref="LastSignalTo"/>).
+    /// </summary>
+    public (string Id, bool Open)? SeeEmote(ulong from, string reaction, bool linked)
+    {
+        if (linked && TeamEmotes.Asks(reaction)) NoteSignal(TeamMessage.NewId(), 0);
+        return linked ? LastOpenTo(from) : LastSignalTo(from);
     }
 
     public Team.TeamMessage? FindOutgoing(string? id)

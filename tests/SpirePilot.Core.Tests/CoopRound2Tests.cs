@@ -102,6 +102,7 @@ public class CoopRound2Tests
         var s = new GameSnapshot { Screen = ScreenKind.Map, InRun = true, CanAct = true, IsMultiplayer = true, LocalPlayerId = 1, Map = TestData.Map(), Run = new RunInfo { Act = 1, Floor = 4 } };
         s.Players.Add(new PlayerInfo { NetId = 1, Name = "Me", IsLocal = true, Hp = 50, MaxHp = 80 });
         s.Players.AddRange(mates);
+        s.Actions.Add(new ActionOption { Id = "a0", Kind = ActionKind.ChooseMapNode, Label = "0,0", SemanticKey = "map:0,0", Args = { [ActionArgs.Node] = "0,0" } });
         return s;
     }
 
@@ -308,10 +309,10 @@ public class CoopRound2Tests
             Answer = (r, n) => n == 1
                 ? "{\"thought\":\"t\",\"actions\":[],\"messages\":[{\"to\":\"Cara\",\"type\":\"offer_potion\",\"potion\":\"BLOCK_POTION\",\"text\":\"block potion?\",\"reply_to\":\"" +
                   Regex.Match(r.Messages[0].Content, @"\[(em[0-9a-f]{10})\] Cara").Groups[1].Value + "\"}]}"
-                : "{\"thought\":\"t\",\"actions\":[]}",
+                : "{\"thought\":\"t\",\"actions\":[\"a0\"]}",
         };
         var engine = new DecisionEngine(() => settings, hub, new NullLog(), _ => client);
-        var loop = new PilotLoop(bridge, engine, hub, () => settings, new NullLog()) { IdleDelay = TimeSpan.FromMilliseconds(10) };
+        var loop = new PilotLoop(bridge, engine, hub, () => settings, new NullLog()) { IdleDelay = TimeSpan.FromMilliseconds(10), TransientWait = TimeSpan.Zero };
         var waiting = Waiting(Cara());
         bridge.Set(waiting);
         hub.Receive(TeamEmotes.ToMessage("Exclamation", 3, "Cara", 1, null));
@@ -322,9 +323,12 @@ public class CoopRound2Tests
         var up = TeamEmotes.ToMessage("ThumbUp", 3, "Cara", 1, engine.Memory.LastSignalTo(3));
         Assert.NotNull(up.ReplyTo);
         hub.Receive(up);
-        await Until(() => engine.Memory.OpenRequests.Count == 1);
+        // The yes waits for the AI's turn, where it is one to act on.
+        bridge.Set(Coop(Cara()));
+        await Until(() => client.Requests.Count >= 2);
         loop.Stop();
-        var promise = engine.Memory.OpenRequests[0];
+        Assert.Contains("(yes to your offer — act on it)", client.Prompt(1));
+        var promise = Assert.Single(engine.Memory.OpenRequests);
         Assert.Equal(TeamMessageKind.RequestPotion, promise.Kind);
         Assert.Equal(3ul, promise.From);
         Assert.Equal("BLOCK_POTION", promise.Potion);
@@ -494,7 +498,7 @@ public class CoopRound2Tests
         Assert.Single(engine.Memory.History); // chat commits to nothing: it stays out of HISTORY
 
         hub.Receive(new TeamMessage { Id = "yes1", From = 2, To = 1, FromName = "Bob", FromAi = true, Kind = TeamMessageKind.Accept, ReplyTo = offer.Id, Text = "yes" });
-        Assert.True(engine.HasActionableInbox(Waiting(Bob(ai: true))));
+        Assert.True(engine.HasActionableInbox(snap));
         await engine.DecideAsync(snap.WithOwnMenu(), null, CancellationToken.None);
         var prompt = client.Prompt(0);
         Assert.Contains("[yes1] Bob (AI) → you | accept reply_to=" + offer.Id + " (answers your offer_potion) (yes to your offer — act on it)", prompt);
