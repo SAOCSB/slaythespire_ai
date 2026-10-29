@@ -64,6 +64,8 @@ public sealed class GameSnapshot
     public List<ActionOption> Actions { get; set; } = new();
     /// <summary>Free-form extra context lines (popup text, warnings, unsupported-screen hints).</summary>
     public List<string> Notes { get; set; } = new();
+    /// <summary>Keyword / term explanations (from the game's hover tips) for terms that appear in this snapshot.</summary>
+    public Dictionary<string, string> Glossary { get; set; } = new();
 
     public PlayerInfo? LocalPlayer => Players.FirstOrDefault(p => p.IsLocal);
     public IEnumerable<PlayerInfo> Teammates => Players.Where(p => !p.IsLocal);

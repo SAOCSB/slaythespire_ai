@@ -8,6 +8,7 @@ public sealed class StateFormatter
 {
     public bool VerboseCards { get; init; } = true;
     public bool IncludePiles { get; init; } = true;
+    public int MaxGlossaryEntries { get; init; } = 24;
 
     public string Format(GameSnapshot s)
     {
@@ -56,6 +57,12 @@ public sealed class StateFormatter
         if (s.GameOver is { } go)
             sb.Append("Run over: ").Append(go.Victory ? "VICTORY" : "defeat").Append(go.FloorReached is { } f ? $" at floor {f}" : "").AppendLine();
         foreach (var note in s.Notes) sb.Append("Note: ").AppendLine(Clean(note));
+        if (s.Glossary.Count > 0)
+        {
+            sb.Append("Glossary: ");
+            sb.AppendLine(string.Join(" | ", s.Glossary.OrderBy(kv => kv.Key, StringComparer.Ordinal).Take(MaxGlossaryEntries)
+                .Select(kv => kv.Key + ": " + Clean(kv.Value))));
+        }
         return sb.ToString();
     }
 

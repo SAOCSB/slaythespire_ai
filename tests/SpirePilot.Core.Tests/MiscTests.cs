@@ -36,6 +36,17 @@ public class StateFormatterTests
     }
 
     [Fact]
+    public void Glossary_is_rendered_sorted_and_capped()
+    {
+        var snap = TestData.Combat();
+        snap.Glossary["Vulnerable"] = "Takes [gold]50%[/gold] more damage from attacks.";
+        snap.Glossary["Block"] = "Prevents damage until next turn.";
+        var text = new StateFormatter { MaxGlossaryEntries = 1 }.Format(snap);
+        Assert.Contains("Glossary: Block: Prevents damage until next turn.", text);
+        Assert.DoesNotContain("Vulnerable:", text);
+    }
+
+    [Fact]
     public void User_prompt_lists_every_action()
     {
         var snap = TestData.Combat();
