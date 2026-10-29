@@ -66,6 +66,8 @@ internal static class PilotRuntime
         };
         Loop = new PilotLoop(Bridge, Engine, Team, () => Store.Current, log);
         Loop.RunStarted += OnRunStarted;
+        var traces = new TraceWriter(DataDir);
+        Loop.DecisionTraced += t => { if (Store.Current.SaveDecisionTraces) traces.Write(t); };
         Loop.StatusChanged += s => TeamLink.SetLocalAiActive(Store.Current.Control.Mode is not (PilotMode.Off or PilotMode.Advisor) && !Loop.Paused);
 
         MainThread.Install();

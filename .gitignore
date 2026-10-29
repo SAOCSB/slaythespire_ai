@@ -9,3 +9,4 @@ local.props
 dist/
 TestResults/
 *.log
+.claude/worktrees/

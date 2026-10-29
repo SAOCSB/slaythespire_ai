@@ -207,6 +207,8 @@ public sealed class PilotSettings
     public string ActiveProfile { get; set; } = "default";
     /// <summary>Log full prompts and responses to the mod log (debugging; may contain a lot of text).</summary>
     public bool LogPrompts { get; set; }
+    /// <summary>Append every executed decision (menu offered, choice, result) to traces/*.jsonl in the data folder.</summary>
+    public bool SaveDecisionTraces { get; set; } = true;
 
     [JsonIgnore]
     public LlmProfile? Active =>

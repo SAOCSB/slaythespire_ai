@@ -1,0 +1,23 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            9.0.x
+      - name: Unit tests (core)
+        run: dotnet test tests/SpirePilot.Core.Tests -c Release --nologo
+      - name: Build + package for game 0.111 and 0.107 (reference assemblies from NuGet)
+        run: bash scripts/package.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SpirePilot
+          path: dist/*.zip

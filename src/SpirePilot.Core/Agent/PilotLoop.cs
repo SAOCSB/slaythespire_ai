@@ -33,6 +33,29 @@ public enum PilotEventKind
     Error,
 }
 
+/// <summary>
+/// One executed decision, for offline analysis and debugging: what was offered, what was chosen and by whom,
+/// and what happened. Written to a JSONL file by the mod when enabled.
+/// </summary>
+public sealed class DecisionTrace
+{
+    public DateTime Time { get; init; } = DateTime.Now;
+    public string Screen { get; init; } = "";
+    public int? Floor { get; init; }
+    public int? Round { get; init; }
+    public string Source { get; init; } = "";
+    public string Thought { get; init; } = "";
+    public List<string> Offered { get; init; } = new();
+    public string Chosen { get; init; } = "";
+    public List<string> PlannedKeys { get; init; } = new();
+    public bool Success { get; init; }
+    public string Result { get; init; } = "";
+    public int? InputTokens { get; init; }
+    public int? OutputTokens { get; init; }
+    public double LatencySeconds { get; init; }
+    public List<string> Messages { get; init; } = new();
+}
+
 public sealed class PilotEvent
 {
     public DateTime Time { get; init; } = DateTime.Now;
@@ -75,6 +98,8 @@ public sealed class PilotLoop : IDisposable
 
     public event Action<PilotStatus>? StatusChanged;
     public event Action<PilotEvent>? EventLogged;
+    /// <summary>Raised after every executed action (on the loop's worker thread).</summary>
+    public event Action<DecisionTrace>? DecisionTraced;
     /// <summary>Raised after the pilot embarked on a new run (the mod persists the round-robin cursor).</summary>
     public event Action? RunStarted;
 
@@ -243,6 +268,7 @@ public sealed class PilotLoop : IDisposable
             return;
         }
 
+        var sentMessages = decision.Messages.Select(m => $"{DecisionParser.KindToWire(m.Kind)}→{m.To}: {m.Text}").ToList();
         SendMessages(decision, fresh, settings);
         if (target.Kind == ActionKind.ChooseMapNode && fresh.IsMultiplayer && settings.Route.PingChoiceToTeammates &&
             target.Arg(ActionArgs.Node) is { } node)
@@ -275,6 +301,7 @@ public sealed class PilotLoop : IDisposable
             lock (_lock) if (_liveInstruction == instruction) _liveInstruction = null;
         }
         Emit(PilotEventKind.Action, (result.Success ? "✔ " : "✘ ") + target.Label + (result.Message.Length > 0 ? " — " + result.Message : ""), decision);
+        Trace(fresh, target, decision, result, sentMessages);
 
         if (!result.Success)
         {
@@ -442,6 +469,32 @@ public sealed class PilotLoop : IDisposable
         var plan = d.ActionIds.Count > 1 ? $" (+{d.ActionIds.Count - 1} planned)" : "";
         var tokens = d.InputTokens is { } i ? $" [{i}/{d.OutputTokens} tok, {d.Elapsed.TotalSeconds:0.0}s]" : "";
         return $"{src}{a.Label}{plan} — {d.Thought}{tokens}";
+    }
+
+    private void Trace(GameSnapshot snap, ActionOption chosen, AgentDecision decision, ActionResult result, List<string> messages)
+    {
+        if (DecisionTraced == null) return;
+        try
+        {
+            DecisionTraced.Invoke(new DecisionTrace
+            {
+                Screen = snap.Screen.ToString(),
+                Floor = snap.Run?.Floor,
+                Round = snap.Combat?.Round,
+                Source = decision.Source.ToString(),
+                Thought = decision.Thought,
+                Offered = snap.Actions.Select(a => $"{a.Id} | {a.Label} | {a.SemanticKey}").ToList(),
+                Chosen = $"{chosen.Label} | {chosen.SemanticKey}",
+                PlannedKeys = decision.PlanKeys.ToList(),
+                Success = result.Success,
+                Result = result.Message,
+                InputTokens = decision.InputTokens,
+                OutputTokens = decision.OutputTokens,
+                LatencySeconds = Math.Round(decision.Elapsed.TotalSeconds, 2),
+                Messages = messages,
+            });
+        }
+        catch (Exception ex) { _log.Warn("trace handler failed: " + ex.Message); }
     }
 
     private void SetStatus(PilotState state, string text)
