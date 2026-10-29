@@ -3,6 +3,7 @@ using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Context;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Players;
+using MegaCrit.Sts2.Core.Localization;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Platform;
 using MegaCrit.Sts2.Core.Runs;
@@ -15,7 +16,7 @@ namespace SpirePilot.Game;
 /// <summary>Fills run-level info and every player's public state (local player and teammates).</summary>
 internal static class PlayerReader
 {
-    /// <summary>Fills <see cref="GameSnapshot.Run"/> (act, floor, ascension, seed, boss).</summary>
+    /// <summary>Fills <see cref="GameSnapshot.Run"/> (act, floor, ascension, seed, boss and what is known about it).</summary>
     public static void FillRun(GameContext ctx, GameSnapshot snap)
     {
         var run = ctx.Run;
@@ -38,23 +39,86 @@ internal static class PlayerReader
             // BossEncounter throws before the act is set up (STS2MCP note), hence the per-part guard.
             var act = run.Act;
             if (act == null) return;
-            var names = new List<string>();
-            var boss = ModelText.Loc(act.BossEncounter?.Title);
-            if (boss.Length > 0) names.Add(boss);
+            var bosses = new List<EncounterModel>();
+            if (act.BossEncounter is { } first) bosses.Add(first);
             try
             {
-                if (act.HasSecondBoss)
-                {
-                    var second = ModelText.Loc(act.SecondBossEncounter?.Title);
-                    if (second.Length > 0) names.Add(second);
-                }
+                if (act.HasSecondBoss && act.SecondBossEncounter is { } second) bosses.Add(second);
             }
             catch (Exception) { }
+            var names = bosses.Select(b => ModelText.Loc(b.Title)).Where(n => n.Length > 0).ToList();
             info.BossName = names.Count > 0 ? string.Join(" + ", names) : null;
+            info.BossDescription = BossNotes(act, bosses);
         });
         // RunManager.RunTime drives the top-bar timer; assumed to be seconds (RitsuLib reports the saved value as seconds).
         Part(() => info.RunTimeSeconds = ctx.RunManager?.RunTime);
         snap.Run = info;
+    }
+
+    private const int MaxBossMonsters = 3;
+    private static string _bossKey = "";
+    private static string? _bossNotes;
+
+    /// <summary>
+    /// What is known about the act's boss fight before it starts: each monster with its HP and the names of its moves
+    /// (the monster's localization entries; intents, numbers and powers only exist once the fight runs). Cached per
+    /// act, bosses and game language; null when nothing could be read.
+    /// </summary>
+    private static string? BossNotes(ActModel act, List<EncounterModel> bosses)
+    {
+        string key = RuntimeHelpers.GetHashCode(act) + "|" + string.Join(",", bosses.Select(ModelText.SafeId)) + "|" + ModelText.GameLanguage();
+        if (key == _bossKey) return _bossNotes;
+        var fights = new List<string>();
+        foreach (var boss in bosses)
+        {
+            var monsters = new List<string>();
+            try
+            {
+                foreach (var monster in boss.AllPossibleMonsters.Where(m => m != null).DistinctBy(ModelText.SafeId).Take(MaxBossMonsters))
+                    monsters.Add(MonsterNote(monster));
+            }
+            catch (Exception) { /* encounter not readable before the fight */ }
+            if (monsters.Count > 0) fights.Add(string.Join("; ", monsters));
+        }
+        _bossKey = key;
+        _bossNotes = fights.Count > 0 ? string.Join(" / ", fights) : null;
+        return _bossNotes;
+    }
+
+    private static string MonsterNote(MonsterModel monster)
+    {
+        string note = ModelText.Loc(monster.Title);
+        if (note.Length == 0) note = ModelText.SafeId(monster);
+        try
+        {
+            int min = monster.MinInitialHp, max = monster.MaxInitialHp;
+            note += " (HP " + (min == max ? min.ToString() : min + "-" + max) + ")";
+        }
+        catch (Exception) { }
+        var moves = MoveNames(monster);
+        return moves.Count > 0 ? note + ": moves " + string.Join(", ", moves) : note;
+    }
+
+    /// <summary>Move names from the monster's localization table: "&lt;monster&gt;.moves.&lt;MOVE&gt;.title" next to its "&lt;monster&gt;.name".</summary>
+    private static List<string> MoveNames(MonsterModel monster)
+    {
+        var names = new List<string>();
+        try
+        {
+            var title = monster.Title;
+            string titleKey = title?.LocEntryKey ?? "";
+            if (!titleKey.EndsWith(".name", StringComparison.Ordinal)) return names;
+            var table = LocManager.Instance?.GetTable(title!.LocTable);
+            if (table == null) return names;
+            foreach (var move in table.GetLocStringsWithPrefix(titleKey[..^".name".Length] + ".moves."))
+            {
+                if (move?.LocEntryKey is not { } key || !key.EndsWith(".title", StringComparison.Ordinal)) continue;
+                var name = ModelText.Loc(move);
+                if (name.Length > 0 && !names.Contains(name)) names.Add(name);
+            }
+        }
+        catch (Exception) { /* table not loaded */ }
+        return names;
     }
 
     /// <summary>
@@ -205,6 +269,7 @@ internal static class PlayerReader
                 {
                     var potion = ModelText.Potion(slots[i], i, combatLive, withDescription: local);
                     if (potion != null) info.Potions.Add(potion);
+                    if (local) Glossary.NotePotion(slots[i]);
                 }
                 catch (Exception) { }
             }
@@ -219,12 +284,7 @@ internal static class PlayerReader
                 if (r == null) continue;
                 try { info.Relics.Add(ModelText.Relic(r, withDescription: local)); }
                 catch (Exception) { }
-                // Keyword tips the relic text refers to (its own tip is its description).
-                if (local && Glossary.Collecting)
-                {
-                    var relic = r;
-                    Glossary.Note("relic:" + ModelText.SafeId(relic), () => relic.HoverTipsExcludingRelic);
-                }
+                if (local) Glossary.NoteRelic(r);
             }
         });
 
@@ -291,9 +351,9 @@ internal static class PlayerReader
     public static string CompanionKey(int slot, int n) => n == 0 ? "o" + slot : $"o{slot}_{n}";
 
     // Master-deck cards rarely change; their text is cached per card instance and refreshed when the card changes
-    // (upgrade, enchantment, cost or keyword changes are covered by the signature). Text read during a fight may carry
-    // the fight's modifiers (Strength and the like in the dynamic values): a cached out-of-combat text is kept through the
-    // fight, and a text first read in combat is read again once the fight is over.
+    // (upgrade, enchantment, cost or keyword changes are covered by the signature) or the game language changes. Text
+    // read during a fight may carry the fight's modifiers (Strength and the like in the dynamic values): a cached
+    // out-of-combat text is kept through the fight, and a text first read in combat is read again once the fight is over.
     private static readonly ConditionalWeakTable<CardModel, CachedCard> DeckCache = new();
 
     private sealed class CachedCard
@@ -329,7 +389,8 @@ internal static class PlayerReader
                 ModelText.SafeId(card.Affliction),
                 // Permanent growth (e.g. a dagger that gains damage) changes the base values.
                 card.DynamicVars == null ? "" : string.Join(",", card.DynamicVars.Values.Select(v => v == null ? "" : v.Name + "=" + v.BaseValue)),
-                L10n.Language);
+                L10n.Language,
+                ModelText.GameLanguage());
         }
         catch (Exception) { return Guid.NewGuid().ToString(); }
     }

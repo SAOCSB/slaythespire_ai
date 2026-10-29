@@ -78,7 +78,11 @@ internal static class SnapshotBuilder
         // A finished room that offers nothing while the map is closed: the top-bar map button is the way on. (A finished
         // combat room is flagged by the resolver, so the readiness gate judges it like any other room.)
         if (ctx.InRun)
+        {
             Section(snap, "open map", () => MapReader.TryAddOpenMap(ctx, probe, snap, sink));
+            // Last: potions usable outside combat join a room screen's own actions (they never make a screen actionable).
+            Section(snap, "potions", () => PotionReader.AddOutOfCombat(ctx, probe, sink));
+        }
 
         Section(snap, "team", () => TeamLink.Annotate(snap));
 

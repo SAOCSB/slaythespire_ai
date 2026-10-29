@@ -119,16 +119,7 @@ internal static class CombatReader
                     try { ci = ModelText.Card(card, "h" + i, inCombat: true); }
                     catch (Exception) { ci = new CardInfo { Key = "h" + i, Id = ModelText.SafeId(card) }; }
                     info.Hand.Add(ci);
-                    // Keyword explanations for the cards the model can play (cached per card id, upgrade, enchantment
-                    // and affliction: those decide which tips a card has).
-                    if (Glossary.Collecting && ci.Id.Length > 0)
-                    {
-                        var c = card;
-                        string extra = "";
-                        try { extra = ModelText.SafeId(card.Enchantment) + "/" + ModelText.SafeId(card.Affliction); }
-                        catch (Exception) { }
-                        Glossary.Note("card:" + ci.Id + "+" + ModelText.UpgradeLevel(card) + "~" + extra, () => c.HoverTips);
-                    }
+                    Glossary.NoteCard(card);
                 }
             });
             tHand = Stopwatch.GetTimestamp();

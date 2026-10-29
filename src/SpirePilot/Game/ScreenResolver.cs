@@ -139,23 +139,33 @@ internal static class ScreenResolver
                 : new ScreenProbe { Kind = ScreenKind.Combat, Screen = current, Name = name, CombatFinished = true };
         }
 
-        // Card selections only exist in a run.
-        if (ctx.InRun && current is Node n && SceneUtil.Descendants<NGridCardHolder>(n, 12).Any(h => SceneUtil.VisibleInTree(h)))
+        // 8) Rooms and full screens that never hold a card grid of their own skip the walk below (the map screen alone
+        //    has thousands of path nodes): the walk could not match there, so they resolve as they always did.
+        if (GridlessRoom(current) is { } room)
+            return FindActiveCombatRoom(current) != null ? Make(ScreenKind.Combat) : Make(room);
+
+        // 9) Card selections only exist in a run. Event rooms (custom layouts) and unknown screens are searched.
+        if (ctx.InRun && current is Node n &&
+            SceneUtil.Descendants<NGridCardHolder>(n, 12, intoMatches: false, maxNodes: GridSearchBudget).Any(SceneUtil.VisibleInTree))
             return Make(ScreenKind.CardGridSelect);
 
-        // 8) Rooms and full screens.
         if (FindActiveCombatRoom(current) != null) return Make(ScreenKind.Combat);
-        switch (current)
-        {
-            case NTreasureRoom or NTreasureRoomRelicCollection: return Make(ScreenKind.Treasure);
-            case NRestSiteRoom: return Make(ScreenKind.RestSite);
-            case NMerchantRoom or NMerchantInventory or NFakeMerchant: return Make(ScreenKind.Shop);
-            case NCrystalSphereScreen: return Make(ScreenKind.Event);
-            case NEventRoom: return Make(ScreenKind.Event);
-            case NMapScreen or NMapRoom: return Make(ScreenKind.Map);
-        }
-        return Make(ScreenKind.Unknown);
+        return current is NEventRoom ? Make(ScreenKind.Event) : Make(ScreenKind.Unknown);
     }
+
+    /// <summary>Nodes the generic card-grid search may visit per capture.</summary>
+    private const int GridSearchBudget = 4000;
+
+    /// <summary>The screen kind of a room / full screen whose tree has no card grid holders; null for any other screen.</summary>
+    private static ScreenKind? GridlessRoom(IScreenContext current) => current switch
+    {
+        NMapScreen or NMapRoom => ScreenKind.Map,
+        NTreasureRoom or NTreasureRoomRelicCollection => ScreenKind.Treasure,
+        NRestSiteRoom => ScreenKind.RestSite,
+        NMerchantRoom or NMerchantInventory or NFakeMerchant => ScreenKind.Shop,
+        NCrystalSphereScreen => ScreenKind.Event,
+        _ => null,
+    };
 
     private static bool IsHumanOnly(IScreenContext? screen) =>
         screen is NCapstoneSubmenuStack or ICapstoneScreen or NCardsViewScreen or NCardLibrary or NCardPileScreen or NInspectCardScreen or

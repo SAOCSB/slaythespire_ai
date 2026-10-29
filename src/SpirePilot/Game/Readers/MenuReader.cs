@@ -303,7 +303,7 @@ internal static class MenuReader
         }
         info.LocalReady = ready;
 
-        var buttons = SceneUtil.ByScreenPosition(SceneUtil.Descendants<NCharacterSelectButton>(screen).Where(b => SceneUtil.VisibleInTree(b)));
+        var buttons = SceneUtil.ByScreenPosition(SceneUtil.Descendants<NCharacterSelectButton>(screen, intoMatches: false).Where(b => SceneUtil.VisibleInTree(b)));
         var selectable = new List<(NCharacterSelectButton button, CharacterOption option)>();
         foreach (var b in buttons)
         {

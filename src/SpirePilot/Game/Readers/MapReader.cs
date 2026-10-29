@@ -346,7 +346,7 @@ internal static class MapReader
         if (list.Count == 0)
         {
             var root = RoomUtil.NodeOf<Control>(screen, "_points") ?? (Node)screen;
-            list.AddRange(SceneUtil.Descendants<NMapPoint>(root));
+            list.AddRange(SceneUtil.Descendants<NMapPoint>(root, intoMatches: false));
         }
         return list.Distinct().ToList();
     }

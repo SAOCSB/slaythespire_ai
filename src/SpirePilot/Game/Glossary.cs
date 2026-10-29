@@ -1,24 +1,34 @@
 using System.Diagnostics;
 using MegaCrit.Sts2.Core.HoverTips;
+using MegaCrit.Sts2.Core.Models;
 
 namespace SpirePilot.Game;
 
 /// <summary>
 /// Collects keyword explanations (the game's hover tips: "Vulnerable", "Exhaust", ...) for the snapshot being built,
-/// so the model knows what the terms on its cards, relics, potions and powers mean. Main thread only.
+/// so the model knows what the terms on its cards, relics, potions and powers mean. Collects more than the prompt
+/// shows: the formatter keeps the terms that appear on screen first. Main thread only.
 /// </summary>
 internal static class Glossary
 {
-    private const int MaxEntries = 40;
+    private const int MaxEntries = 64;
     private const int MaxCached = 512;
-    /// <summary>Cached tips are re-read after this long (language switches, the odd tip with a live number).</summary>
+    /// <summary>Cached tips are re-read after this long (the odd tip with a live number).</summary>
     private static readonly TimeSpan CacheLife = TimeSpan.FromSeconds(30);
 
     private static Dictionary<string, string>? _target;
     private static readonly Dictionary<string, (long At, List<(string Title, string Text)> Tips)> Cache = new();
+    private static string _cacheLanguage = "";
 
     /// <summary>Starts collecting into <paramref name="target"/> (called by the snapshot builder).</summary>
-    public static void Begin(Dictionary<string, string> target) => _target = target;
+    public static void Begin(Dictionary<string, string> target)
+    {
+        _target = target;
+        var language = ModelText.GameLanguage();
+        if (language == _cacheLanguage) return;
+        Cache.Clear();
+        _cacheLanguage = language;
+    }
 
     public static void End() => _target = null;
 
@@ -55,6 +65,34 @@ internal static class Glossary
             Add(cached.Tips);
         }
         catch (Exception) { /* tips are best effort */ }
+    }
+
+    /// <summary>
+    /// The keyword tips of a card (cached per id, upgrade, enchantment and affliction: those decide which tips it has).
+    /// </summary>
+    public static void NoteCard(CardModel? card)
+    {
+        if (!Collecting || card == null) return;
+        string id = ModelText.SafeId(card);
+        if (id.Length == 0) return;
+        string extra = "";
+        try { extra = ModelText.SafeId(card.Enchantment) + "/" + ModelText.SafeId(card.Affliction); }
+        catch (Exception) { }
+        Note("card:" + id + "+" + ModelText.UpgradeLevel(card) + "~" + extra, () => card.HoverTips);
+    }
+
+    /// <summary>The keyword tips a relic's text refers to (its own tip is its description).</summary>
+    public static void NoteRelic(RelicModel? relic)
+    {
+        if (!Collecting || relic == null) return;
+        Note("relic:" + ModelText.SafeId(relic), () => relic.HoverTipsExcludingRelic);
+    }
+
+    /// <summary>The keyword tips a potion's text refers to (its own tip is its description).</summary>
+    public static void NotePotion(PotionModel? potion)
+    {
+        if (!Collecting || potion == null) return;
+        Note("potion:" + ModelText.SafeId(potion), () => potion.ExtraHoverTips);
     }
 
     private static List<(string, string)> Extract(IEnumerable<IHoverTip>? tips, string? skipId, string? skipTitle)

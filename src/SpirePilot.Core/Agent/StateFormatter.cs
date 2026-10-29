@@ -14,6 +14,11 @@ public sealed class StateFormatter
     {
         _local = s.LocalPlayer;
         _coop = s.IsMultiplayer;
+        _inCombat = s.Combat != null;
+        // Out of combat the menu offers only the potions that can be used here: say so next to them.
+        _usableSlots = !_inCombat
+            ? s.Actions.Where(s.IsOutOfCombatPotion).Select(a => a.IntArg(ActionArgs.Slot)).OfType<int>().ToHashSet()
+            : new HashSet<int>();
         var sb = new StringBuilder();
         sb.Append("Screen: ").Append(s.Screen);
         if (s.Run is { } run)
@@ -24,7 +29,9 @@ public sealed class StateFormatter
             if (!string.IsNullOrEmpty(run.BossName)) sb.Append(" | Boss: ").Append(run.BossName);
         }
         sb.AppendLine(s.IsMultiplayer ? " | Co-op" : "");
-        if (s.Run is { BossDescription.Length: > 0 } bossRun) sb.Append("Boss notes: ").AppendLine(Short(Clean(bossRun.BossDescription!), 300));
+        // Boss notes and teammates' decks inform route, rest, shop and reward choices; a fight shows its own enemies.
+        if (!_inCombat && s.Run is { BossDescription.Length: > 0 } bossRun)
+            sb.Append("Boss notes: ").AppendLine(Short(Clean(bossRun.BossDescription!), 300));
 
         if (s.LocalPlayer is { } me)
         {
@@ -71,9 +78,113 @@ public sealed class StateFormatter
         if (s.Glossary.Count > 0)
         {
             sb.Append("Glossary: ");
-            sb.AppendLine(string.Join(" | ", s.Glossary.OrderBy(kv => kv.Key, StringComparer.Ordinal).Take(MaxGlossaryEntries)
-                .Select(kv => kv.Key + ": " + Clean(kv.Value))));
+            sb.AppendLine(string.Join(" | ", GlossaryEntries(s).Select(kv => kv.Key + ": " + Clean(kv.Value))));
         }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Up to <see cref="MaxGlossaryEntries"/> terms: those that appear in what this snapshot shows (cards, candidates,
+    /// powers, potions, intents, room and menu text) first, then the rest; each group alphabetically.
+    /// </summary>
+    private IEnumerable<KeyValuePair<string, string>> GlossaryEntries(GameSnapshot s)
+    {
+        var visible = VisibleText(s);
+        return s.Glossary
+            .OrderBy(kv => visible.Contains(kv.Key, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ThenBy(kv => kv.Key, StringComparer.Ordinal)
+            .Take(MaxGlossaryEntries);
+    }
+
+    /// <summary>The text of what this snapshot is about, without relics and decks (those are always there).</summary>
+    private static string VisibleText(GameSnapshot s)
+    {
+        var sb = new StringBuilder();
+        void Line(string? text) => sb.Append(text).Append('\n');
+        void Cards(IEnumerable<CardInfo> cards)
+        {
+            foreach (var c in cards)
+            {
+                Line(c.Name);
+                Line(c.Description);
+                Line(c.UpgradedDescription);
+                Line(string.Join(" ", c.Keywords));
+            }
+        }
+        void PowerTexts(IEnumerable<PowerInfo> powers)
+        {
+            foreach (var p in powers)
+            {
+                Line(p.Name);
+                Line(p.Description);
+            }
+        }
+
+        if (s.Combat is { } c)
+        {
+            Cards(c.Hand);
+            foreach (var e in c.Enemies.Where(e => e.IsAlive))
+            {
+                PowerTexts(e.Powers);
+                foreach (var i in e.Intents) Line(i.Description);
+            }
+        }
+        foreach (var p in s.Players)
+        {
+            PowerTexts(p.Powers);
+            foreach (var comp in p.Companions) PowerTexts(comp.Powers);
+            if (!p.IsLocal) continue;
+            foreach (var pt in p.Potions)
+            {
+                Line(pt.Name);
+                Line(pt.Description);
+            }
+            foreach (var o in p.Orbs)
+            {
+                Line(o.Name);
+                Line(o.Description);
+            }
+        }
+        if (s.Selection is { } sel)
+        {
+            Line(sel.Prompt);
+            Cards(sel.Candidates);
+            foreach (var o in sel.OtherOptions) Line(o);
+        }
+        if (s.Rewards is { } r)
+        {
+            foreach (var i in r.Items) Line(i.Description);
+            Cards(r.CardChoices);
+        }
+        if (s.Shop is { } shop)
+        {
+            foreach (var i in shop.Items)
+            {
+                Line(i.Name);
+                Line(i.Description);
+                if (i.Card != null) Cards(new[] { i.Card });
+            }
+        }
+        if (s.Event is { } ev)
+        {
+            Line(ev.Title);
+            Line(ev.Body);
+            foreach (var o in ev.Options)
+            {
+                Line(o.Text);
+                Line(o.Description);
+            }
+        }
+        if (s.RestSite is { } rest)
+        {
+            foreach (var o in rest.Options)
+            {
+                Line(o.Name);
+                Line(o.Description);
+            }
+        }
+        foreach (var a in s.Actions) Line(a.Label);
+        foreach (var n in s.Notes) Line(n);
         return sb.ToString();
     }
 
@@ -104,9 +215,9 @@ public sealed class StateFormatter
 
         sb.Append("  Potions [").Append(p.Potions.Count).Append('/').Append(p.PotionSlots).Append("]: ");
         sb.AppendLine(p.Potions.Count == 0 ? "none" : string.Join("; ", p.Potions.Select(pt =>
-            detailed && VerboseCards ? $"#{pt.Slot} {pt.Name} [{pt.Target}] {Clean(pt.Description)}"
+            detailed && VerboseCards ? $"#{pt.Slot} {pt.Name} [{pt.Target}] {Clean(pt.Description)}{UsableNow(pt)}"
             : !detailed ? $"#{pt.Slot} {pt.Name}{(pt.Target == "AnyPlayer" ? " (can be given to a player)" : "")}{(pt.Description.Length > 0 ? ": " + Short(Clean(pt.Description), 80) : "")}"
-            : $"#{pt.Slot} {pt.Name}")));
+            : $"#{pt.Slot} {pt.Name}{UsableNow(pt)}")));
 
         if (detailed)
         {
@@ -118,14 +229,42 @@ public sealed class StateFormatter
             else if (p.DeckCount > 0)
                 sb.Append("  Deck size: ").Append(p.DeckCount).AppendLine();
         }
-        else if (p.Relics.Count > 0)
+        else
         {
-            sb.Append("  Relics: ").AppendLine(string.Join(", ", p.Relics.Select(r => r.Name)));
+            if (p.Relics.Count > 0)
+                sb.Append("  Relics: ").AppendLine(string.Join(", ", p.Relics.Select(r => r.Name)));
+            if (_coop && !_inCombat && p.Deck.Count > 0)
+                sb.Append("  Deck (").Append(p.Deck.Count).Append("): ").AppendLine(DeckSummary(p.Deck));
         }
     }
 
     private PlayerInfo? _local;
     private bool _coop;
+    private bool _inCombat;
+    private HashSet<int> _usableSlots = new();
+
+    private string UsableNow(PotionInfo potion) => _usableSlots.Contains(potion.Slot) ? " (usable now)" : "";
+
+    private const int MaxNotableCards = 6;
+
+    /// <summary>Card rarities worth naming in a teammate's deck, most telling first (starter cards say nothing).</summary>
+    private static readonly string[] NotableRarities = { "Rare", "Ancient", "Uncommon", "Event", "Common" };
+
+    /// <summary>A teammate's deck in one line: counts by card type, then a few of its defining (non-starter) cards.</summary>
+    private static string DeckSummary(List<CardInfo> deck)
+    {
+        var types = deck.GroupBy(c => c.Type.Length > 0 ? c.Type : "?")
+            .OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal)
+            .Select(g => $"{g.Count()} {g.Key}");
+        var notable = deck.Where(c => Array.IndexOf(NotableRarities, c.Rarity) >= 0)
+            .GroupBy(c => c.Name + (c.Upgraded && !c.Name.Contains('+') ? "+" : ""))
+            .OrderBy(g => g.Min(c => Array.IndexOf(NotableRarities, c.Rarity))).ThenBy(g => g.Key, StringComparer.Ordinal)
+            .Take(MaxNotableCards)
+            .Select(g => g.Count() > 1 ? $"{g.Key} x{g.Count()}" : g.Key)
+            .ToList();
+        var text = string.Join(", ", types);
+        return notable.Count > 0 ? text + "; notable: " + string.Join(", ", notable) : text;
+    }
 
     /// <summary>
     /// What ending the turn now does to you, in StS2 order:

@@ -104,7 +104,11 @@ internal static class RewardsReader
 
         if (blockedPotion != null && me != null)
         {
-            try { AddPotionDiscards(sink, me, Describe(blockedPotion)); }
+            var rewardText = Describe(blockedPotion);
+            // Drinking a potion that can be used here frees the slot without wasting it.
+            try { PotionReader.AddDrinksForReward(sink, me, rewardText); }
+            catch (Exception ex) { ThrottledLog.Warn("reward-drink", "potion drink actions failed: " + ex.Message); }
+            try { AddPotionDiscards(sink, me, rewardText); }
             catch (Exception ex) { ThrottledLog.Warn("reward-discard", "potion discard actions failed: " + ex.Message); }
         }
 
@@ -178,7 +182,7 @@ internal static class RewardsReader
                 candidates.AddRange(list.OfType<NRewardButton>());
         }
         catch (Exception) { }
-        candidates.AddRange(SceneUtil.Descendants<NRewardButton>(screen)
+        candidates.AddRange(SceneUtil.Descendants<NRewardButton>(screen, intoMatches: false)
             .Where(b => b.Reward is CardReward r && SkippedCardRewards.TryGetValue(r, out _)));
         return candidates.FirstOrDefault(b => SceneUtil.Alive(b) && b.Reward is CardReward && b.IsEnabled);
     }
@@ -254,7 +258,7 @@ internal static class RewardsReader
 
     private static List<NRewardButton> RewardButtons(NRewardsScreen screen)
     {
-        var buttons = SceneUtil.Descendants<NRewardButton>(screen).Where(b => SceneUtil.VisibleInTree(b)).ToList();
+        var buttons = SceneUtil.Descendants<NRewardButton>(screen, intoMatches: false).Where(b => SceneUtil.VisibleInTree(b)).ToList();
         return SceneUtil.ByScreenPosition(buttons);
     }
 
@@ -397,6 +401,7 @@ internal static class RewardsReader
             {
                 var card = cards[i];
                 var ci = RoomUtil.CardInfo(card, "r" + i, false);
+                if (!ci.Upgraded) ci.UpgradedDescription = ModelText.UpgradePreview(card, ci.Description);
                 info.CardChoices.Add(ci);
                 sink.Add(ActionKind.PickRewardCard, RoomUtil.T("act.pick_card", RoomUtil.CardText(ci)), "cardreward:" + RoomUtil.CardKey(card),
                     ct => PickCard(screen!, card, ct),
@@ -422,7 +427,7 @@ internal static class RewardsReader
     /// <summary>The offered cards, in on-screen order (model list first; holders as fallback).</summary>
     private static List<CardModel> RewardCards(NCardRewardSelectionScreen screen)
     {
-        var holders = SceneUtil.ByScreenPosition(SceneUtil.Descendants<NCardHolder>(screen)
+        var holders = SceneUtil.ByScreenPosition(SceneUtil.Descendants<NCardHolder>(screen, intoMatches: false)
             .Where(h => SceneUtil.VisibleInTree(h) && h.CardModel != null).ToList());
         var fromHolders = holders.Select(h => h.CardModel!).Distinct().ToList();
         var options = Reflect.Get<IReadOnlyList<CardCreationResult>>(screen, "_options");
@@ -447,7 +452,7 @@ internal static class RewardsReader
             if (SceneUtil.Alive(h)) return h;
         }
         catch (Exception) { /* not shown */ }
-        return SceneUtil.Descendants<NCardHolder>(screen).FirstOrDefault(h => ReferenceEquals(h.CardModel, card));
+        return SceneUtil.Descendants<NCardHolder>(screen, intoMatches: false).FirstOrDefault(h => ReferenceEquals(h.CardModel, card));
     }
 
     private static async Task<ActionResult> PickCard(NCardRewardSelectionScreen screen, CardModel card, CancellationToken ct)
@@ -527,7 +532,7 @@ internal static class RewardsReader
         }
         else
         {
-            buttons = SceneUtil.ByScreenPosition(SceneUtil.Descendants<NCardRewardAlternativeButton>(screen).Where(b => SceneUtil.Alive(b)).ToList());
+            buttons = SceneUtil.ByScreenPosition(SceneUtil.Descendants<NCardRewardAlternativeButton>(screen, intoMatches: false).Where(b => SceneUtil.Alive(b)).ToList());
         }
 
         var result = buttons.Select(b => (b, (CardRewardAlternative?)null)).ToList();
@@ -749,6 +754,7 @@ internal static class RewardsReader
                 case GoldReward g when SafeGold(g) is { } amount:
                     return desc.Length > 0 ? desc : amount + " gold";
                 case PotionReward p when p.Potion != null:
+                    Glossary.NotePotion(p.Potion);
                     var pi = ModelText.Potion(p.Potion, -1, false);
                     var pname = pi?.Name ?? ModelText.SafeId(p.Potion);
                     var pdesc = ModelText.Clean(pi?.Description);

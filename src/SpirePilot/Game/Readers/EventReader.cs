@@ -174,6 +174,7 @@ internal static class EventReader
                 if (relic != null)
                 {
                     var ri = ModelText.Relic(relic);
+                    Glossary.NoteRelic(relic);
                     if (text.Length == 0) text = ri.Name;
                     if (description.Length == 0) description = ri.Description;
                     else if (ri.Name.Length > 0 && !description.Contains(ri.Name)) description = ri.Name + ": " + description;

@@ -64,7 +64,7 @@ internal static class ChooseScreens
 
     private static List<CardModel> ChooseCards(NChooseACardSelectionScreen screen)
     {
-        var holders = SceneUtil.ByScreenPosition(SceneUtil.Descendants<NCardHolder>(screen)
+        var holders = SceneUtil.ByScreenPosition(SceneUtil.Descendants<NCardHolder>(screen, intoMatches: false)
             .Where(h => SceneUtil.VisibleInTree(h) && h.CardModel != null).ToList());
         var shown = holders.Select(h => h.CardModel!).Distinct().ToList();
         if (shown.Count > 0) return shown;
@@ -78,7 +78,7 @@ internal static class ChooseScreens
     private static async Task<ActionResult> PickCard(NChooseACardSelectionScreen screen, CardModel card, CancellationToken ct)
     {
         if (!SceneUtil.Alive(screen)) return ActionResult.Fail("selection screen is gone");
-        var holder = SceneUtil.Descendants<NCardHolder>(screen).FirstOrDefault(h => ReferenceEquals(h.CardModel, card));
+        var holder = SceneUtil.Descendants<NCardHolder>(screen, intoMatches: false).FirstOrDefault(h => ReferenceEquals(h.CardModel, card));
         if (!SceneUtil.Alive(holder)) return ActionResult.Fail("card not found on screen");
         // Like the card reward screen this one ignores clicks for a moment after opening (_noSelectionTimeMsec).
         await RoomUtil.WaitClickable(screen, holder!, ct);
@@ -167,7 +167,7 @@ internal static class ChooseScreens
     {
         // Bundles moved into the preview are not "visible" in the row; read the row's bundles only.
         var row = RoomUtil.NodeOf<Control>(screen, "_bundleRow", "%BundleRow") ?? (Node)screen;
-        return SceneUtil.ByScreenPosition(SceneUtil.Descendants<NCardBundle>(row).Where(b => SceneUtil.VisibleInTree(b)).ToList());
+        return SceneUtil.ByScreenPosition(SceneUtil.Descendants<NCardBundle>(row, intoMatches: false).Where(b => SceneUtil.VisibleInTree(b)).ToList());
     }
 
     private static List<CardModel> SafeBundle(NCardBundle bundle)
@@ -227,7 +227,7 @@ internal static class ChooseScreens
         snap.Selection = sel;
 
         var row = RoomUtil.NodeOf<Control>(screen, "_relicRow", "%RelicRow") ?? (Node)screen;
-        var holders = SceneUtil.ByScreenPosition(SceneUtil.Descendants<NRelicBasicHolder>(row).Where(h => SceneUtil.VisibleInTree(h)).ToList());
+        var holders = SceneUtil.ByScreenPosition(SceneUtil.Descendants<NRelicBasicHolder>(row, intoMatches: false).Where(h => SceneUtil.VisibleInTree(h)).ToList());
         var used = new HashSet<string>();
         for (int i = 0; i < holders.Count; i++)
         {
