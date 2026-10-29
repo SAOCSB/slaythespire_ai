@@ -20,7 +20,8 @@ namespace SpirePilot.Api;
 /// Optional local HTTP API (loopback only, off by default) so external AI tools — scripts, MCP servers, other agents —
 /// can read the full game state and act through the same legal-action menu the built-in pilot uses.
 ///
-///   GET  /status              pilot status, mode, token usage, last error
+///   GET  /status              pilot status, effective mode, token usage, last error; "versionMismatch" while this build
+///                             is incompatible with the game (the AI is off), "versionWarning" while it runs untested
 ///   GET  /state               fresh snapshot (state + legal actions); ?format=text → the pilot's state text, routes
 ///                             and menu (text/plain); ?include=text → the JSON plus that text as "text", from the same
 ///                             capture. The menu is the built-in pilot's: the owner's rules already removed actions.
@@ -37,7 +38,8 @@ namespace SpirePilot.Api;
 ///                             → {"delivered", "id"}; in co-op, when nobody addressed runs SpirePilot, nothing is sent
 ///                             and the kind's vanilla emote is shown instead: {"delivered": false, "emote", "reason"}
 ///   GET  /compendium?kind=cards|relics|potions|powers|characters   every game model with localized text
-///   GET  /diagnostics         diagnostics report (markdown; no secrets)
+///   GET  /diagnostics         writes a diagnostics-*.md report (as the panel's button does) and returns it (markdown;
+///                             no secrets); header X-Diagnostics-File: its path (non-ASCII percent-encoded as UTF-8)
 /// With a token configured, every request needs "Authorization: Bearer &lt;token&gt;". Requests from web pages are
 /// refused (any Origin header, a Host other than loopback), and POST bodies must be JSON (Content-Type
 /// application/json, at most 64 KB), so a browser can never drive the game.
@@ -208,7 +210,9 @@ internal sealed class LocalHttpApi : IDisposable
                 }
                 case ("GET", "/diagnostics"):
                 {
-                    var report = await Diagnostics.BuildAsync();
+                    // Writes the same diagnostics-*.md file as the panel's button: the file bug reports attach.
+                    var (report, file) = await Diagnostics.WriteAsync();
+                    if (file != null) res.AddHeader("X-Diagnostics-File", HeaderValue(file));
                     await SendText(res, 200, report, "text/markdown; charset=utf-8");
                     break;
                 }
@@ -527,7 +531,7 @@ internal sealed class LocalHttpApi : IDisposable
         {
             state = loop.Status.State,
             text = loop.Status.Text,
-            mode = PilotRuntime.Settings.Control.Mode,
+            mode = PilotRuntime.EffectiveMode,
             paused = loop.Paused,
             advice = loop.AdviceAction?.Label,
             llmCalls = engine.LlmCalls,
@@ -537,6 +541,7 @@ internal sealed class LocalHttpApi : IDisposable
             lastError = engine.LastLlmError,
             profile = PilotRuntime.Settings.Active?.Name,
             versionMismatch = PilotRuntime.VersionProblemEnglish,
+            versionWarning = PilotRuntime.VersionWarningEnglish,
         };
     }
 
@@ -592,6 +597,18 @@ internal sealed class LocalHttpApi : IDisposable
         res.ContentLength64 = bytes.Length;
         await res.OutputStream.WriteAsync(bytes);
         res.Close();
+    }
+
+    /// <summary>Header values must be printable ASCII: other bytes of the UTF-8 text (and '%') are percent-encoded.</summary>
+    private static string HeaderValue(string text)
+    {
+        var sb = new StringBuilder();
+        foreach (var b in Encoding.UTF8.GetBytes(text))
+        {
+            if (b is >= 0x20 and < 0x7F && b != (byte)'%') sb.Append((char)b);
+            else sb.Append('%').Append(b.ToString("X2"));
+        }
+        return sb.ToString();
     }
 
     private static async Task SendText(HttpListenerResponse res, int status, string text, string contentType)

@@ -109,6 +109,10 @@ public sealed class ControlSettings
     public bool FallbackOnLlmFailure { get; set; } = true;
     /// <summary>Let the LLM return a multi-action plan for the current combat turn.</summary>
     public bool AllowTurnPlans { get; set; } = true;
+    /// <summary>
+    /// Run the AI even when this build is incompatible with the game version ("run anyway"); screens may be misread.
+    /// </summary>
+    public bool IgnoreGameVersion { get; set; }
 }
 
 public sealed class RouteSettings

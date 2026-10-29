@@ -49,7 +49,7 @@ internal static class Overlay
     /// <summary>Teammates' messages that arrived while the Team tab was not in view.</summary>
     private static int _unread;
     private static int _shownUnread = -1;
-    private static bool _versionNoteShown;
+    private static string? _versionNoteShown;
     private static readonly List<Page> Pages = new();
     private static readonly List<Button> TabButtons = new();
     private static int _tab;
@@ -503,14 +503,17 @@ internal static class Overlay
     private static void UpdateStatus()
     {
         var status = PilotRuntime.Loop.Status;
-        // A build for another game version keeps the AI off: that says more than any pilot state.
+        // A build for another game version keeps the AI off: that says more than any pilot state. On an untested game
+        // the pilot runs: its state stays, the warning shows once here and stays on the Control tab.
         var problem = PilotRuntime.VersionProblem;
+        var warning = problem == null ? PilotRuntime.VersionWarning : null;
         var color = problem != null ? UiTheme.Bad : UiTheme.StateColor(status.State);
         var statusText = problem ?? (status.Text.Length > 0 ? status.Text : L10n.T("ui.state." + status.State));
-        if (problem != null && !_versionNoteShown)
+        var versionNote = problem ?? warning;
+        if (versionNote != null && versionNote != _versionNoteShown)
         {
-            _versionNoteShown = true;
-            ShowToast(problem, UiTheme.Bad, 30_000);
+            _versionNoteShown = versionNote;
+            ShowToast(versionNote, problem != null ? UiTheme.Bad : UiTheme.Warn, 30_000);
         }
         var keyName = PilotRuntime.Settings.Ui.ToggleKey;
         bool recolor = color != _statusColor;
@@ -526,7 +529,7 @@ internal static class Overlay
                 _fab.AddThemeColorOverride("font_hover_color", color);
                 _fab.AddThemeColorOverride("font_pressed_color", color);
             }
-            var tip = L10n.T("ui.fab.tooltip", keyName, statusText);
+            var tip = L10n.T("ui.fab.tooltip", keyName, warning != null ? statusText + "\n" + warning : statusText);
             if (_fab!.TooltipText != tip) _fab.TooltipText = tip;
         }
         UiKit.SetText(_titleStatus, statusText);
@@ -558,7 +561,7 @@ internal static class Overlay
         var state = loop.Status.State;
         if (state is PilotState.Thinking or PilotState.Acting) return;
         bool idle = loop.Paused || state is PilotState.Off or PilotState.Paused or PilotState.Error ||
-                    PilotRuntime.Settings.Control.Mode == PilotMode.Off;
+                    PilotRuntime.EffectiveMode == PilotMode.Off;
         if (idle) interval = Math.Max(interval, IdleCaptureIntervalMs);
         var now = Time.GetTicksMsec();
         if (now - _lastCaptureMs < interval) return;

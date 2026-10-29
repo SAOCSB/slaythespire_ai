@@ -38,8 +38,8 @@ internal static class RoomUtil
         L10n.Add("rooms.close_map", "关闭地图（返回房间）", "Close the map (back to the room)");
         L10n.Add("rooms.discard_for_reward", "丢弃药水 {0}（药水栏已满，可为奖励「{1}」腾出位置）",
             "Discard potion {0} (belt is full; frees a slot for the reward {1})");
-        L10n.Add("rooms.potion_belt_full", "药水栏已满：先丢弃一瓶药水才能领取 {0}，或放弃它。",
-            "Potion belt is full: discard a potion first to take {0}, or leave it.");
+        L10n.Add("rooms.potion_belt_full", "药水栏已满：先腾出一格（喝掉一瓶现在有用的药水，或丢弃一瓶，见菜单）才能领取 {0}，或放弃它。",
+            "Potion belt is full: free a slot first (drink a potion that helps now, or discard one; see the menu) to take {0}, or leave it.");
         L10n.Add("rooms.proceed_forfeit", "继续/离开（放弃 {0} 个未领取的奖励）", "Proceed / leave (forfeits {0} unclaimed reward(s))");
         L10n.Add("rooms.card_reward", "卡牌奖励: {0}", "Card reward: {0}");
         L10n.Add("rooms.rewards_waiting", "已离开奖励界面，等待队友领取完奖励。", "Rewards finished; waiting for teammates to finish theirs.");

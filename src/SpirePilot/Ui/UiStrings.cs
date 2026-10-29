@@ -356,5 +356,18 @@ internal static class UiStrings
         ("ui.misc.log_prompts", "把完整提示词写入日志（调试用）", "Write full prompts to the log (debugging)"),
         ("ui.misc.version", "SpirePilot v{0}", "SpirePilot v{0}"),
         ("ui.misc.settings_file", "设置文件: {0}", "Settings file: {0}"),
+
+        // ---- game version notices ----
+        ("ui.version.untested", "这个 SpirePilot 是为游戏 {0} 编译的，当前游戏 {1} 更新，未经测试：AI 照常运行，但部分功能可能失效。请留意 SpirePilot 更新。",
+            "This SpirePilot build is for game {0}; game {1} is newer and untested: the AI runs, but parts may not work. Check for a SpirePilot update."),
+        ("ui.version.forced", "这个 SpirePilot 是为游戏 {0} 编译的，当前游戏是 {1}：已按你的选择仍然运行，可能读错界面或操作失败。",
+            "This SpirePilot build is for game {0}, but the game is {1}: running anyway as you chose; screens may be misread and actions may fail."),
+        ("ui.version.no_build", "这个 SpirePilot 是为游戏 {0} 编译的，当前游戏是 {1}：AI 已关闭。还没有适用于游戏 {2} 的 SpirePilot，请检查 SpirePilot 更新。",
+            "This SpirePilot build is for game {0}, but the game is {1}: the AI is off. There is no SpirePilot build for game {2} yet: check for a SpirePilot update."),
+        ("ui.version.no_build_try", "这个 SpirePilot 是为游戏 {0} 编译的，当前游戏是 {1}：AI 已关闭。还没有适用于游戏 {2} 的 SpirePilot：请检查 SpirePilot 更新，或试试 {3} 版本（未在这个游戏版本上测试）。",
+            "This SpirePilot build is for game {0}, but the game is {1}: the AI is off. There is no SpirePilot build for game {2} yet: check for a SpirePilot update, or try the {3} build (untested on this game)."),
+        ("ui.version.run_anyway", "仍然运行（风险自负）", "Run anyway (at your own risk)"),
+        ("ui.version.run_anyway_tip", "游戏版本与这个构建不兼容：AI 可能读错界面、操作失败。设置会保存，可随时关闭。",
+            "This build is not made for this game version: the AI may misread screens and actions may fail. Saved in the settings; turn it off any time."),
     };
 }

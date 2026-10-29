@@ -24,6 +24,8 @@ internal static class PotionReader
     {
         L10n.Add("potion.drink_for_reward", "饮用药水 {0}（药水栏已满，可为奖励「{1}」腾出位置）",
             "Drink potion {0} (belt is full; frees a slot for the reward {1})");
+        L10n.Add("potion.drink_for_reward_target", "饮用药水 {0} → {1}（药水栏已满，可为奖励「{2}」腾出位置）",
+            "Drink potion {0} → {1} (belt is full; frees a slot for the reward {2})");
     }
 
     private static readonly TimeSpan UseTimeout = TimeSpan.FromSeconds(10);
@@ -54,6 +56,10 @@ internal static class PotionReader
         if (RoomUtil.CombatInProgress()) return;
         var slots = me.PotionSlots;
         if (slots == null) return;
+        // In co-op the combat labels name the target ("→ yourself"); without it here a potion promised to a teammate
+        // reads as if this action could deliver it.
+        bool coop = RoomUtil.IsMultiplayer();
+        if (coop) CombatStrings.Ensure();
         for (int slot = 0; slot < slots.Count; slot++)
         {
             var potion = slots[slot];
@@ -66,7 +72,10 @@ internal static class PotionReader
                 if (sink.FindBySemanticKey(key) != null) continue;
                 string name = ModelText.ModelName(potion);
                 if (name.Length == 0) name = id;
-                string label = rewardText != null ? L10n.T("potion.drink_for_reward", name, rewardText) : L10n.T("act.use_potion", name);
+                string? target = atOwner && coop ? L10n.T("lbl.self") : null;
+                string label = rewardText == null
+                    ? (target == null ? L10n.T("act.use_potion", name) : L10n.T("act.use_potion_target", name, target))
+                    : (target == null ? L10n.T("potion.drink_for_reward", name, rewardText) : L10n.T("potion.drink_for_reward_target", name, target, rewardText));
                 var p = potion;
                 int s = slot;
                 sink.Add(ActionKind.UsePotion, label, key, ct => Use(p, s, atOwner, ct),

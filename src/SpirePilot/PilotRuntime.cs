@@ -39,21 +39,46 @@ internal static class PilotRuntime
     public static event Action<PilotSettings>? SettingsChanged;
 
     /// <summary>
-    /// Set when this build is for another game version than the one running: the AI stays off and the overlay says
-    /// which build to install. Null otherwise (also while the game version is not known yet).
+    /// True while this build is incompatible with the running game and the owner did not choose "run anyway": the AI
+    /// stays off (the saved mode is kept for a matching build), and the HTTP API refuses to act.
     /// </summary>
-    public static string? VersionProblem =>
-        _wrongGameVersion is { } v ? L10n.T("status.version_mismatch", Diagnostics.CompiledFor, v, GameVersion.Branch(v) ?? v) : null;
+    public static bool VersionBlocked => _gameVersion is { Fit: GameCompatibility.Incompatible } && !Settings.Control.IgnoreGameVersion;
+
+    /// <summary>True when the game version is incompatible with this build: the panel then offers "run anyway".</summary>
+    public static bool VersionOverridable => _gameVersion is { Fit: GameCompatibility.Incompatible };
+
+    /// <summary>The mode the pilot runs in: the saved one, or Off while <see cref="VersionBlocked"/>.</summary>
+    public static PilotMode EffectiveMode => VersionBlocked ? PilotMode.Off : Settings.Control.Mode;
+
+    /// <summary>
+    /// Why the AI is off while <see cref="VersionBlocked"/>, naming only builds that exist; null otherwise (also while
+    /// the game version is not known yet).
+    /// </summary>
+    public static string? VersionProblem => VersionBlocked ? VersionText(english: false, blocked: true) : null;
 
     /// <summary><see cref="VersionProblem"/> in English, for the log and the HTTP API.</summary>
-    public static string? VersionProblemEnglish =>
-        _wrongGameVersion is { } v
-            ? $"this SpirePilot build is for game {Diagnostics.CompiledFor}, but the game is {v}: the AI stays off; install the {GameVersion.Branch(v) ?? v} build"
-            : null;
+    public static string? VersionProblemEnglish => VersionBlocked ? VersionText(english: true, blocked: true) : null;
 
-    private static volatile string? _wrongGameVersion;
+    /// <summary>
+    /// The AI runs on a game version this build was not made for: a newer, untested one, or an incompatible one by the
+    /// owner's choice. Null otherwise.
+    /// </summary>
+    public static string? VersionWarning => VersionWarned ? VersionText(english: false, blocked: false) : null;
+
+    /// <summary><see cref="VersionWarning"/> in English, for the log, the HTTP API and diagnostics.</summary>
+    public static string? VersionWarningEnglish => VersionWarned ? VersionText(english: true, blocked: false) : null;
+
+    private static bool VersionWarned => _gameVersion is { Fit: not GameCompatibility.Ok } && !VersionBlocked;
+
+    private sealed record GameVersionFit(string Version, GameCompatibility Fit);
+    private sealed record OffView(PilotSettings Saved, PilotSettings Off);
+
+    /// <summary>The game version and how this build fits it, once known (stays null when unreadable).</summary>
+    private static volatile GameVersionFit? _gameVersion;
     private static bool _versionChecked;
     private static int _versionAttempts;
+    private static bool _wasBlocked;
+    private static volatile OffView? _offView;
     private static bool _initialized;
     private static volatile string? _gameLanguage;
     private static readonly object SettingsLock = new();
@@ -89,7 +114,7 @@ internal static class PilotRuntime
         {
             MessageLanguage = () => ResolveMessageLanguage(Store.Current),
         };
-        Loop = new PilotLoop(Bridge, Engine, Team, () => Store.Current, log);
+        Loop = new PilotLoop(Bridge, Engine, Team, LoopSettings, log);
         Loop.RunStarted += OnRunStarted;
         Loop.NewRunDetected += OnNewRunDetected;
         var traces = new TraceWriter(DataDir);
@@ -97,7 +122,7 @@ internal static class PilotRuntime
         // Status changes come from the loop's worker thread; the team link only runs on the main thread.
         Loop.StatusChanged += _ =>
         {
-            bool active = Store.Current.Control.Mode is not (PilotMode.Off or PilotMode.Advisor) && !Loop.Paused;
+            bool active = EffectiveMode is not (PilotMode.Off or PilotMode.Advisor) && !Loop.Paused;
             MainThread.Post(() => TeamLink.SetLocalAiActive(active));
         };
 
@@ -114,10 +139,10 @@ internal static class PilotRuntime
     }
 
     /// <summary>
-    /// Main thread, until it has decided: compares the game's major.minor with the branch this DLL was compiled for
-    /// and starts the pilot when they match (or when the version cannot be read at all). A build for another branch
-    /// would fail at the first game member that changed (character select, potions ...), so the AI is switched off
-    /// and stays off instead.
+    /// Main thread, until it has decided: compares the game's major.minor with the branch this DLL was compiled for and
+    /// starts the pilot unless the build is incompatible (or when the version cannot be read at all). An incompatible
+    /// build would fail at the first game member that changed (character select, potions ...), so the AI stays off
+    /// until the owner chooses "run anyway"; a game newer than every build runs with a warning.
     /// </summary>
     private static void CheckGameVersion()
     {
@@ -125,24 +150,70 @@ internal static class PilotRuntime
         string? version;
         try { version = ReadGameVersion(); }
         catch (Exception) { version = null; }
-        var matches = GameVersion.Matches(version, Diagnostics.CompiledFor);
-        if (matches == null)
+        var fit = GameVersion.Compatibility(version, Diagnostics.CompiledFor);
+        if (fit == null)
         {
             // Not readable yet; a build without release info never is: then run unchecked after a while.
             if (++_versionAttempts < 600) return;
             ModLog.Warn($"game version unreadable ({version ?? "none"}): running without the version check");
         }
-        _versionChecked = true;
-        if (matches != false)
+        lock (SettingsLock)
         {
-            Loop.Start();
-            return;
+            if (fit is { } f) _gameVersion = new GameVersionFit(version!.Trim(), f);
+            _versionChecked = true;
+            _wasBlocked = VersionBlocked;
+            if (VersionProblemEnglish is { } problem) ModLog.Error(problem);
+            else if (VersionWarningEnglish is { } warning) ModLog.Warn(warning);
+            if (!_wasBlocked) Loop.Start();
         }
-        _wrongGameVersion = version;
-        ModLog.Error(VersionProblemEnglish!);
-        if (Settings.Control.Mode == PilotMode.Off) return;
-        try { SetMode(PilotMode.Off); }
-        catch (Exception ex) { ModLog.Warn("saving mode Off failed (it still applies): " + ex.Message); }
+    }
+
+    /// <summary>The version notice: why the AI is off (<paramref name="blocked"/>), or why it runs on an untested game.</summary>
+    private static string VersionText(bool english, bool blocked)
+    {
+        var (game, fit) = _gameVersion!;
+        var built = Diagnostics.CompiledFor;
+        if (!blocked)
+        {
+            if (fit == GameCompatibility.Untested)
+                return english
+                    ? $"this SpirePilot build is for game {built}; game {game} is newer and untested: the AI runs, but parts may not work; check for a SpirePilot update"
+                    : L10n.T("ui.version.untested", built, game);
+            return english
+                ? $"this SpirePilot build is for game {built}, but the game is {game}: running anyway as the owner chose; screens may be misread and actions may fail"
+                : L10n.T("ui.version.forced", built, game);
+        }
+        var build = GameVersion.BuildFor(game, out bool untested);
+        var branch = GameVersion.Branch(game) ?? game;
+        if (!english)
+        {
+            return build == null ? L10n.T("ui.version.no_build", built, game, branch)
+                : untested ? L10n.T("ui.version.no_build_try", built, game, branch, build)
+                : L10n.T("status.version_mismatch", built, game, build);
+        }
+        var fix = build == null ? $"there is no SpirePilot build for game {branch} yet: check for a SpirePilot update"
+            : untested ? $"there is no SpirePilot build for game {branch} yet: check for a SpirePilot update, or try the {build} build (untested on this game)"
+            : $"install the {build} build";
+        return $"this SpirePilot build is for game {built}, but the game is {game}: the AI stays off; {fix} " +
+               "('Run anyway' on the SpirePilot panel's Control tab overrides this, at your own risk)";
+    }
+
+    /// <summary>
+    /// The settings the pilot loop runs on: the live ones, with mode Off while <see cref="VersionBlocked"/> (in memory
+    /// only, so the saved mode comes back with a matching build or "run anyway"). Any thread.
+    /// </summary>
+    private static PilotSettings LoopSettings()
+    {
+        var live = Store.Current;
+        if (!VersionBlocked) return live;
+        var view = _offView;
+        if (view == null || !ReferenceEquals(view.Saved, live))
+        {
+            var off = SettingsStore.Clone(live);
+            off.Control.Mode = PilotMode.Off;
+            _offView = view = new OffView(live, off);
+        }
+        return view.Off;
     }
 
     /// <summary>Its own method: a game update that changes the release info breaks this call, not the caller.</summary>
@@ -196,13 +267,13 @@ internal static class PilotRuntime
         {
             var s = SettingsStore.Clone(Store.Current);
             mutate(s);
-            if (_wrongGameVersion != null) s.Control.Mode = PilotMode.Off;
             // The store takes the new settings before it writes the file: they are live even when writing fails.
             try { Store.Save(s); }
             catch (Exception ex) { saveError = ExceptionDispatchInfo.Capture(ex); }
             saved = Store.Current;
             L10n.Configure(saved.Ui.Language, _gameLanguage);
             Team.MaxAiMessagesPerMinute = saved.Team.MaxAiMessagesPerMinute;
+            ApplyVersionOverride();
         }
         // The HTTP API is started / stopped / re-keyed from the main thread only (never from one of its own request
         // threads, which Dispose would wait on).
@@ -218,6 +289,23 @@ internal static class PilotRuntime
     }
 
     /// <summary>
+    /// Under the settings lock, after a save: "run anyway" was switched on (the pilot starts in the saved mode) or off
+    /// again (<see cref="LoopSettings"/> holds it at Off).
+    /// </summary>
+    private static void ApplyVersionOverride()
+    {
+        if (!_versionChecked || VersionBlocked == _wasBlocked) return;
+        _wasBlocked = !_wasBlocked;
+        if (_wasBlocked)
+        {
+            ModLog.Warn("'run anyway' is off: " + VersionProblemEnglish);
+            return;
+        }
+        ModLog.Warn(VersionWarningEnglish!);
+        Loop.Start();
+    }
+
+    /// <summary>
     /// Convenience for the UI and the HTTP API: change the mode and persist it. Any thread. Throws when the file cannot
     /// be written; the mode applies all the same.
     /// </summary>
@@ -226,7 +314,7 @@ internal static class PilotRuntime
         try { UpdateSettings(s => s.Control.Mode = mode); }
         finally
         {
-            if (mode != PilotMode.Off && _wrongGameVersion == null) Loop.Paused = false;
+            if (mode != PilotMode.Off && !VersionBlocked) Loop.Paused = false;
         }
     }
 
@@ -236,7 +324,7 @@ internal static class PilotRuntime
     /// </summary>
     public static async Task<string?> WriteDiagnosticsAsync()
     {
-        try { return await Diagnostics.WriteAsync().ConfigureAwait(false); }
+        try { return (await Diagnostics.WriteAsync().ConfigureAwait(false)).Path; }
         catch (Exception ex)
         {
             ModLog.Error("diagnostics failed: " + ex);

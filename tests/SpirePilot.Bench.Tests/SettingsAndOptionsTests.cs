@@ -163,6 +163,19 @@ public class SettingsAndOptionsTests
         Assert.Empty(FixtureValidator.Validate(TestSupport.Combat(multiplayer: true)));
     }
 
+    [Fact]
+    public void A_menu_with_an_id_gap_is_reported_once_with_the_fix()
+    {
+        // As GET /state serves it after an owner rule removed a0: the game's ids stay, so every later one is off.
+        var f = TestSupport.Combat().With(s => s.Actions.RemoveAt(0));
+        f.ExpectAny = new() { "play:BASH+0@E:CULTIST#0" };
+        var ids = FixtureValidator.Validate(f).Where(p => p.Contains("expected \"a")).ToList();
+        var problem = Assert.Single(ids);
+        Assert.Contains("\"a1\", expected \"a0\"", problem);
+        Assert.Contains("renumber", problem);
+        Assert.Contains("semantic key", problem);
+    }
+
     [Theory]
     [InlineData("\"request_potion\"", TeamMessageKind.RequestPotion)]
     [InlineData("\"RequestDebuff\"", TeamMessageKind.RequestDebuff)]
