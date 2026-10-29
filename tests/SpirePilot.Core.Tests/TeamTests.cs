@@ -35,6 +35,15 @@ public class TeamWireTests
     }
 
     [Fact]
+    public void Trailing_bytes_from_other_mods_are_ignored()
+    {
+        var bytes = TeamWire.Encode(new TeamMessage { Text = "with trailer" });
+        var withTrailer = bytes.Concat(Enumerable.Repeat((byte)0xAB, 36)).ToArray();
+        Assert.Equal(TeamWire.ParseOutcome.Ok, TeamWire.TryDecode(withTrailer, out var back));
+        Assert.Equal("with trailer", back!.Text);
+    }
+
+    [Fact]
     public void Oversized_fields_are_clamped()
     {
         var bytes = TeamWire.Encode(new TeamMessage { Text = new string('x', 5000) });

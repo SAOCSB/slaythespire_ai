@@ -1,0 +1,12 @@
+{
+  "id": "SpirePilot",
+  "name": "SpirePilot AI 领航员",
+  "author": "SpirePilot contributors",
+  "description": "Let an AI (any OpenAI-compatible API or Claude) play Slay the Spire 2: reads the full game state, plays cards, picks routes and rewards, and talks with co-op teammates. 让 AI 读取游戏状态并操作，可控制路线、限定角色，并在多人模式中与队友沟通（要药水 / 要减益 / 问队友要不要药水）。",
+  "version": "0.1.0",
+  "has_pck": false,
+  "has_dll": true,
+  "dependencies": [],
+  "affects_gameplay": false,
+  "min_game_version": "0.107.1"
+}

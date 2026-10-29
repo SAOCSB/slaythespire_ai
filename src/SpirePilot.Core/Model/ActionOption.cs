@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace SpirePilot.Core.Model;
 
 /// <summary>Every kind of action the pilot can perform. The game layer decides which are legal.</summary>
@@ -65,6 +67,9 @@ public sealed class ActionOption
     /// Set by the game layer; <see cref="PlanSafety"/> also detects common cases from the label and card text.
     /// </summary>
     public bool Unpredictable { get; set; }
+    /// <summary>Sequence of the snapshot this action belongs to (lets the game layer find its executor).</summary>
+    [JsonIgnore]
+    public long SnapshotSequence { get; set; }
 
     public string? Arg(string name) => Args.TryGetValue(name, out var v) ? v : null;
 

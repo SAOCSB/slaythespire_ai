@@ -8,16 +8,18 @@ namespace SpirePilot.Core.Team;
 /// Binary envelope for team messages sent over the game's own multiplayer transport as raw packets.
 ///
 /// Layout (little endian):
-///   [0..4]   magic 0xF7 'S' 'P' 'L' 'T'   — never a valid vanilla/RitsuLib packet start, so receivers can demux cheaply
+///   [0..4]   magic 0xFA 'S' 'P' 'L' 'T'   — no vanilla message id (0-51) or BaseLib id (allocated upward from 128)
+///            starts with 0xFA, and it differs from RitsuLib's sidecar magic, so receivers can demux cheaply
 ///   [5]      wire version (1)
 ///   [6]      payload type (1 = TeamMessage JSON)
 ///   [7..10]  payload length N (uint32)
 ///   [11..]   payload (UTF-8 JSON, N bytes)
 ///   [..+4]   CRC-32 of bytes [5 .. 11+N)
+///   [...]    anything after that is ignored: other mods (RitsuLib's "native trailer") append bytes to every packet.
 /// </summary>
 public static class TeamWire
 {
-    public static readonly byte[] Magic = { 0xF7, (byte)'S', (byte)'P', (byte)'L', (byte)'T' };
+    public static readonly byte[] Magic = { 0xFA, (byte)'S', (byte)'P', (byte)'L', (byte)'T' };
     public const byte Version = 1;
     public const byte PayloadTeamMessage = 1;
     public const int HeaderSize = 11;
@@ -63,7 +65,7 @@ public static class TeamWire
         if (packet.Length < HeaderSize + 4) return ParseOutcome.Rejected;
         if (packet[5] != Version || packet[6] != PayloadTeamMessage) return ParseOutcome.Rejected;
         uint length = BinaryPrimitives.ReadUInt32LittleEndian(packet.Slice(7, 4));
-        if (length > MaxPayloadBytes || packet.Length != HeaderSize + (int)length + 4) return ParseOutcome.Rejected;
+        if (length > MaxPayloadBytes || packet.Length < HeaderSize + (int)length + 4) return ParseOutcome.Rejected;
         uint expected = BinaryPrimitives.ReadUInt32LittleEndian(packet.Slice(HeaderSize + (int)length, 4));
         if (Crc32.Compute(packet.Slice(5, HeaderSize - 5 + (int)length)) != expected) return ParseOutcome.Rejected;
         try

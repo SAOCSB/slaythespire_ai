@@ -4,7 +4,7 @@ using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 namespace SpirePilot.Infra;
 
 /// <summary>Scene-tree helpers. Main thread only.</summary>
-internal static class NodeUtil
+internal static class SceneUtil
 {
     public static bool Valid(GodotObject? o) => o != null && GodotObject.IsInstanceValid(o);
 

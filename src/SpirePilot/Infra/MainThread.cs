@@ -20,13 +20,13 @@ internal static class MainThread
 
     public static ulong FrameCount { get; private set; }
 
-    public static bool IsMainThread => Environment.CurrentManagedThreadId == _mainThreadId;
+    public static bool IsMainThread => System.Environment.CurrentManagedThreadId == _mainThreadId;
 
     /// <summary>Must be called once from the main thread (the mod initializer runs there).</summary>
     public static void Install()
     {
         if (_installed) return;
-        _mainThreadId = Environment.CurrentManagedThreadId;
+        _mainThreadId = System.Environment.CurrentManagedThreadId;
         var tree = (SceneTree)Engine.GetMainLoop();
         tree.Connect(SceneTree.SignalName.ProcessFrame, Callable.From(Pump));
         _installed = true;
