@@ -40,7 +40,8 @@ namespace SpirePilot.Api;
 ///                             → {"delivered", "id", "emote"}: text to teammates who run SpirePilot, the kind's vanilla
 ///                             emote to the others (also for "all" in a mixed team); when nobody addressed runs it, no
 ///                             text: {"delivered": false, "emote", "reason": "no_reader"}. A reply_to without a recipient
-///                             goes where the question came from; 429 "rate_limited" when the AI's budget refused it
+///                             goes to the asker, or to everyone when the question was for everyone (a potion offer or
+///                             question: the asker only); 429 "rate_limited" when the AI's budget refused it
 ///   GET  /compendium?kind=cards|relics|potions|powers|characters   every game model with localized text
 ///   GET  /diagnostics         writes a diagnostics-*.md report (as the panel's button does) and returns it (markdown;
 ///                             no secrets); header X-Diagnostics-File: its path (non-ASCII percent-encoded as UTF-8)

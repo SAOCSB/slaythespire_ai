@@ -67,7 +67,8 @@ class FakeMod:
         self.save_error: str | None = None  # POST /mode could not write settings.json
         self.rate_limited = False
         self.delivered = True
-        self.teammates = {"Mika": True}  # name -> runs SpirePilot (the live roster)
+        self.teammates = {"Mika": True}  # name -> runs SpirePilot (the live roster); empty: solo
+        self.ai_emotes: set[tuple[str, str]] = set()  # (kind, recipient) an AI sender showed as an emote lately
         self.chat_answer: dict | None = None  # replaces the POST /chat answer when set
         self.chat = [
             {
@@ -157,10 +158,11 @@ class FakeMod:
         }
 
     def status(self) -> dict:
+        mode = "Off" if self.version_mismatch else self.mode  # PilotRuntime.EffectiveMode; self.mode is the saved one
         return {
-            "state": "Off" if self.mode == "Off" else "Waiting",
+            "state": "Off" if mode == "Off" else "Waiting",
             "text": "AI is off",
-            "mode": self.mode,
+            "mode": mode,
             "paused": self.paused,
             "llmCalls": 3,
             "inputTokens": 12000,
@@ -194,17 +196,24 @@ class FakeMod:
             return 429, {"error": "rate limited", "code": "rate_limited"}
         if self.chat_answer:
             return 200, self.chat_answer
-        to = str(body.get("to") or "all").strip()
+        to = str(body.get("to") or "").strip()
+        everyone = not to or to.lower() in srv._EVERYONE
         addressed = (
-            list(self.teammates)
-            if to.lower() in ("all", "everyone")
-            else [n for n in self.teammates if n.lower().startswith(to.lower())][:1]
+            list(self.teammates) if everyone else [n for n in self.teammates if n.lower().startswith(to.lower())][:1]
         )
-        if not addressed:
+        if not everyone and not addressed:
             error = f"unknown recipient '{to}'; use \"all\" or one of the teammates"
             return 400, {"error": error, "code": "unknown_recipient", "teammates": list(self.teammates)}
+        if not addressed:
+            # Solo: everyone is never refused; the text is only logged.
+            return 200, {"delivered": False, "id": "5b5b5b5b5b5b", "emote": None}
         readers = [n for n in addressed if self.teammates[n]]
         emote = REACTIONS.get(body.get("kind", "chat")) if len(readers) < len(addressed) else None
+        if emote and body.get("from_ai", True):
+            # TeamChatHub.TryUseAiBudget: an AI sender shows the same kind to the same recipient once per 3 minutes.
+            key = (body.get("kind", "chat"), "all" if everyone else addressed[0])
+            emote = None if key in self.ai_emotes else emote
+            self.ai_emotes.add(key)
         if not readers:
             return 200, {"delivered": False, "emote": emote, "reason": "no_reader"}
         return 200, {"delivered": self.delivered, "id": "5b5b5b5b5b5b", "emote": emote}
@@ -515,6 +524,8 @@ def test_set_mode(fake):
     assert fake.mode == "Advisor" and "mode Advisor" in text and "You can act" in text
     assert fake.posts[-1] == ("/mode", {"mode": "Advisor"})
     assert "Warning" not in text
+    run(srv.set_mode("Off"))
+    assert fake.posts[-1] == ("/mode", {"mode": "Off"}) and fake.mode == "Off"
 
 
 def test_set_mode_warns_when_the_settings_file_was_not_written(fake):
@@ -609,6 +620,9 @@ def test_send_chat_answers_a_request_with_reply_to(fake):
 
 def test_send_chat_in_a_mixed_team_reports_the_emote_the_others_saw(fake):
     fake.teammates = {"Mika": True, "Bob": False}
+    bob = {**fake.state["players"][1], "netId": 76561198000000003, "name": "Bob", "hasTeamLink": False}
+    fake.state["players"].append(bob)
+    run(srv.get_state())  # the roster the model last saw: Bob runs no SpirePilot
     text = run(srv.send_chat("Potion please", kind="request_potion"))
     assert text == (
         "Sent to all (request_potion): Potion please\n"
@@ -618,12 +632,32 @@ def test_send_chat_in_a_mixed_team_reports_the_emote_the_others_saw(fake):
     assert "emote" not in run(srv.send_chat("Potion please", kind="request_potion", recipient="Mika"))
     text = run(srv.send_chat("Potion please", kind="request_potion", recipient="Bob"))
     assert text.endswith("no teammate you addressed runs SpirePilot; they see the game's Exclamation emote instead.")
+    # The same kind to everyone again within 3 minutes: Mika reads the text, Bob sees no second "!".
+    text = run(srv.send_chat("Still need a potion", kind="request_potion", recipient="所有人"))
+    assert fake.posts[-1][1]["to"] == "所有人"
+    assert text == (
+        "Sent to 所有人 (request_potion): Still need a potion\n"
+        "Teammates without SpirePilot saw no emote: the same kind was shown to them in the last 3 minutes, or the "
+        "game could not show one right now."
+    )
+    # An answer may have gone to the asker alone: then nothing is claimed about the others.
+    assert "ThumbUp" in run(srv.send_chat("Sure", kind="accept", reply_to="4f2a9c01d2e3"))
+    text = run(srv.send_chat("Yes, coming", kind="accept", reply_to="4f2a9c01d2e3"))
+    assert text == "Sent in answer to #4f2a9c01d2e3 (accept): Yes, coming"
 
 
-def test_send_chat_answer_without_recipient_goes_to_the_asker(fake):
+def test_send_chat_answer_without_recipient_posts_all_with_reply_to(fake):
+    # The mod routes it (to the asker, or to everyone for a question to everyone); the fake does not model that.
     text = run(srv.send_chat("Sure, here it comes.", kind="accept", reply_to="#4f2a9c01d2e3"))
-    assert fake.posts[-1][1]["to"] == "all"
+    assert fake.posts[-1][1]["to"] == "all" and fake.posts[-1][1]["reply_to"] == "4f2a9c01d2e3"
     assert text == "Sent in answer to #4f2a9c01d2e3 (accept): Sure, here it comes."
+
+
+def test_send_chat_to_everyone_solo_is_logged_not_refused(fake):
+    fake.teammates = {}
+    for everyone in ("all", "所有人", "全体", " Everyone "):
+        text = run(srv.send_chat("hi", recipient=everyone))
+        assert text.startswith("Logged locally but not delivered"), everyone
 
 
 def test_send_chat_unknown_recipient_lists_the_teammates(fake):
@@ -670,6 +704,7 @@ def test_act_403_when_an_owner_rule_forbids_the_action(fake):
 
 
 def test_wrong_build_for_the_game_version(fake):
+    fake.mode = "FullAuto"  # the owner's saved mode
     fake.version_mismatch = (
         "this SpirePilot build is for game 0.107, but the game is 0.111.0: the AI stays off; install the 0.111 build "
         "('Run anyway' on the SpirePilot panel's Control tab overrides this, at your own risk)"
@@ -677,10 +712,13 @@ def test_wrong_build_for_the_game_version(fake):
     text = run(srv.status())
     # The mod's own message is relayed: it names the fix that exists (a build, an update, or "Run anyway").
     assert f"Wrong SpirePilot build for this game: {fake.version_mismatch}. Until that is resolved" in text
-    assert "You can act" not in text
+    assert "mode Off" in text and "You can act" not in text
     with pytest.raises(srv.SpirePilotError, match="Wrong SpirePilot build.*The mode stays Off"):
         run(srv.set_mode("FullAuto"))
-    assert fake.mode == "Off" and "Wrong SpirePilot build" in run(srv.set_mode("Off"))
+    # Off is already in effect: nothing is posted, so a matching build still starts in the saved mode.
+    text = run(srv.set_mode("Off"))
+    assert "Wrong SpirePilot build" in text and text.endswith("the owner's saved mode is kept.")
+    assert fake.mode == "FullAuto" and [path for path, _ in fake.posts] == ["/mode"]  # only the refused FullAuto
     run(srv.get_state())
     with pytest.raises(srv.SpirePilotError, match="Wrong SpirePilot build.*Nothing was done"):
         run(srv.act(id="a0"))

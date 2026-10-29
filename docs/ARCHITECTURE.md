@@ -87,8 +87,10 @@ the runtime compares its major.minor with the branch the DLL was compiled for (`
 | Untested: a newer game, and no newer shipped build exists | 0.111 build on game 0.112 | runs with a warning |
 | Incompatible: an older game, or a newer one when a newer shipped build exists | 0.107 build on game 0.108+; 0.111 build on game 0.107 | AI blocked |
 
-- Blocked (`VersionBlocked`): the pilot loop runs on a copy of the settings with mode Off (`LoopSettings`); the saved
-  mode is never overwritten, so a matching build starts in it. On the Control tab every mode button but Off is
+- Blocked (`VersionBlocked`): the pilot loop runs on a copy of the settings with mode Off (`LoopSettings`); the guard
+  itself never writes the saved mode, so a matching build starts in it. Choosing Off (Control tab, `POST /mode`) or
+  switching "Run anyway" on saves Off like any mode change; the MCP server's `set_mode("Off")` posts nothing while
+  `/status` reports `versionMismatch`, since Off is already in effect. On the Control tab every mode button but Off is
   disabled; `GET /status` reports the effective mode Off and `versionMismatch`; `POST /act`, and `POST /mode` with any
   mode but Off, answer 409 `version_mismatch` (the MCP server checks `/status` before acting too). The notice names
   only shipped builds (`GameVersion.BuildFor`): the one for this game, else "no build yet, check for an update" (on a

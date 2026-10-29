@@ -43,7 +43,8 @@
 | 游戏比最新的包还新 | game0.111 包 + 游戏 0.112 | AI 照常运行；“控制”页和屏幕提示显示黄色警告（未经测试，部分功能可能失效），请留意 SpirePilot 更新 |
 | 不兼容 | game0.107 包 + 游戏 0.108 或更新；包比游戏新 | AI 不启动；“控制”页和屏幕提示显示红色提示：该装哪个包，或者还没有对应的包、请检查更新 |
 
-不兼容时你保存的模式不会被改掉（换对包后照旧），只是 AI 按“关闭”运行，HTTP 接口也拒绝操作。“控制”页的
+不兼容时拦截本身不会改你保存的模式（换对包后照旧），只是 AI 按“关闭”运行，HTTP 接口也拒绝操作；这期间点“关闭”
+（或 `POST /mode` 设为 Off）、打开下面的开关，会像平常一样把保存的模式改成“关闭”。“控制”页的
 **仍然运行（风险自负）** 开关可以强行运行：打开时模式先切到“关闭”，再自己选模式；它只对当前这个游戏版本 + 这个包有效
 （保存为 `settings.json` 里的 `control.ignoreGameVersionFor`，例如 `"game 0.111, build 0.107"`），换了游戏版本或包会重新拦截。
 在 0.107 的游戏上装 game0.111 的包时，游戏多半不会加载这个 Mod（包里写明了最低游戏版本 0.111），也就没有面板提示。
@@ -224,7 +225,8 @@ are refused; POST bodies must be `application/json` (else 415), at most 64 KB, e
 `POST /chat` takes `text`, `to`, `kind` (`chat`, `request_potion`, `offer_potion`, `ask_need_potion`, `request_debuff`,
 `request_focus`, `request_block`, `accept`, `decline`), `potion`, `debuff`, `target`, `reply_to` (the `id` of the
 message answered, from `GET /chat`) and an optional `from_ai` (default true); it rejects an unknown recipient with 400
-and the teammates' names. With `reply_to` and no recipient (or `"all"`) the answer goes where the question came from.
+and the teammates' names. With `reply_to` and no recipient (or `"all"`) the answer goes to the asker, or to everyone
+when the question was for everyone; a potion offer or question goes to the asker only.
 It follows the pilot's rule: in co-op the text goes to teammates who run SpirePilot and the kind's vanilla emote to the
 others, also for "all" in a mixed team; the answer is `{"delivered": true, "id": ..., "emote": <name or null>}`. When no
 addressed teammate runs SpirePilot no text is sent and the answer is
@@ -299,9 +301,10 @@ profiles, proxy, headers, extra body; wrong keys, model names or an empty balanc
 settings" message). Potions are also used outside combat (on its own character, labelled "→ yourself" in co-op) where
 the game allows it. An optional localhost HTTP API and an MCP server expose state and actions to external agents, and
 an offline benchmark scores a model on 28 decision fixtures. Builds exist for game 0.107 (main) and 0.111 (beta). A build on an incompatible game
-(the 0.107 build on any newer game) keeps the pilot off, without changing the saved mode, and names only fixes that
-exist: the build to install, a SpirePilot update, or a "Run anyway" switch on the Control tab that holds for that one
-game/build pairing. The 0.111 build on a newer, untested game runs with a warning; the 0.111 build declares 0.111 as its
+(the 0.107 build on any newer game) keeps the pilot off and names only fixes that exist: the build to install, a
+SpirePilot update, or a "Run anyway" switch on the Control tab that holds for that one game/build pairing. The block
+itself leaves the saved mode alone, so a matching build starts in it; picking Off or switching "Run anyway" on saves
+Off like any mode change. The 0.111 build on a newer, untested game runs with a warning; the 0.111 build declares 0.111 as its
 minimum game version, so an older game is not expected to load it at all. Start with the in-game test plan in
 [docs/TESTING.md](docs/TESTING.md).
 

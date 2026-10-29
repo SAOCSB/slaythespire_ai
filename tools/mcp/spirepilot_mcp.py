@@ -747,6 +747,12 @@ async def set_mode(mode: Literal["Off", "Advisor", "FullAuto", "CombatOnly", "Ou
     FullAuto: the built-in AI plays everything. CombatOnly / OutOfCombatOnly: it plays only that part.
     While FullAuto, CombatOnly or OutOfCombatOnly is active, act is refused everywhere.
     """
+    if mode == "Off":
+        # A build blocked for this game version already runs Off; posting Off would also replace the owner's saved
+        # mode, which a matching build starts in.
+        st_code, st = await _api("GET", "/status")
+        if st_code == 200 and isinstance(st, dict) and st.get("versionMismatch"):
+            return _render_status(st) + "\nThe mode is already Off on this build; the owner's saved mode is kept."
     status_code, data = await _api("POST", "/mode", {"mode": mode})
     if status_code == 409 and _code(data) == "version_mismatch":
         raise SpirePilotError(_wrong_build(_err(data)) + " The mode stays Off.")
@@ -818,6 +824,12 @@ async def read_chat(limit: int = 20) -> str:
 _EVERYONE = ("all", "everyone", "所有人", "全体")
 
 
+def _anyone_without_the_mod() -> bool:
+    """The last state the model saw lists a teammate who does not run SpirePilot."""
+    players = (_last_seen or {}).get("players") or []
+    return any(not p.get("isLocal") and p.get("hasTeamLink") is False for p in players)
+
+
 def _message_id(text: str | None) -> str | None:
     """The bare id of a team message: models copy the decoration read_chat shows ("#4f2a9c01d2e3", "re #...")."""
     return re.sub(r"^(?:(?:re|id)\b|[\s#\[(:])+", "", (text or "").strip(), flags=re.IGNORECASE).rstrip(" ])") or None
@@ -847,7 +859,8 @@ async def send_chat(
     elsewhere) and their AI acts on the structured fields; the mod rate-limits AI messages (a few per minute) and
     drops exact repeats. Teammates without the mod cannot read text: they get the game's emote for the kind instead
     (requests "!", potion offers / questions "?", accept / decline thumbs up / down; chat has none). In a mixed team,
-    also for "all", the text goes to the teammates with the mod and the emote to the others.
+    also for "all", the text goes to the teammates with the mod and the emote to the others (not again within 3
+    minutes for the same kind and recipient); the result names the emote they saw.
 
     Args:
         text: the human-readable message (required; human teammates only read this).
@@ -857,7 +870,8 @@ async def send_chat(
             like "e0") | request_focus (target = enemy to focus) | request_block (ask for protection this turn) |
             accept / decline (answer a teammate's request or question; reply_to is required).
         recipient: "all" (default), or a teammate's name, name prefix or character. An unknown name is refused with the
-            list of teammates. With reply_to and "all", the answer goes where the question came from.
+            list of teammates. With reply_to and "all", the answer goes to the asker, or to everyone when the
+            question was for everyone; a potion offer or question goes to the asker only.
         potion: potion id or name, for potion kinds.
         debuff: debuff / power name, for request_debuff.
         target: enemy name or key ("e0"), for request_debuff / request_focus.
@@ -906,8 +920,16 @@ async def send_chat(
         return f"Text not sent: no teammate you addressed runs SpirePilot; {shown}."
     # A mixed team: the text went to the teammates with the mod, the emote to the others.
     others = f"\nTeammates without SpirePilot saw the game's {emote} emote instead." if emote else ""
+    everyone = body["to"].lower() in _EVERYONE
+    # Sent to everyone (not an answer, which may have gone to the asker alone) with a kind that has an emote, yet none
+    # was shown although the last state listed a teammate without the mod.
+    if not emote and kind != "chat" and everyone and not reply_to and _anyone_without_the_mod():
+        others = (
+            "\nTeammates without SpirePilot saw no emote: the same kind was shown to them in the last 3 minutes, or "
+            "the game could not show one right now."
+        )
     if data.get("delivered"):
-        to = f"in answer to #{reply_to}" if reply_to and body["to"].lower() in _EVERYONE else f"to {body['to']}"
+        to = f"in answer to #{reply_to}" if reply_to and everyone else f"to {body['to']}"
         return f"Sent {to} ({kind}): {text.strip()}{others}"
     return "Logged locally but not delivered: no teammate runs SpirePilot (or you are not in a co-op game)." + others
 
