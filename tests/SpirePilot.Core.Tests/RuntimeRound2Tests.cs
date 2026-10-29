@@ -54,20 +54,32 @@ public class RuntimeRound2Tests
     }
 
     [Fact]
+    public void Run_anyway_holds_for_one_build_on_one_game_branch()
+    {
+        var key = GameVersion.OverrideKey("v0.111.0", "0.107");
+        Assert.Equal("game 0.111, build 0.107", key);
+        Assert.Equal(key, GameVersion.OverrideKey("v0.111.3", "0.107"));
+        Assert.NotEqual(key, GameVersion.OverrideKey("v0.112.0", "0.107"));
+        Assert.NotEqual(key, GameVersion.OverrideKey("v0.111.0", "0.112"));
+        Assert.NotEqual(GameVersion.OverrideKey("v0.109.0", "0.107"), GameVersion.OverrideKey("v0.109.0", "0.111"));
+        Assert.Null(GameVersion.OverrideKey("dev", "0.107"));
+    }
+
+    [Fact]
     public void Run_anyway_is_off_by_default_and_saved()
     {
-        Assert.False(new PilotSettings().Control.IgnoreGameVersion);
+        Assert.Null(new PilotSettings().Control.IgnoreGameVersionFor);
         var path = Path.Combine(Path.GetTempPath(), $"spirepilot-settings-{Guid.NewGuid():N}.json");
         try
         {
             var store = new SettingsStore(path);
             var s = new PilotSettings();
             s.Control.Mode = PilotMode.FullAuto;
-            s.Control.IgnoreGameVersion = true;
+            s.Control.IgnoreGameVersionFor = GameVersion.OverrideKey("v0.111.0", "0.107");
             store.Save(s);
-            Assert.Contains("\"ignoreGameVersion\": true", File.ReadAllText(path));
+            Assert.Contains("\"ignoreGameVersionFor\": \"game 0.111, build 0.107\"", File.ReadAllText(path));
             var loaded = new SettingsStore(path).Load();
-            Assert.True(loaded.Control.IgnoreGameVersion);
+            Assert.Equal("game 0.111, build 0.107", loaded.Control.IgnoreGameVersionFor);
             Assert.Equal(PilotMode.FullAuto, loaded.Control.Mode);
         }
         finally { File.Delete(path); }

@@ -49,7 +49,7 @@ internal static class Overlay
     /// <summary>Teammates' messages that arrived while the Team tab was not in view.</summary>
     private static int _unread;
     private static int _shownUnread = -1;
-    private static string? _versionNoteShown;
+    private static string? _versionToastShown;
     private static readonly List<Page> Pages = new();
     private static readonly List<Button> TabButtons = new();
     private static int _tab;
@@ -504,16 +504,17 @@ internal static class Overlay
     {
         var status = PilotRuntime.Loop.Status;
         // A build for another game version keeps the AI off: that says more than any pilot state. On an untested game
-        // the pilot runs: its state stays, the warning shows once here and stays on the Control tab.
+        // the pilot runs: its state stays, the warning shows once here and stays on the Control tab. The toast only
+        // has room for the short form; the full notice is on the Control tab and in the AI button's tooltip.
         var problem = PilotRuntime.VersionProblem;
         var warning = problem == null ? PilotRuntime.VersionWarning : null;
         var color = problem != null ? UiTheme.Bad : UiTheme.StateColor(status.State);
         var statusText = problem ?? (status.Text.Length > 0 ? status.Text : L10n.T("ui.state." + status.State));
-        var versionNote = problem ?? warning;
-        if (versionNote != null && versionNote != _versionNoteShown)
+        var versionToast = PilotRuntime.VersionToast;
+        if (versionToast != null && versionToast != _versionToastShown)
         {
-            _versionNoteShown = versionNote;
-            ShowToast(versionNote, problem != null ? UiTheme.Bad : UiTheme.Warn, 30_000);
+            _versionToastShown = versionToast;
+            ShowToast(versionToast, problem != null ? UiTheme.Bad : UiTheme.Warn, 30_000);
         }
         var keyName = PilotRuntime.Settings.Ui.ToggleKey;
         bool recolor = color != _statusColor;

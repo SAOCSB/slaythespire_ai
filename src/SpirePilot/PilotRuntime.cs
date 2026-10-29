@@ -39,13 +39,17 @@ internal static class PilotRuntime
     public static event Action<PilotSettings>? SettingsChanged;
 
     /// <summary>
-    /// True while this build is incompatible with the running game and the owner did not choose "run anyway": the AI
-    /// stays off (the saved mode is kept for a matching build), and the HTTP API refuses to act.
+    /// True while this build is incompatible with the running game and the owner did not choose "run anyway" for this
+    /// pairing: the AI stays off (the saved mode is kept for a matching build), and the HTTP API refuses to act.
     /// </summary>
-    public static bool VersionBlocked => _gameVersion is { Fit: GameCompatibility.Incompatible } && !Settings.Control.IgnoreGameVersion;
+    public static bool VersionBlocked =>
+        _gameVersion is { Fit: GameCompatibility.Incompatible } v && Settings.Control.IgnoreGameVersionFor != v.OverrideKey;
 
-    /// <summary>True when the game version is incompatible with this build: the panel then offers "run anyway".</summary>
-    public static bool VersionOverridable => _gameVersion is { Fit: GameCompatibility.Incompatible };
+    /// <summary>
+    /// The value "run anyway" stores for this build on this game, while the two are incompatible (the panel then offers
+    /// the switch); null otherwise.
+    /// </summary>
+    public static string? VersionOverrideKey => _gameVersion is { Fit: GameCompatibility.Incompatible } v ? v.OverrideKey : null;
 
     /// <summary>The mode the pilot runs in: the saved one, or Off while <see cref="VersionBlocked"/>.</summary>
     public static PilotMode EffectiveMode => VersionBlocked ? PilotMode.Off : Settings.Control.Mode;
@@ -68,9 +72,18 @@ internal static class PilotRuntime
     /// <summary><see cref="VersionWarning"/> in English, for the log, the HTTP API and diagnostics.</summary>
     public static string? VersionWarningEnglish => VersionWarned ? VersionText(english: true, blocked: false) : null;
 
+    /// <summary>
+    /// <see cref="VersionProblem"/> or <see cref="VersionWarning"/> cut to what the overlay's toast has room for: the
+    /// versions and where the full notice is. Null when there is neither.
+    /// </summary>
+    public static string? VersionToast =>
+        _gameVersion is { } v && (VersionBlocked || VersionWarned)
+            ? L10n.T(VersionBlocked ? "ui.version.toast_off" : "ui.version.toast_runs", Diagnostics.CompiledFor, v.Version, L10n.T("ui.tab.control"))
+            : null;
+
     private static bool VersionWarned => _gameVersion is { Fit: not GameCompatibility.Ok } && !VersionBlocked;
 
-    private sealed record GameVersionFit(string Version, GameCompatibility Fit);
+    private sealed record GameVersionFit(string Version, GameCompatibility Fit, string OverrideKey);
     private sealed record OffView(PilotSettings Saved, PilotSettings Off);
 
     /// <summary>The game version and how this build fits it, once known (stays null when unreadable).</summary>
@@ -159,7 +172,7 @@ internal static class PilotRuntime
         }
         lock (SettingsLock)
         {
-            if (fit is { } f) _gameVersion = new GameVersionFit(version!.Trim(), f);
+            if (fit is { } f) _gameVersion = new GameVersionFit(version!.Trim(), f, GameVersion.OverrideKey(version, Diagnostics.CompiledFor)!);
             _versionChecked = true;
             _wasBlocked = VersionBlocked;
             if (VersionProblemEnglish is { } problem) ModLog.Error(problem);
@@ -171,7 +184,7 @@ internal static class PilotRuntime
     /// <summary>The version notice: why the AI is off (<paramref name="blocked"/>), or why it runs on an untested game.</summary>
     private static string VersionText(bool english, bool blocked)
     {
-        var (game, fit) = _gameVersion!;
+        var (game, fit, _) = _gameVersion!;
         var built = Diagnostics.CompiledFor;
         if (!blocked)
         {
@@ -289,8 +302,8 @@ internal static class PilotRuntime
     }
 
     /// <summary>
-    /// Under the settings lock, after a save: "run anyway" was switched on (the pilot starts in the saved mode) or off
-    /// again (<see cref="LoopSettings"/> holds it at Off).
+    /// Under the settings lock, after a save: "run anyway" was switched on (the pilot starts, in the mode the panel set
+    /// to Off with it) or off again (<see cref="LoopSettings"/> holds it at Off).
     /// </summary>
     private static void ApplyVersionOverride()
     {

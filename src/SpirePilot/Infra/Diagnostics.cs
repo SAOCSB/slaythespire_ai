@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -5,6 +6,7 @@ using System.Text.Json.Serialization;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Debug;
+using SpirePilot.Core.Config;
 using SpirePilot.Game;
 
 namespace SpirePilot.Infra;
@@ -65,7 +67,7 @@ internal static class Diagnostics
         var mode = PilotRuntime.EffectiveMode;
         sb.AppendLine($"mode: {mode}{(mode != s.Control.Mode ? $" (saved: {s.Control.Mode})" : "")}, paused: {PilotRuntime.Loop.Paused}, status: {PilotRuntime.Loop.Status.State} — {PilotRuntime.Loop.Status.Text}");
         if ((PilotRuntime.VersionProblemEnglish ?? PilotRuntime.VersionWarningEnglish) is { } note)
-            sb.AppendLine($"game version: {note} (run anyway: {s.Control.IgnoreGameVersion})");
+            sb.AppendLine($"game version: {note} (run anyway: {s.Control.IgnoreGameVersionFor ?? "off"})");
         sb.AppendLine($"profile: {p?.Name} provider={p?.Provider} model={p?.Model} baseUrl={p?.BaseUrl} key={(string.IsNullOrEmpty(p?.ApiKey) ? "none" : p!.ApiKey.StartsWith("env:") ? p.ApiKey : $"set ({p.ApiKey.Length} chars)")} proxy={(string.IsNullOrEmpty(p?.ProxyUrl) ? "-" : "set")}");
         var e = PilotRuntime.Engine;
         sb.AppendLine($"llm calls: {e.LlmCalls}, tokens in/out/cached: {e.TotalInputTokens}/{e.TotalOutputTokens}/{e.TotalCachedTokens}, last error: {e.LastLlmError ?? "-"}");
@@ -131,12 +133,17 @@ internal static class Diagnostics
         return sb.ToString();
     }
 
-    /// <summary>The game branch this DLL was compiled against ("0.107" / "0.111").</summary>
-    internal const string CompiledFor =
+    /// <summary>
+    /// The game branch this DLL was compiled against: the build's Sts2GameVersion ("0.107", "0.111", or a newer branch
+    /// built from source against that game).
+    /// </summary>
+    internal static readonly string CompiledFor =
+        GameVersion.Branch(typeof(Diagnostics).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
+            .FirstOrDefault(a => a.Key == "Sts2GameVersion")?.Value)
 #if STS2_V0107
-        "0.107";
+        ?? "0.107";
 #else
-        "0.111";
+        ?? "0.111";
 #endif
 
     private static string? Try(Func<string?> f)

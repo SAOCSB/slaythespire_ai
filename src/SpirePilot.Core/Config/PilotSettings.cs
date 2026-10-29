@@ -110,9 +110,11 @@ public sealed class ControlSettings
     /// <summary>Let the LLM return a multi-action plan for the current combat turn.</summary>
     public bool AllowTurnPlans { get; set; } = true;
     /// <summary>
-    /// Run the AI even when this build is incompatible with the game version ("run anyway"); screens may be misread.
+    /// "Run anyway": the build / game pairing (<see cref="GameVersion.OverrideKey"/>) on which the AI runs although the
+    /// build is incompatible with the game; screens may be misread. Null = off. It holds for that pairing only, so
+    /// another game version or build starts blocked again.
     /// </summary>
-    public bool IgnoreGameVersion { get; set; }
+    public string? IgnoreGameVersionFor { get; set; }
 }
 
 public sealed class RouteSettings

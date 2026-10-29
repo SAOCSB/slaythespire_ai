@@ -72,6 +72,13 @@ public static class GameVersion
     /// <summary>"0.111" from "v0.111.0": the branch a build would have to be made for.</summary>
     public static string? Branch(string? version) => MajorMinor(version) is { } v ? $"{v.Major}.{v.Minor}" : null;
 
+    /// <summary>
+    /// What "run anyway" stores for a build on a game ("game 0.111, build 0.107"): one value per pairing, so it never
+    /// carries over to another game branch or build. Null when either version is unreadable.
+    /// </summary>
+    public static string? OverrideKey(string? gameVersion, string compiledFor) =>
+        Branch(gameVersion) is { } game && Branch(compiledFor) is { } built ? $"game {game}, build {built}" : null;
+
     private static int Compare((int Major, int Minor) a, (int Major, int Minor) b) =>
         a.Major != b.Major ? a.Major.CompareTo(b.Major) : a.Minor.CompareTo(b.Minor);
 }

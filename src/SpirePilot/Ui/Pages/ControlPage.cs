@@ -70,8 +70,7 @@ internal sealed class ControlPage : Page
         _versionNote = UiKit.Label("", UiTheme.FontSmall, UiTheme.Warn);
         _versionNote.Visible = false;
         status.AddChild(_versionNote);
-        _runAnyway = UiKit.Switch(L10n.T("ui.version.run_anyway"), on => Edit(s => s.Control.IgnoreGameVersion = on, now: true),
-            L10n.T("ui.version.run_anyway_tip"));
+        _runAnyway = UiKit.Switch(L10n.T("ui.version.run_anyway"), SetRunAnyway, L10n.T("ui.version.run_anyway_tip"));
         _runAnyway.Visible = false;
         status.AddChild(_runAnyway);
 
@@ -166,7 +165,6 @@ internal sealed class ControlPage : Page
         UiKit.SetPressed(_turnPlans, s.Control.AllowTurnPlans);
         UiKit.SetPressed(_fallback, s.Control.FallbackOnLlmFailure);
         UiKit.SetPressed(_autoNext, s.Control.AutoStartNextRun);
-        UiKit.SetPressed(_runAnyway, s.Control.IgnoreGameVersion);
         UiKit.SetValue(_maxRuns, s.Control.MaxAutoRuns);
         _maxRuns.Editable = s.Control.AutoStartNextRun;
         UiKit.SetValue(_delay, s.Control.ActionDelayMs);
@@ -200,7 +198,11 @@ internal sealed class ControlPage : Page
         UiKit.SetText(_versionNote, versionNote ?? "");
         UiKit.SetColor(_versionNote, problem != null ? UiTheme.Bad : UiTheme.Warn);
         _versionNote.Visible = versionNote != null;
-        _runAnyway.Visible = PilotRuntime.VersionOverridable;
+        // Pressed from the live state, not the settings sync: the pairing it stands for is known only once the game
+        // version has been read.
+        bool overridable = PilotRuntime.VersionOverrideKey != null;
+        _runAnyway.Visible = overridable;
+        if (overridable) UiKit.SetPressed(_runAnyway, !blocked);
         UiKit.SetText(_modeTip, L10n.T("ui.mode.tip." + mode));
         UiKit.SetText(_pause, L10n.T(loop.Paused ? "ui.ctl.resume" : "ui.ctl.pause"));
         _pause.Disabled = mode == PilotMode.Off;
@@ -279,6 +281,20 @@ internal sealed class ControlPage : Page
             // Not written to the file, but the mode applies for this session: show the failure in the footer.
             SettingsDraft.Report(ex);
         }
+    }
+
+    /// <summary>
+    /// "Run anyway" holds for this build on this game version only. Switching it on also sets the mode to Off, so the
+    /// AI starts only once the owner picks a mode, never in one saved earlier (perhaps on a matching build).
+    /// </summary>
+    private static void SetRunAnyway(bool on)
+    {
+        if (PilotRuntime.VersionOverrideKey is not { } key) return;
+        Edit(s =>
+        {
+            s.Control.IgnoreGameVersionFor = on ? key : null;
+            if (on) s.Control.Mode = PilotMode.Off;
+        }, now: true);
     }
 
     private static void TogglePause()

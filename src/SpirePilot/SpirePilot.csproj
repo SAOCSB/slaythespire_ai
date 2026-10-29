@@ -6,7 +6,8 @@
       game  : the DLLs of a local Slay the Spire 2 install (default when one is found). Point at it with
               -p:Sts2Dir="C:/Program Files (x86)/Steam/steamapps/common/Slay the Spire 2" or a local.props file.
       nuget : community reference assemblies (no install needed; used by CI).
-    Game version (property Sts2GameVersion): 0.111 (public beta, default) or 0.107 (Steam main branch).
+    Game version (property Sts2GameVersion): 0.111 (public beta, default) or 0.107 (Steam main branch). A newer branch
+    (e.g. 0.112) builds as 0.111 code against a local install of that game.
     The two branches are not API compatible; code that differs is under #if STS2_V0107 / STS2_V0111.
     The build never copies game assemblies into the output.
 
@@ -65,15 +66,31 @@
     <PackageReference Include="BSchneppe.Sts2.ReferenceAssemblies" Version="$(Sts2RefPackageVersion)" PrivateAssets="all" />
   </ItemGroup>
 
+  <!-- The branch the version guard reports as compiled for (Diagnostics.CompiledFor). -->
+  <ItemGroup>
+    <AssemblyMetadata Include="Sts2GameVersion" Value="$(Sts2GameVersion)" />
+  </ItemGroup>
+
   <!-- Game-independent core, compiled into this assembly (the game loads one DLL per mod). -->
   <ItemGroup>
     <Compile Include="../SpirePilot.Core/**/*.cs" Exclude="../SpirePilot.Core/obj/**;../SpirePilot.Core/bin/**" LinkBase="Core" />
   </ItemGroup>
 
+  <!-- The reference packages exist for the shipped branches only; a newer branch needs the game's own DLLs. -->
+  <Target Name="CheckSts2GameVersion" BeforeTargets="CoreCompile" Condition="'$(Sts2RefSource)' == 'nuget' and '$(Sts2GameVersion)' != '0.107' and '$(Sts2GameVersion)' != '0.111'">
+    <Error Text="No reference package for game $(Sts2GameVersion) (only 0.107 and 0.111): build against that game's install with -p:Sts2Dir=&quot;path to Slay the Spire 2&quot;." />
+  </Target>
+
   <!-- One manifest per game branch so min_game_version always matches the API the DLL was compiled against.
-       (UTF-8 without BOM; copied byte for byte.) Keep "version" in sync with SpirePilotVersion. -->
+       (UTF-8 without BOM; copied byte for byte.) Keep "version" in sync with SpirePilotVersion. A newer branch built
+       from source before it has a manifest of its own takes the newest one: older games then load the DLL, and the
+       version guard keeps the AI off on them. -->
   <Target Name="WriteModManifest" AfterTargets="Build">
-    <Copy SourceFiles="$(MSBuildProjectDirectory)/manifest/mod_manifest.$(Sts2GameVersion).json" DestinationFiles="$(TargetDir)mod_manifest.json" />
+    <PropertyGroup>
+      <Sts2Manifest>$(MSBuildProjectDirectory)/manifest/mod_manifest.$(Sts2GameVersion).json</Sts2Manifest>
+      <Sts2Manifest Condition="!Exists('$(Sts2Manifest)')">$(MSBuildProjectDirectory)/manifest/mod_manifest.0.111.json</Sts2Manifest>
+    </PropertyGroup>
+    <Copy SourceFiles="$(Sts2Manifest)" DestinationFiles="$(TargetDir)mod_manifest.json" />
   </Target>
 
   <!-- Copy the built mod into <game>/mods/SpirePilot when -p:DeployToGame=true. -->
