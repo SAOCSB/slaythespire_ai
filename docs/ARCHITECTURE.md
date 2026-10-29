@@ -20,9 +20,10 @@ src/SpirePilot/        the mod (references sts2.dll, GodotSharp.dll, 0Harmony.dl
   Infra/               MainThread (ProcessFrame dispatcher), ModLog, SceneUtil, Reflect
   Game/                GameContext, ScreenResolver, SnapshotBuilder, ActionSink, GameBridge, UiActions,
                        ModelText, PlayerReader, Readiness, Readers/* (one per screen family)
-  Team/                TeamLink (raw-packet transport + discovery + relay), SpeechBubbles
+  Team/                TeamLink (raw-packet transport + discovery + relay), TeamNet (every game call of the link),
+                       TeamPatches (Harmony hooks), SpeechBubbles
   Ui/                  Overlay (in-game control panel)
-  Api/                 LocalHttpApi (optional, 127.0.0.1)
+  Api/                 LocalHttpApi (optional, loopback only: localhost / 127.0.0.1)
 tests/SpirePilot.Core.Tests/   xUnit tests for the core (no game needed)
 ```
 
@@ -109,5 +110,17 @@ Raw packets over the game's transport (client→host `NetClient.SendMessageToHos
 `NetHost.SendMessageToClient`), received by Harmony prefixes on `NetHostGameService.OnPacketReceived` /
 `NetClientGameService.OnPacketReceived` that consume packets starting with the `TeamWire` magic. Packets are only
 sent to peers known to run SpirePilot (mod list from the handshake / hello), the host relays client↔client
-messages, and every message also carries readable text so human teammates can read it. Without the mod on the
-other side, the AI still sees teammates' full state (co-op simulates everyone locally) and can use vanilla map pings.
+messages, and every message also carries readable text so human teammates can read it. Clients find each other
+through the host: it forwards each newly linked client's Hello to the other linked clients, whose answers come back
+the same way; a client sends to any teammate through its linked host, which checks who can receive. Inbound packets
+are rate-limited per sender before decoding (and per original sender after relay); session events have their own
+queue that is never dropped. Every game call of the link sits in a small non-inlined method (`TeamNet`) wrapped at
+the call site, so a member removed by a game update disables one feature, not the link. Without the mod on the
+other side, the AI still sees teammates' full state (co-op simulates everyone locally) and can use vanilla map pings
+and reaction emotes (`IGameBridge.TrySignal` → `ReactionSynchronizer.SendLocalReaction`).
+
+## Co-op end of turn
+
+After the local player readies end turn while teammates still play, the snapshot can act (`WaitReason` "waiting for
+teammates") with exactly one action, `undo_end_turn` (`UndoEndPlayerTurnAction` through the action queue
+synchronizer). The pilot takes it only when a teammate's request needs it; it is never offered in single player.

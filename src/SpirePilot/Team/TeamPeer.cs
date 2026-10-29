@@ -3,6 +3,7 @@ namespace SpirePilot.Team;
 /// <summary>
 /// What the team link knows about one other player in the current network session. Mutated only on the main
 /// thread under <c>TeamLink</c>'s roster lock; read under the same lock from any thread.
+/// Times are monotonic milliseconds (<see cref="Environment.TickCount64"/>), never wall-clock time.
 /// </summary>
 internal sealed class TeamPeer
 {
@@ -25,20 +26,19 @@ internal sealed class TeamPeer
     /// <summary>Display name (platform name, else the name it sent).</summary>
     public string Name { get; set; } = "";
 
-    /// <summary>UTC time of the last packet / discovery event for this peer.</summary>
-    public DateTime LastSeen { get; set; }
+    /// <summary>Last packet / discovery event for this peer (monotonic ms).</summary>
+    public long LastSeenMs { get; set; }
 
-    /// <summary>UTC time we last sent this peer a Hello addressed to it (bounds Hello answers).</summary>
-    public DateTime LastHelloSent { get; set; }
+    /// <summary>When we last sent this peer a Hello addressed to it (bounds Hello answers; monotonic ms).</summary>
+    public long LastHelloSentMs { get; set; } = long.MinValue / 2;
+
+    /// <summary>Host only: this client's Hello was already forwarded to the other clients (3-4 player discovery).</summary>
+    public bool HelloForwarded { get; set; }
 
     // Hello probing of advertised but not yet confirmed peers.
     public int HelloAttempts { get; set; }
-    public DateTime NextHelloAt { get; set; }
+    public long NextHelloAtMs { get; set; }
     public bool GaveUp { get; set; }
-
-    // Host relay budget (messages from this peer per window).
-    public DateTime RelayWindowStart { get; set; }
-    public int RelayCount { get; set; }
 
     public string Display => Name.Length > 0 ? Name : NetId.ToString();
 }

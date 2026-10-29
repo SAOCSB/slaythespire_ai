@@ -36,7 +36,8 @@ internal static class PilotRuntime
     public static event Action<PilotSettings>? SettingsChanged;
 
     private static bool _initialized;
-    private static string? _gameLanguage;
+    private static volatile string? _gameLanguage;
+    private static readonly object SettingsLock = new();
 
     /// <summary>Main thread, from the mod initializer.</summary>
     public static void Initialize()
@@ -96,42 +97,56 @@ internal static class PilotRuntime
 
     private static void OnFrame()
     {
-        // Localization is not ready when mods load; pick up the game language once it is.
-        if (_gameLanguage == null)
-        {
-            try
-            {
-                var lang = LocManager.Instance?.Language;
-                if (!string.IsNullOrEmpty(lang))
-                {
-                    _gameLanguage = lang;
-                    L10n.Configure(Settings.Ui.Language, lang);
-                    ModLog.Info("game language: " + lang);
-                }
-            }
-            catch (Exception) { /* not yet */ }
-        }
+        // Localization is not ready when mods load, and the player can switch the game language later: keep
+        // following it (cheap; checked a few times per second), so the 'auto' language setting follows the game.
+        if (_gameLanguage == null || MainThread.FrameCount % 20 == 0) TrackGameLanguage();
         try { TeamLink.Tick(); } catch (Exception ex) { ThrottledLog.Warn("teamlink.tick", "team link tick failed: " + ex.Message); }
         try { Overlay.Tick(); } catch (Exception ex) { ThrottledLog.Warn("overlay.tick", "overlay tick failed: " + ex.Message); }
         try { HttpApi?.Pump(); } catch (Exception ex) { ThrottledLog.Warn("http.pump", "http api failed: " + ex.Message); }
     }
 
-    /// <summary>Saves new settings and applies everything that depends on them.</summary>
-    public static void SaveSettings(PilotSettings settings)
+    private static void TrackGameLanguage()
     {
-        Store.Save(settings);
-        L10n.Configure(settings.Ui.Language, _gameLanguage);
-        Team.MaxAiMessagesPerMinute = settings.Team.MaxAiMessagesPerMinute;
-        ApplyHttpApi();
+        string? lang;
+        try { lang = LocManager.Instance?.Language; }
+        catch (Exception) { return; /* not ready yet */ }
+        if (string.IsNullOrEmpty(lang) || lang == _gameLanguage) return;
+        bool first = _gameLanguage == null;
+        _gameLanguage = lang;
+        L10n.Configure(Settings.Ui.Language, lang);
+        ModLog.Info((first ? "game language: " : "game language changed: ") + lang);
     }
 
-    /// <summary>Convenience for the UI: change the mode and persist it.</summary>
+    /// <summary>
+    /// The one way to change settings: clones the live settings, applies <paramref name="mutate"/>, saves and applies
+    /// the result, all under one lock, so concurrent writers (UI, HTTP API threads, the pilot's worker) never lose each
+    /// other's changes. Side effects that touch Godot or the HTTP listener run on the main thread. Any thread.
+    /// Throws when the file cannot be written (the new settings still apply for this session).
+    /// </summary>
+    public static PilotSettings UpdateSettings(Action<PilotSettings> mutate)
+    {
+        PilotSettings saved;
+        lock (SettingsLock)
+        {
+            var s = SettingsStore.Clone(Store.Current);
+            mutate(s);
+            Store.Save(s);
+            saved = Store.Current;
+            L10n.Configure(saved.Ui.Language, _gameLanguage);
+            Team.MaxAiMessagesPerMinute = saved.Team.MaxAiMessagesPerMinute;
+        }
+        // The HTTP API is started / stopped / re-keyed from the main thread only (never from one of its own request
+        // threads, which Dispose would wait on).
+        if (MainThread.IsMainThread) ApplyHttpApi();
+        else MainThread.Post(ApplyHttpApi);
+        return saved;
+    }
+
+    /// <summary>Convenience for the UI and the HTTP API: change the mode and persist it. Any thread.</summary>
     public static void SetMode(PilotMode mode)
     {
-        var s = SettingsStore.Clone(Settings);
-        s.Control.Mode = mode;
+        UpdateSettings(s => s.Control.Mode = mode);
         if (mode != PilotMode.Off) Loop.Paused = false;
-        SaveSettings(s);
     }
 
     /// <summary>Writes a diagnostics report (main thread) and returns its path, or null on failure.</summary>
@@ -161,25 +176,31 @@ internal static class PilotRuntime
         return L10n.IsChinese ? "Simplified Chinese" : "English";
     }
 
-    private static void OnRunStarted()
+    /// <summary>Raised on the pilot's worker thread: the settings change runs on the main thread.</summary>
+    private static void OnRunStarted() => MainThread.Post(() =>
     {
         // Persist the round-robin cursor so character rotation survives restarts.
-        var s = SettingsStore.Clone(Settings);
-        s.Characters.RoundRobinCursor++;
-        SaveSettings(s);
+        try { UpdateSettings(s => s.Characters.RoundRobinCursor++); }
+        catch (Exception ex) { ModLog.Warn("saving the character rotation failed: " + ex.Message); }
         Team.AddSystemNote(L10n.T("ui.run_started"));
-    }
+    });
 
-    /// <summary>A pinned route belongs to the map it was drawn on; a new run has a different map.</summary>
-    private static void OnNewRunDetected()
+    /// <summary>
+    /// A pinned route belongs to the map it was drawn on; a new run has a different map. Raised on the pilot's worker
+    /// thread: the settings change runs on the main thread.
+    /// </summary>
+    private static void OnNewRunDetected() => MainThread.Post(() =>
     {
         if (Settings.Route.PinnedPath.Count == 0) return;
-        var s = SettingsStore.Clone(Settings);
-        s.Route.PinnedPath.Clear();
-        SaveSettings(s);
-        ModLog.Info("new run: pinned route cleared");
-    }
+        try
+        {
+            UpdateSettings(s => s.Route.PinnedPath.Clear());
+            ModLog.Info("new run: pinned route cleared");
+        }
+        catch (Exception ex) { ModLog.Warn("clearing the pinned route failed: " + ex.Message); }
+    });
 
+    /// <summary>Main thread: starts, stops or re-keys the HTTP API to match the settings.</summary>
     private static void ApplyHttpApi()
     {
         var cfg = Settings.HttpApi;

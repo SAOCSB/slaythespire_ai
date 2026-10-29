@@ -1,4 +1,5 @@
 using Godot;
+using SpirePilot.Core.Agent;
 using SpirePilot.Core.Config;
 using SpirePilot.Core.Model;
 using SpirePilot.Core.Team;
@@ -18,6 +19,8 @@ internal sealed class TeamPage : Page
     private readonly List<ulong> _toIds = new();
     private string _toKey = "";
     private LineEdit _input = null!;
+    private Label _toHint = null!;
+    private Control _emotes = null!;
 
     private OptionButton _potion = null!;
     private readonly List<PotionInfo> _potions = new();
@@ -49,11 +52,23 @@ internal sealed class TeamPage : Page
         var chat = UiKit.Card(Body, L10n.T("ui.team.chat"));
         _chat = UiKit.Rich(200, follow: true);
         chat.AddChild(_chat);
-        _to = UiKit.Options(_ => { }, "team.to");
+        _to = UiKit.Options(_ => RefreshReach(), "team.to");
         UiKit.Field(chat, L10n.T("ui.team.to"), _to);
         _input = UiKit.Line(L10n.T("ui.team.input_ph"), onSubmit: _ => SendChat(), where: "team.input");
         _input.MaxLength = 400;
         chat.AddChild(UiKit.Row(_input, UiKit.Button(L10n.T("ui.team.send"), SendChat, UiTheme.ButtonKind.Primary)));
+        // Teammates without SpirePilot cannot read messages: say so, and offer the game's own reaction emotes.
+        _toHint = UiKit.Label("", UiTheme.FontSmall, UiTheme.Warn);
+        _toHint.Visible = false;
+        chat.AddChild(_toHint);
+        _emotes = UiKit.Flow(
+            UiKit.Muted(L10n.T("ui.team.emote")),
+            EmoteButton(TeamMessageKind.Accept, "ui.team.emote.up"),
+            EmoteButton(TeamMessageKind.Decline, "ui.team.emote.down"),
+            EmoteButton(TeamMessageKind.RequestFocus, "ui.team.emote.alert"),
+            EmoteButton(TeamMessageKind.AskNeedPotion, "ui.team.emote.question"));
+        _emotes.Visible = false;
+        chat.AddChild(_emotes);
 
         // ---- quick requests ----
         var quick = UiKit.Card(Body, L10n.T("ui.team.quick"));
@@ -111,6 +126,19 @@ internal sealed class TeamPage : Page
     private Button QuickButton(TeamMessageKind kind) =>
         UiKit.Button(L10n.T("ui.team.q." + kind), () => SendQuick(kind), UiTheme.ButtonKind.Small);
 
+    private Button EmoteButton(TeamMessageKind kind, string key) =>
+        UiKit.Button(L10n.T(key), () => Emote(kind), UiTheme.ButtonKind.Small);
+
+    private void Emote(TeamMessageKind kind)
+    {
+        bool sent = false;
+        try { sent = PilotRuntime.Bridge.TrySignal(kind); }
+        catch (Exception) { /* reported below */ }
+        UiKit.SetText(_toHint, sent ? L10n.T("ui.team.emote_sent") : L10n.T("ui.team.emote_failed"));
+        UiKit.SetColor(_toHint, sent ? UiTheme.Muted : UiTheme.Warn);
+        _toHint.Visible = true;
+    }
+
     // ---------------------------------------------------------------- settings
 
     public override void Sync(PilotSettings s)
@@ -160,7 +188,30 @@ internal sealed class TeamPage : Page
         if (!slow) return;
         RefreshPickers();
         RefreshMates();
+        RefreshReach();
     }
+
+    /// <summary>
+    /// Who can read a message to the selected recipient: teammates with SpirePilot only. Shows the "link unavailable"
+    /// hint and the emote buttons when nobody addressed can (co-op only).
+    /// </summary>
+    private void RefreshReach()
+    {
+        if (_toHint == null || _emotes == null) return;
+        var snap = Snap;
+        bool unreachable = snap is { IsMultiplayer: true } && Readers(snap, SelectedRecipient()).Count == 0 && snap.Teammates.Any();
+        _emotes.Visible = unreachable;
+        if (unreachable)
+        {
+            UiKit.SetText(_toHint, L10n.T("team.link_unavailable"));
+            UiKit.SetColor(_toHint, UiTheme.Warn);
+        }
+        _toHint.Visible = unreachable;
+    }
+
+    /// <summary>Teammates who would read a message to <paramref name="to"/> (0 = everyone).</summary>
+    private static List<PlayerInfo> Readers(GameSnapshot snap, ulong to) =>
+        snap.Teammates.Where(p => p.HasTeamLink && (to == 0 || p.NetId == to)).ToList();
 
     private void RenderAllChat()
     {
@@ -221,7 +272,7 @@ internal sealed class TeamPage : Page
         var mates = snap?.Teammates.ToList() ?? new List<PlayerInfo>();
 
         // Recipients.
-        var toKey = string.Join("|", mates.Select(p => p.NetId + ":" + p.Name + ":" + p.CharacterName));
+        var toKey = string.Join("|", mates.Select(p => p.NetId + ":" + p.Name + ":" + p.CharacterName + ":" + p.HasTeamLink));
         if (toKey != _toKey || _to.ItemCount == 0)
         {
             _toKey = toKey;
@@ -234,6 +285,8 @@ internal sealed class TeamPage : Page
             {
                 var name = string.IsNullOrEmpty(p.Name) ? p.CharacterName : p.Name;
                 if (!string.IsNullOrEmpty(p.CharacterName) && p.CharacterName != name) name += $" ({p.CharacterName})";
+                // Visible in the picker: they only see emotes, never text.
+                if (!p.HasTeamLink) name += " · " + L10n.T("ui.team.no_mod");
                 _to.AddItem(name, _toIds.Count);
                 _toIds.Add(p.NetId);
             }
@@ -309,13 +362,13 @@ internal sealed class TeamPage : Page
         foreach (var p in mates)
         {
             var name = string.IsNullOrEmpty(p.Name) ? p.CharacterName : p.Name;
-            var head = $"[b]{UiKit.Colored(name, UiTheme.Text)}[/b]";
+            var head = $"[b]{UiKit.Colored(name, p.HasTeamLink ? UiTheme.Text : UiTheme.Muted)}[/b]";
             if (!string.IsNullOrEmpty(p.CharacterName) && p.CharacterName != name) head += " · " + UiKit.Esc(p.CharacterName);
             head += " · " + UiKit.Colored($"HP {p.Hp}/{p.MaxHp}", p.MaxHp > 0 && p.Hp * 2 < p.MaxHp ? UiTheme.Warn : UiTheme.Good);
             if (!p.IsAlive) head += " " + UiKit.Colored(L10n.T("ui.team.dead"), UiTheme.Bad);
             var potions = p.Potions.Count == 0 ? L10n.T("ui.none") : string.Join(", ", p.Potions.Select(x => x.Name));
             var detail = "   " + UiKit.Colored(L10n.T("ui.team.potions", potions), UiTheme.Muted) + " · " +
-                         (p.HasTeamLink ? UiKit.Colored(L10n.T("ui.team.has_mod"), UiTheme.Good) : UiKit.Colored(L10n.T("ui.team.no_mod"), UiTheme.Faint)) + " · " +
+                         (p.HasTeamLink ? UiKit.Colored(L10n.T("ui.team.has_mod"), UiTheme.Good) : UiKit.Colored(L10n.T("ui.team.no_mod_long"), UiTheme.Warn)) + " · " +
                          (p.IsAiControlled ? UiKit.Colored(L10n.T("ui.team.ai_ctrl"), UiTheme.Info) : UiKit.Colored(L10n.T("ui.team.human_ctrl"), UiTheme.Muted));
             lines.Add(head + "\n" + detail);
         }
@@ -389,7 +442,7 @@ internal sealed class TeamPage : Page
                     return;
                 }
                 msg.Text = L10n.T("team.q.request_focus", enemy.Name);
-                msg.Target = EnemyRef(enemy);
+                msg.Target = EnemyRef(enemy, Snap);
                 break;
             }
             case TeamMessageKind.RequestDebuff:
@@ -419,26 +472,41 @@ internal sealed class TeamPage : Page
                     msg.Text = L10n.T("team.q.request_debuff", shown, enemyName);
                     msg.Debuff = debuffId;
                 }
-                if (enemy != null) msg.Target = EnemyRef(enemy);
+                if (enemy != null) msg.Target = EnemyRef(enemy, Snap);
                 break;
             }
             default:
                 return;
         }
-        Send(msg);
-        Hint(L10n.T("ui.team.sent") + ": " + msg.Text, UiTheme.Muted);
+        if (Send(msg))
+        {
+            Hint(L10n.T("ui.team.sent") + ": " + msg.Text, UiTheme.Muted);
+            return;
+        }
+        // Nobody addressed runs SpirePilot: the closest vanilla emote is all they can see.
+        bool emoted = false;
+        try { emoted = PilotRuntime.Bridge.TrySignal(kind); }
+        catch (Exception) { /* hint below */ }
+        Hint(emoted ? L10n.T("ui.team.sent_emote") : L10n.T("team.link_unavailable"), UiTheme.Warn);
     }
 
-    /// <summary>Readable for humans and resolvable by an AI teammate (enemy keys match: co-op simulates the same fight).</summary>
-    private static string EnemyRef(CreatureInfo e) => $"{e.Name} ({e.Key})";
+    /// <summary>
+    /// The enemy as teammates resolve it: name plus the game's combat id, which is the same on every client
+    /// ("Cultist (cid:12)"); local keys ("e1") may differ between clients.
+    /// </summary>
+    private static string EnemyRef(CreatureInfo e, GameSnapshot? snap) =>
+        (snap == null ? null : PilotLoop.NormalizeTarget(e.Key, snap)) ?? e.Name;
 
-    private void Send(TeamMessage msg)
+    /// <summary>Sends to the selected recipient; returns false when nobody addressed can read it (co-op).</summary>
+    private bool Send(TeamMessage msg)
     {
         msg.To = SelectedRecipient();
         var entry = PilotRuntime.Team.Send(msg, fromAi: false);
         var snap = Snap;
         if (entry != null && Draft.Team.SpeechBubbles && snap is { IsMultiplayer: true })
             PilotRuntime.Bridge.ShowSpeech(snap.LocalPlayerId, msg.Text);
+        RefreshReach();
+        return entry is { Delivered: true } || snap is not { IsMultiplayer: true } || Readers(snap, msg.To).Count > 0;
     }
 
     private void Hint(string text, Color color)

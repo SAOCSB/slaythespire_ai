@@ -13,22 +13,31 @@ using SpirePilot.Infra;
 namespace SpirePilot.Api;
 
 /// <summary>
-/// Optional local HTTP API (127.0.0.1 only, off by default) so external AI tools — scripts, MCP servers, other agents —
+/// Optional local HTTP API (loopback only, off by default) so external AI tools — scripts, MCP servers, other agents —
 /// can read the full game state and act through the same legal-action menu the built-in pilot uses.
 ///
 ///   GET  /status              pilot status, mode, token usage, last error
-///   GET  /state               fresh snapshot (state + legal actions)
+///   GET  /state               fresh snapshot (state + legal actions); ?format=text → the pilot's state text + menu
+///                             (text/plain); ?include=text → the JSON plus that text as "text", from the same capture
 ///   GET  /prompt              the prompt the built-in pilot would send for the current state
-///   POST /act    {"id":"a3"} or {"semantic_key":"..."}   execute a legal action (pilot must be Off / Advisor / paused)
+///   POST /act    {"semantic_key":"..."} or {"id":"a3","sequence":123}   execute a legal action (pilot must be Off /
+///                             Advisor / paused). With "sequence" (the snapshot the id was read from) an id whose menu
+///                             changed since is refused with 409 "stale" instead of running whatever has that id now.
 ///   POST /mode   {"mode":"FullAuto"|"CombatOnly"|"OutOfCombatOnly"|"Advisor"|"Off"}
 ///   POST /instruction {"text":"..."}                     one-shot instruction for the built-in pilot
-///   GET  /chat                recent team chat;  POST /chat {"text":"...","to":"all","kind":"chat"}
+///   GET  /chat                recent team chat
+///   POST /chat   {"text":"...","to":"all","kind":"chat","potion":..,"debuff":..,"target":..,"reply_to":..,"from_ai":true}
 ///   GET  /compendium?kind=cards|relics|potions|powers|characters   every game model with localized text
 ///   GET  /diagnostics         diagnostics report (markdown; no secrets)
-/// With a token configured, every request needs "Authorization: Bearer &lt;token&gt;".
+/// With a token configured, every request needs "Authorization: Bearer &lt;token&gt;". Requests from web pages are
+/// refused (any Origin header, a Host other than loopback), and POST bodies must be JSON (Content-Type
+/// application/json, at most 64 KB), so a browser can never drive the game.
+/// Error bodies are {"error": "...", "code": "..."}; 409 codes: "pilot_active", "busy", "stale".
 /// </summary>
 internal sealed class LocalHttpApi : IDisposable
 {
+    private const int MaxBodyBytes = 64 * 1024;
+
     private static readonly JsonSerializerOptions Json = new()
     {
         WriteIndented = true,
@@ -38,27 +47,60 @@ internal sealed class LocalHttpApi : IDisposable
         Converters = { new JsonStringEnumConverter() },
     };
 
-    private readonly HttpListener _listener = new();
+    /// <summary>
+    /// Prefix sets tried in order. On Windows, http.sys only lets elevated processes register http://127.0.0.1:port/,
+    /// while http://localhost:port/ is allowed (both are loopback only); elsewhere both work together.
+    /// </summary>
+    private static readonly string[][] PrefixPlans =
+    {
+        new[] { "localhost", "127.0.0.1" },
+        new[] { "localhost" },
+        new[] { "127.0.0.1" },
+    };
+
+    private HttpListener? _listener;
     private Thread? _thread;
     private volatile bool _running;
 
     public int Port { get; }
     public string Token { get; set; }
 
+    /// <summary>The base URL actually listened on (after <see cref="Start"/>).</summary>
+    public string Url { get; private set; } = "";
+
     public LocalHttpApi(int port, string token)
     {
         Port = port;
         Token = token ?? "";
-        _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
     }
 
     public void Start()
     {
-        _listener.Start();
+        var failures = new List<string>();
+        foreach (var hosts in PrefixPlans)
+        {
+            var listener = new HttpListener();
+            try
+            {
+                foreach (var host in hosts) listener.Prefixes.Add($"http://{host}:{Port}/");
+                listener.Start();
+                _listener = listener;
+                Url = $"http://{hosts[0]}:{Port}/";
+                if (failures.Count > 0) ModLog.Info("HTTP API: fell back after " + string.Join("; ", failures));
+                break;
+            }
+            catch (Exception ex)
+            {
+                failures.Add($"{string.Join(" + ", hosts)}: {ex.Message}");
+                try { listener.Close(); } catch (Exception) { /* never started */ }
+            }
+        }
+        if (_listener == null)
+            throw new InvalidOperationException($"cannot listen on port {Port} (" + string.Join("; ", failures) + ")");
         _running = true;
         _thread = new Thread(Loop) { IsBackground = true, Name = "SpirePilot HTTP API" };
         _thread.Start();
-        ModLog.Info($"HTTP API listening on http://127.0.0.1:{Port}/");
+        ModLog.Info($"HTTP API listening on {string.Join(", ", _listener.Prefixes)}");
     }
 
     /// <summary>Requests are served on worker threads; nothing to do per frame.</summary>
@@ -67,15 +109,16 @@ internal sealed class LocalHttpApi : IDisposable
     public void Dispose()
     {
         _running = false;
-        try { _listener.Stop(); _listener.Close(); } catch (Exception) { }
+        try { _listener?.Stop(); _listener?.Close(); } catch (Exception) { }
     }
 
     private void Loop()
     {
+        var listener = _listener!;
         while (_running)
         {
             HttpListenerContext ctx;
-            try { ctx = _listener.GetContext(); }
+            try { ctx = listener.GetContext(); }
             catch (Exception) { if (!_running) return; continue; }
             _ = Task.Run(() => HandleAsync(ctx));
         }
@@ -86,19 +129,45 @@ internal sealed class LocalHttpApi : IDisposable
         var res = ctx.Response;
         try
         {
-            if (!string.IsNullOrEmpty(Token) && ctx.Request.Headers["Authorization"] != "Bearer " + Token)
+            var req = ctx.Request;
+            // CSRF / DNS rebinding: browsers always send Origin on cross-site and on POST requests; scripts and MCP
+            // servers do not. A Host that is not loopback means a page reached us through a rebound name.
+            if (req.Headers["Origin"] != null)
             {
-                await Send(res, 401, new { error = "missing or wrong bearer token" });
+                await Send(res, 403, Error("requests from web pages are not allowed", "forbidden"));
                 return;
             }
-            var path = ctx.Request.Url?.AbsolutePath.TrimEnd('/') ?? "";
-            var method = ctx.Request.HttpMethod.ToUpperInvariant();
+            if (!LoopbackHost(req.Headers["Host"]))
+            {
+                await Send(res, 403, Error("only loopback host names are accepted", "forbidden"));
+                return;
+            }
+            if (!string.IsNullOrEmpty(Token) && req.Headers["Authorization"] != "Bearer " + Token)
+            {
+                await Send(res, 401, Error("missing or wrong bearer token", "unauthorized"));
+                return;
+            }
+            var path = req.Url?.AbsolutePath.TrimEnd('/') ?? "";
+            var method = req.HttpMethod.ToUpperInvariant();
             JsonNode? body = null;
             if (method == "POST")
             {
-                using var reader = new StreamReader(ctx.Request.InputStream, Encoding.UTF8);
-                var text = await reader.ReadToEndAsync();
-                if (text.Length > 64 * 1024) { await Send(res, 413, new { error = "body too large" }); return; }
+                if (!IsJson(req.ContentType))
+                {
+                    await Send(res, 415, Error("Content-Type must be application/json", "unsupported_media_type"));
+                    return;
+                }
+                if (req.ContentLength64 > MaxBodyBytes)
+                {
+                    await Send(res, 413, Error("body too large (64 KB max)", "too_large"));
+                    return;
+                }
+                var text = await ReadBounded(req.InputStream, MaxBodyBytes);
+                if (text == null)
+                {
+                    await Send(res, 413, Error("body too large (64 KB max)", "too_large"));
+                    return;
+                }
                 body = text.Length > 0 ? JsonNode.Parse(text) : null;
             }
 
@@ -111,43 +180,34 @@ internal sealed class LocalHttpApi : IDisposable
                     await Send(res, 200, StatusObject());
                     break;
                 case ("GET", "/state"):
-                {
-                    var snap = await PilotRuntime.Bridge.CaptureAsync(CancellationToken.None);
-                    await Send(res, snap == null ? 503 : 200, (object?)snap ?? new { error = "no game state yet" });
+                    await State(res, req.QueryString["format"], req.QueryString["include"]);
                     break;
-                }
                 case ("GET", "/prompt"):
                 {
                     var snap = await PilotRuntime.Bridge.CaptureAsync(CancellationToken.None);
-                    if (snap == null) { await Send(res, 503, new { error = "no game state yet" }); break; }
+                    if (snap == null) { await Send(res, 503, Error("no game state yet", "no_state")); break; }
                     var s = PilotRuntime.Settings;
                     var ctxObj = new DecisionContext { History = PilotRuntime.Engine.Memory.History, Memo = PilotRuntime.Engine.Memory.Memo };
-                    var formatter = new StateFormatter { VerboseCards = s.Strategy.VerboseCards, IncludePiles = s.Strategy.IncludePiles };
                     await Send(res, 200, new
                     {
                         system = PromptBuilder.CoreSystem,
                         owner = PromptBuilder.BuildOwnerBlock(s, PilotRuntime.ResolveMessageLanguage(s), CharacterGuide.For(snap.LocalPlayer?.CharacterId)),
-                        user = PromptBuilder.BuildUser(snap, ctxObj, formatter),
+                        user = PromptBuilder.BuildUser(snap, ctxObj, Formatter(s)),
                         schema = JsonNode.Parse(DecisionParser.Schema),
                     });
                     break;
                 }
                 case ("GET", "/compendium"):
                 {
-                    var kind = (ctx.Request.QueryString["kind"] ?? "cards").ToLowerInvariant();
+                    var kind = (req.QueryString["kind"] ?? "cards").ToLowerInvariant();
                     var list = await MainThread.Run(() => Compendium(kind));
-                    await Send(res, list == null ? 400 : 200, (object?)list ?? new { error = "kind must be cards, relics, potions, powers or characters" });
+                    await Send(res, list == null ? 400 : 200, list ?? Error("kind must be cards, relics, potions, powers or characters", "bad_request"));
                     break;
                 }
                 case ("GET", "/diagnostics"):
                 {
                     var report = await MainThread.Run(Diagnostics.Build);
-                    var bytes = Encoding.UTF8.GetBytes(report);
-                    res.StatusCode = 200;
-                    res.ContentType = "text/markdown; charset=utf-8";
-                    res.ContentLength64 = bytes.Length;
-                    await res.OutputStream.WriteAsync(bytes);
-                    res.Close();
+                    await SendText(res, 200, report, "text/markdown; charset=utf-8");
                     break;
                 }
                 case ("POST", "/act"):
@@ -156,7 +216,13 @@ internal sealed class LocalHttpApi : IDisposable
                 case ("POST", "/mode"):
                 {
                     var mode = body?["mode"]?.ToString();
-                    if (!Enum.TryParse<PilotMode>(mode, true, out var m)) { await Send(res, 400, new { error = "unknown mode" }); break; }
+                    // Names only: Enum.TryParse also takes numbers, and "9" would become an undefined mode.
+                    if (string.IsNullOrWhiteSpace(mode) || mode.Trim().Any(char.IsDigit) ||
+                        !Enum.TryParse<PilotMode>(mode, true, out var m) || !Enum.IsDefined(m))
+                    {
+                        await Send(res, 400, Error("unknown mode (use FullAuto, CombatOnly, OutOfCombatOnly, Advisor or Off)", "bad_request"));
+                        break;
+                    }
                     PilotRuntime.SetMode(m);
                     await Send(res, 200, StatusObject());
                     break;
@@ -168,63 +234,205 @@ internal sealed class LocalHttpApi : IDisposable
                 case ("GET", "/chat"):
                     await Send(res, 200, PilotRuntime.Team.Recent(50).Select(e => new
                     {
-                        time = e.LocalTime, incoming = e.Incoming, delivered = e.Delivered, from = e.Message.FromName,
-                        fromAi = e.Message.FromAi, kind = e.Message.Kind, text = e.Message.Text, to = e.Message.To,
-                    }));
+                        id = e.Message.Id,
+                        time = e.LocalTime,
+                        incoming = e.Incoming,
+                        delivered = e.Delivered,
+                        from = e.Message.FromName,
+                        fromAi = e.Message.FromAi,
+                        kind = DecisionParser.KindToWire(e.Message.Kind),
+                        text = e.Message.Text,
+                        to = e.Message.To,
+                        replyTo = e.Message.ReplyTo,
+                        target = e.Message.Target,
+                        potion = e.Message.Potion,
+                        debuff = e.Message.Debuff,
+                    }).ToList());
                     break;
                 case ("POST", "/chat"):
-                {
-                    var text = body?["text"]?.ToString();
-                    if (string.IsNullOrWhiteSpace(text)) { await Send(res, 400, new { error = "text required" }); break; }
-                    var snap = PilotRuntime.Bridge.Latest;
-                    var msg = new TeamMessage
-                    {
-                        Text = text,
-                        Kind = DecisionParser.ParseKind(body?["kind"]?.ToString()),
-                        To = snap == null ? 0 : PilotLoop.ResolveRecipient(body?["to"]?.ToString(), snap),
-                        Potion = body?["potion"]?.ToString(),
-                        Debuff = body?["debuff"]?.ToString(),
-                        Target = body?["target"]?.ToString(),
-                        ReplyTo = body?["reply_to"]?.ToString(),
-                    };
-                    var entry = PilotRuntime.Team.Send(msg, fromAi: true);
-                    await Send(res, entry == null ? 429 : 200, entry == null ? new { error = "rate limited" } : new { delivered = entry.Delivered });
+                    await Chat(res, body);
                     break;
-                }
                 default:
-                    await Send(res, 404, new { error = "unknown endpoint" });
+                    await Send(res, 404, Error("unknown endpoint", "not_found"));
                     break;
             }
         }
         catch (JsonException ex)
         {
-            await Send(res, 400, new { error = "invalid JSON: " + ex.Message });
+            try { await Send(res, 400, Error("invalid JSON: " + ex.Message, "bad_json")); } catch (Exception) { }
         }
         catch (Exception ex)
         {
             ModLog.Warn("HTTP API request failed: " + ex.Message);
-            try { await Send(res, 500, new { error = ex.Message }); } catch (Exception) { }
+            try { await Send(res, 500, Error(ex.Message, "internal")); } catch (Exception) { }
         }
     }
 
+    // ---------------------------------------------------------------- endpoints
+
+    private static async Task State(HttpListenerResponse res, string? format, string? include)
+    {
+        var snap = await PilotRuntime.Bridge.CaptureAsync(CancellationToken.None);
+        if (snap == null)
+        {
+            await Send(res, 503, Error("no game state yet", "no_state"));
+            return;
+        }
+        if (string.Equals(format, "text", StringComparison.OrdinalIgnoreCase))
+        {
+            await SendText(res, 200, StateText(snap), "text/plain; charset=utf-8");
+            return;
+        }
+        if (string.Equals(include, "text", StringComparison.OrdinalIgnoreCase))
+        {
+            // Same capture for both, so the ids in the text are the ids in the JSON menu.
+            var node = JsonSerializer.SerializeToNode(snap, Json) as JsonObject ?? new JsonObject();
+            node["text"] = StateText(snap);
+            await Send(res, 200, node);
+            return;
+        }
+        await Send(res, 200, snap);
+    }
+
+    /// <summary>The state text the built-in pilot's prompt uses, then its menu ("aN | label" lines, as in [MENU]).</summary>
+    private static string StateText(GameSnapshot snap)
+    {
+        var sb = new StringBuilder();
+        if (!snap.CanAct) sb.Append("WAITING: ").Append(snap.WaitReason ?? "the game is busy").Append('\n');
+        else if (snap.Actions.Count > 0 && snap.Actions.All(a => a.Kind == ActionKind.UndoEndTurn))
+            // Co-op, turn already ended: acting is possible, but only to take the end turn back.
+            sb.Append("NOTE: ").Append(snap.WaitReason ?? "waiting for teammates")
+              .Append(". You already ended your turn; undo it only if a teammate needs you to act this turn.\n");
+        var state = Formatter(PilotRuntime.Settings).Format(snap);
+        sb.Append(state);
+        if (state.Length > 0 && !state.EndsWith('\n')) sb.Append('\n');
+        sb.Append("Menu:\n");
+        foreach (var a in snap.Actions)
+        {
+            sb.Append(a.Id).Append(" | ").Append(a.Label);
+            if (a.Kind == ActionKind.PlayCard && PlanSafety.IsBoundary(a, snap)) sb.Append(" [unpredictable]");
+            sb.Append('\n');
+        }
+        return sb.ToString().Replace("\r\n", "\n");
+    }
+
+    private static StateFormatter Formatter(PilotSettings s) =>
+        new() { VerboseCards = s.Strategy.VerboseCards, IncludePiles = s.Strategy.IncludePiles };
+
     private static async Task Act(HttpListenerResponse res, JsonNode? body)
     {
+        var id = body?["id"]?.ToString();
+        var key = body?["semantic_key"]?.ToString();
+        if (string.IsNullOrWhiteSpace(id) && string.IsNullOrWhiteSpace(key))
+        {
+            await Send(res, 400, Error("pass \"semantic_key\" (preferred) or \"id\"", "bad_request"));
+            return;
+        }
+        long? sequence = null;
+        if (body?["sequence"] is JsonNode seqNode)
+        {
+            if (seqNode is JsonValue v && v.TryGetValue<long>(out var n)) sequence = n;
+            else if (long.TryParse(seqNode.ToString(), out var parsed)) sequence = parsed;
+            else
+            {
+                await Send(res, 400, Error("\"sequence\" must be the snapshot's sequence number", "bad_request"));
+                return;
+            }
+        }
+
         var settings = PilotRuntime.Settings;
         bool pilotActive = settings.Control.Mode is not (PilotMode.Off or PilotMode.Advisor) && !PilotRuntime.Loop.Paused;
         if (pilotActive)
         {
-            await Send(res, 409, new { error = "the built-in pilot is in control; set mode Off or Advisor first (POST /mode)" });
+            await Send(res, 409, Error("the built-in pilot is in control; set mode Off or Advisor first (POST /mode)", "pilot_active"));
             return;
         }
         var snap = await PilotRuntime.Bridge.CaptureAsync(CancellationToken.None);
-        if (snap == null) { await Send(res, 503, new { error = "no game state yet" }); return; }
-        if (!snap.CanAct) { await Send(res, 409, new { error = "cannot act now: " + snap.WaitReason }); return; }
-        var id = body?["id"]?.ToString();
-        var key = body?["semantic_key"]?.ToString();
-        var action = id != null ? snap.FindAction(id) : key != null ? snap.Actions.FirstOrDefault(a => a.SemanticKey == key) : null;
-        if (action == null) { await Send(res, 404, new { error = "no such legal action", legal = snap.Actions.Select(a => new { a.Id, a.Label }) }); return; }
+        if (snap == null) { await Send(res, 503, Error("no game state yet", "no_state")); return; }
+        if (!snap.CanAct)
+        {
+            await Send(res, 409, new { error = "cannot act now: " + snap.WaitReason, code = "busy", sequence = snap.Sequence });
+            return;
+        }
+        ActionOption? action;
+        if (!string.IsNullOrWhiteSpace(key))
+        {
+            // Semantic keys mean the same thing in every snapshot: the preferred way to name an action.
+            action = snap.Actions.FirstOrDefault(a => a.SemanticKey == key);
+        }
+        else
+        {
+            if (sequence is { } seen && !PilotRuntime.Bridge.MenuUnchangedSince(seen, snap))
+            {
+                await Send(res, 409, new
+                {
+                    error = $"stale id: the menu changed since snapshot {seen}; choose again from this menu",
+                    code = "stale",
+                    sequence = snap.Sequence,
+                    legal = Menu(snap),
+                });
+                return;
+            }
+            action = snap.FindAction(id!.Trim());
+        }
+        if (action == null)
+        {
+            await Send(res, 404, new { error = "no such legal action", code = "no_action", sequence = snap.Sequence, legal = Menu(snap) });
+            return;
+        }
         var result = await PilotRuntime.Bridge.ExecuteAsync(action, CancellationToken.None);
         await Send(res, result.Success ? 200 : 422, new { result.Success, result.Message, action = new { action.Id, action.Kind, action.Label } });
+    }
+
+    private static object Menu(GameSnapshot snap) => snap.Actions.Select(a => new { a.Id, a.Label, a.SemanticKey }).ToList();
+
+    private static async Task Chat(HttpListenerResponse res, JsonNode? body)
+    {
+        var text = body?["text"]?.ToString();
+        if (string.IsNullOrWhiteSpace(text)) { await Send(res, 400, Error("text required", "bad_request")); return; }
+        bool fromAi = true; // compatibility: callers of the first API version were AI tools
+        if (body?["from_ai"] is JsonNode aiNode)
+        {
+            if (aiNode is JsonValue v && v.TryGetValue<bool>(out var b)) fromAi = b;
+            else { await Send(res, 400, Error("\"from_ai\" must be true or false", "bad_request")); return; }
+        }
+        var snap = PilotRuntime.Bridge.Latest ?? await PilotRuntime.Bridge.CaptureAsync(CancellationToken.None);
+        var toText = body?["to"]?.ToString();
+        ulong to = 0;
+        if (!IsEveryone(toText))
+        {
+            to = snap == null ? 0 : PilotLoop.ResolveRecipient(toText, snap);
+            if (to == 0)
+            {
+                var names = snap?.Teammates.Select(p => string.IsNullOrEmpty(p.Name) ? p.CharacterName : p.Name).ToList() ?? new List<string>();
+                await Send(res, 400, new { error = $"unknown recipient '{toText}'; use \"all\" or one of the teammates", code = "unknown_recipient", teammates = names });
+                return;
+            }
+        }
+        var target = body?["target"]?.ToString();
+        var msg = new TeamMessage
+        {
+            Text = text,
+            Kind = DecisionParser.ParseKind(body?["kind"]?.ToString()),
+            To = to,
+            Potion = body?["potion"]?.ToString(),
+            Debuff = body?["debuff"]?.ToString(),
+            // "e0" means this client's enemy; teammates resolve the shared combat id ("Cultist (cid:12)").
+            Target = snap == null ? target : PilotLoop.NormalizeTarget(target, snap),
+            ReplyTo = body?["reply_to"]?.ToString(),
+        };
+        var entry = PilotRuntime.Team.Send(msg, fromAi);
+        if (entry == null) await Send(res, 429, Error("rate limited", "rate_limited"));
+        else await Send(res, 200, new { delivered = entry.Delivered, id = entry.Message.Id });
+    }
+
+    /// <summary>Recipients that mean everyone (same words as <see cref="PilotLoop.ResolveRecipient"/>).</summary>
+    private static bool IsEveryone(string? to)
+    {
+        if (string.IsNullOrWhiteSpace(to)) return true;
+        var t = to.Trim();
+        return t.Equals("all", StringComparison.OrdinalIgnoreCase) || t.Equals("everyone", StringComparison.OrdinalIgnoreCase) ||
+               t is "所有人" or "全体";
     }
 
     /// <summary>All models of one kind with localized text (main thread).</summary>
@@ -271,11 +479,65 @@ internal sealed class LocalHttpApi : IDisposable
         };
     }
 
+    // ---------------------------------------------------------------- plumbing
+
+    private static object Error(string message, string code) => new { error = message, code };
+
+    private static bool IsJson(string? contentType)
+    {
+        if (string.IsNullOrWhiteSpace(contentType)) return false;
+        var media = contentType.Split(';')[0].Trim();
+        return media.Equals("application/json", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Host header names a loopback address (any port).</summary>
+    private static bool LoopbackHost(string? host)
+    {
+        if (string.IsNullOrWhiteSpace(host)) return true; // HTTP/1.0 without Host: the listener already matched loopback
+        var h = host.Trim();
+        if (h.StartsWith('['))
+        {
+            int end = h.IndexOf(']');
+            h = end > 0 ? h[..(end + 1)] : h;
+        }
+        else
+        {
+            int colon = h.LastIndexOf(':');
+            if (colon >= 0) h = h[..colon];
+        }
+        return h.Equals("localhost", StringComparison.OrdinalIgnoreCase) || h == "127.0.0.1" || h == "[::1]";
+    }
+
+    /// <summary>Reads at most <paramref name="limit"/> bytes of UTF-8; null when the body is longer.</summary>
+    private static async Task<string?> ReadBounded(Stream input, int limit)
+    {
+        var buffer = new byte[Math.Min(limit + 1, 16 * 1024)];
+        using var collected = new MemoryStream();
+        while (true)
+        {
+            int n = await input.ReadAsync(buffer.AsMemory(0, buffer.Length));
+            if (n <= 0) break;
+            if (collected.Length + n > limit) return null;
+            collected.Write(buffer, 0, n);
+        }
+        return Encoding.UTF8.GetString(collected.GetBuffer(), 0, (int)collected.Length);
+    }
+
     private static async Task Send(HttpListenerResponse res, int status, object payload)
     {
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(payload, Json);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(payload, payload.GetType(), Json);
         res.StatusCode = status;
         res.ContentType = "application/json; charset=utf-8";
+        res.ContentLength64 = bytes.Length;
+        await res.OutputStream.WriteAsync(bytes);
+        res.Close();
+    }
+
+    private static async Task SendText(HttpListenerResponse res, int status, string text, string contentType)
+    {
+        var bytes = Encoding.UTF8.GetBytes(text);
+        res.StatusCode = status;
+        res.ContentType = contentType;
         res.ContentLength64 = bytes.Length;
         await res.OutputStream.WriteAsync(bytes);
         res.Close();

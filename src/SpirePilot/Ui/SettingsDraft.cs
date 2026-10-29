@@ -59,16 +59,20 @@ internal static class SettingsDraft
     public static void Flush()
     {
         if (Pending.Count == 0) return;
-        var fresh = SettingsStore.Clone(PilotRuntime.Settings);
-        foreach (var change in Pending)
-        {
-            try { change(fresh); }
-            catch (Exception ex) { ThrottledLog.Warn("ui.draft.replay", "UI: settings edit could not be replayed: " + ex.Message); }
-        }
+        var pending = Pending.ToList();
         Pending.Clear();
         try
         {
-            PilotRuntime.SaveSettings(fresh);
+            // Replayed on a fresh copy of the live settings inside the runtime's settings lock, so a change made
+            // elsewhere meanwhile (HTTP API, the pilot's rotation cursor) is kept.
+            PilotRuntime.UpdateSettings(fresh =>
+            {
+                foreach (var change in pending)
+                {
+                    try { change(fresh); }
+                    catch (Exception ex) { ThrottledLog.Warn("ui.draft.replay", "UI: settings edit could not be replayed: " + ex.Message); }
+                }
+            });
             SaveError = null;
             LastSavedMs = Time.GetTicksMsec();
         }
