@@ -26,6 +26,9 @@ internal sealed class CharactersPage : Page
 
     public override string TitleKey => "ui.tab.chars";
 
+    /// <summary>Only the character list comes from the game (character-select screen): a slow refresh is enough.</summary>
+    public override ulong SnapshotIntervalMs => 2000;
+
     protected override void BuildContent()
     {
         var chars = UiKit.Card(Body, L10n.T("ui.chars.allowed"), L10n.T("ui.chars.allowed_hint"));

@@ -7,11 +7,14 @@ using SpirePilot.Infra;
 
 namespace SpirePilot.Ui.Pages;
 
-/// <summary>Tab 6: pilot activity log with filter, log file location, and the remaining settings.</summary>
+/// <summary>Tab 6: pilot activity log with filter, log file location, diagnostics, and the remaining settings.</summary>
 internal sealed class LogPage : Page
 {
     private static readonly PilotEventKind[] Kinds =
         { PilotEventKind.Decision, PilotEventKind.Action, PilotEventKind.TeamMessage, PilotEventKind.Info, PilotEventKind.Error };
+
+    /// <summary>Id of the "All" filter item. Not -1: Godot replaces a -1 id with the item's index (0 = Decision).</summary>
+    private const int FilterAll = 100;
 
     private static readonly string[] ToggleKeys =
         { "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", "Insert", "Home", "End", "Pageup", "Pagedown", "Pause", "Scrolllock" };
@@ -26,6 +29,10 @@ internal sealed class LogPage : Page
     private string _searchText = "";
 
     private Label _copied = null!;
+    private CheckButton _traces = null!;
+    private Label _diagResult = null!;
+    private Button _diagCopy = null!, _diagOpen = null!;
+    private string? _diagPath;
     private OptionButton _language = null!;
     private OptionButton _toggleKey = null!;
     private string _customKey = "";
@@ -39,17 +46,17 @@ internal sealed class LogPage : Page
     private CheckButton _logPrompts = null!;
 
     public override string TitleKey => "ui.tab.log";
-    public override bool WantsSnapshot => false;
+    public override ulong SnapshotIntervalMs => 0;
 
     protected override void BuildContent()
     {
         var events = UiKit.Card(Body, L10n.T("ui.log.events"));
         _filter = UiKit.Options(id =>
         {
-            _filterId = id;
+            _filterId = id == FilterAll ? -1 : id;
             RenderAll();
         }, "log.filter");
-        var items = new List<(string, int)> { (L10n.T("ui.log.filter.all"), -1) };
+        var items = new List<(string, int)> { (L10n.T("ui.log.filter.all"), FilterAll) };
         items.AddRange(Kinds.Select(k => (L10n.T("ui.log.filter." + k), (int)k)));
         UiKit.SetItems(_filter, items);
         _search = UiKit.Line(L10n.T("ui.log.search_ph"), text =>
@@ -78,8 +85,27 @@ internal sealed class LogPage : Page
                 DisplayServer.ClipboardSet(path);
                 UiKit.SetText(_copied, L10n.T("ui.log.copied"));
             }, UiTheme.ButtonKind.Small),
-            UiKit.Button(L10n.T("ui.log.open"), OpenFolder, UiTheme.ButtonKind.Small),
+            UiKit.Button(L10n.T("ui.log.open"), () => OpenFolderOf(ModLog.FilePath), UiTheme.ButtonKind.Small),
             _copied));
+
+        // ---- diagnostics: decision traces and a report for bug reports ----
+        var diag = UiKit.Card(Body, L10n.T("ui.log.diag"));
+        _traces = UiKit.Switch(L10n.T("ui.log.traces"), on => Edit(s => s.SaveDecisionTraces = on), L10n.T("ui.log.traces_tip"));
+        diag.AddChild(_traces);
+        diag.AddChild(UiKit.Muted(L10n.T("ui.log.traces_hint", Path.Combine(PilotRuntime.DataDir, "traces"))));
+        diag.AddChild(UiKit.Row(UiKit.Button(L10n.T("ui.log.diag_write"), WriteDiagnostics, UiTheme.ButtonKind.Normal, L10n.T("ui.log.diag_tip"))));
+        _diagResult = UiKit.Label("", UiTheme.FontSmall, UiTheme.Text);
+        _diagResult.Visible = false;
+        diag.AddChild(_diagResult);
+        _diagCopy = UiKit.Button(L10n.T("ui.log.copy"), () =>
+        {
+            if (_diagPath == null) return;
+            DisplayServer.ClipboardSet(_diagPath);
+            UiKit.SetText(_diagCopy, L10n.T("ui.log.copied"));
+        }, UiTheme.ButtonKind.Small);
+        _diagOpen = UiKit.Button(L10n.T("ui.log.open"), () => OpenFolderOf(_diagPath), UiTheme.ButtonKind.Small);
+        _diagCopy.Visible = _diagOpen.Visible = false;
+        diag.AddChild(UiKit.Row(_diagCopy, _diagOpen));
 
         // ---- other settings ----
         var misc = UiKit.Card(Body, L10n.T("ui.misc"));
@@ -145,6 +171,7 @@ internal sealed class LogPage : Page
         UiKit.SetValue(_scale, s.Ui.Scale);
         UiKit.SetText(_scaleValue, FormatScale(s.Ui.Scale));
         UiKit.SetPressed(_logPrompts, s.LogPrompts);
+        UiKit.SetPressed(_traces, s.SaveDecisionTraces);
         UiKit.SetPressed(_httpEnabled, s.HttpApi.Enabled);
         UiKit.SetValue(_httpPort, s.HttpApi.Port);
         UiKit.SetText(_httpToken, s.HttpApi.Token);
@@ -157,9 +184,20 @@ internal sealed class LogPage : Page
         Edit(s => s.Ui.ToggleKey = name, now: true);
     }
 
-    private static void OpenFolder()
+    /// <summary>Writes the diagnostics report (main thread: it reads the screen and builds a snapshot) and shows where.</summary>
+    private void WriteDiagnostics()
     {
-        var path = ModLog.FilePath;
+        var path = PilotRuntime.WriteDiagnostics();
+        _diagPath = path;
+        _diagResult.Visible = true;
+        UiKit.SetText(_diagResult, path != null ? L10n.T("ui.log.diag_written", path) : L10n.T("ui.log.diag_failed"));
+        UiKit.SetColor(_diagResult, path != null ? UiTheme.Good : UiTheme.Bad);
+        UiKit.SetText(_diagCopy, L10n.T("ui.log.copy"));
+        _diagCopy.Visible = _diagOpen.Visible = path != null;
+    }
+
+    private static void OpenFolderOf(string? path)
+    {
         if (string.IsNullOrEmpty(path)) return;
         var dir = Path.GetDirectoryName(path);
         if (string.IsNullOrEmpty(dir)) return;

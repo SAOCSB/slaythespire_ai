@@ -66,6 +66,10 @@ internal static class UiKit
         return l;
     }
 
+    /// <summary>
+    /// A button. Buttons never take focus, so pressing one first ends typing in a text field (<see cref="EndTyping"/>):
+    /// a half-typed SpinBox value is applied before the handler reads it, and game hotkeys work again afterwards.
+    /// </summary>
     public static Button Button(string text, Action onPressed, UiTheme.ButtonKind kind = UiTheme.ButtonKind.Normal, string? tooltip = null)
     {
         var b = new Button
@@ -76,7 +80,11 @@ internal static class UiKit
             TooltipText = tooltip ?? "",
         };
         UiTheme.Style(b, kind);
-        b.Pressed += Safe("button:" + text, onPressed);
+        b.Pressed += Safe("button:" + text, () =>
+        {
+            EndTyping();
+            onPressed();
+        });
         return b;
     }
 
@@ -92,7 +100,11 @@ internal static class UiKit
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             AutowrapMode = TextServer.AutowrapMode.WordSmart,
         };
-        var handler = Safe("switch:" + text, onToggled);
+        var handler = Safe<bool>("switch:" + text, on =>
+        {
+            EndTyping();
+            onToggled(on);
+        });
         c.Toggled += on => handler(on);
         return c;
     }
@@ -108,8 +120,14 @@ internal static class UiKit
             ClipText = true,
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
         };
-        var handler = Safe<long>("options:" + where, index => onSelected(o.GetItemId((int)index)));
+        var handler = Safe<long>("options:" + where, index =>
+        {
+            EndTyping();
+            onSelected(o.GetItemId((int)index));
+        });
         o.ItemSelected += index => handler(index);
+        // An OptionButton emits Pressed when its list opens (action mode "press"): stop typing before the list shows.
+        o.Pressed += () => Guard("options.open:" + where, EndTyping);
         return o;
     }
 
@@ -188,6 +206,10 @@ internal static class UiKit
         return s;
     }
 
+    /// <summary>
+    /// A number field. Typed values apply on Enter or focus loss only, so a value typed and then followed by a click on
+    /// a (non-focusing) button would be lost: buttons call <see cref="EndTyping"/> and readers call <see cref="ApplySpin"/>.
+    /// </summary>
     public static SpinBox Spin(double min, double max, double step, Action<double> onChanged, string where, double arrowStep = 0)
     {
         var s = new SpinBox
@@ -368,6 +390,71 @@ internal static class UiKit
                     if (GodotObject.IsInstanceValid(line) && line.HasFocus() && !line.IsEditing()) line.ReleaseFocus();
                 }));
             };
+        }
+    }
+
+    private static bool _applying;
+
+    /// <summary>
+    /// Applies the text typed into <paramref name="spin"/> (Godot only applies it on Enter / focus loss) when its field
+    /// has focus. Emits ValueChanged when the value changes; never re-entered from that handler.
+    /// </summary>
+    public static void ApplySpin(SpinBox? spin)
+    {
+        if (_applying || spin == null || !SceneUtil.Valid(spin)) return;
+        LineEdit line;
+        try { line = spin.GetLineEdit(); }
+        catch (Exception) { return; }
+        if (line == null || !GodotObject.IsInstanceValid(line) || !line.HasFocus()) return;
+        _applying = true;
+        try { spin.Apply(); }
+        catch (Exception ex) { ThrottledLog.Warn("ui.spin.apply", "UI: applying a typed number failed: " + ex.Message); }
+        finally { _applying = false; }
+    }
+
+    /// <summary>
+    /// Ends typing in the overlay: applies a half-typed SpinBox value, then releases the focused text field so game
+    /// hotkeys reach the game again. Called before every button / switch / option handler, on clicks anywhere but the
+    /// focused field, and when the panel hides.
+    /// </summary>
+    public static void EndTyping()
+    {
+        var c = TypingControl;
+        if (c == null) return;
+        if (!GodotObject.IsInstanceValid(c))
+        {
+            TypingControl = null;
+            return;
+        }
+        if (!c.HasFocus()) return;
+        if (c.GetParent() is SpinBox spin) ApplySpin(spin);
+        if (GodotObject.IsInstanceValid(c) && c.HasFocus()) c.ReleaseFocus();
+    }
+
+    /// <summary>Whether <paramref name="point"/> (canvas coordinates) is over the focused text field (a SpinBox's arrows included).</summary>
+    public static bool IsOverTypingControl(Vector2 point)
+    {
+        var c = TypingControl;
+        if (c == null || !GodotObject.IsInstanceValid(c)) return false;
+        Control area = c.GetParent() is SpinBox spin ? spin : c;
+        return area.GetGlobalRect().HasPoint(point);
+    }
+
+    /// <summary>True while the focused text field shows its right-click menu (a click on the menu must not end typing).</summary>
+    public static bool TypingMenuOpen
+    {
+        get
+        {
+            try
+            {
+                return TypingControl switch
+                {
+                    LineEdit l when GodotObject.IsInstanceValid(l) => l.IsMenuVisible(),
+                    TextEdit t when GodotObject.IsInstanceValid(t) => t.IsMenuVisible(),
+                    _ => false,
+                };
+            }
+            catch (Exception) { return false; }
         }
     }
 

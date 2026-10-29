@@ -18,8 +18,11 @@ internal abstract class Page
 
     protected VBoxContainer Body { get; private set; } = null!;
 
-    /// <summary>Whether the page shows live game state (the overlay then keeps the snapshot reasonably fresh).</summary>
-    public virtual bool WantsSnapshot => true;
+    /// <summary>
+    /// How often (ms) the page wants a fresh snapshot while it is visible; 0 = it shows no game state. The overlay
+    /// stretches this while the pilot is off or paused, and never captures while the panel is hidden.
+    /// </summary>
+    public virtual ulong SnapshotIntervalMs => 500;
 
     public void Build()
     {
@@ -70,7 +73,8 @@ internal abstract class Page
 
     protected static PilotSettings Draft => SettingsDraft.Value;
 
-    protected static void Edit(Action<PilotSettings> change, bool now = false) => SettingsDraft.Edit(change, now);
+    /// <summary>Edits the settings draft; false when the edit or (with <paramref name="now"/>) its save failed.</summary>
+    protected static bool Edit(Action<PilotSettings> change, bool now = false) => SettingsDraft.Edit(change, now);
 
     protected static GameSnapshot? Snap => PilotRuntime.Bridge?.Latest;
 }

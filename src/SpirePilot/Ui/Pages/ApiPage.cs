@@ -47,7 +47,7 @@ internal sealed class ApiPage : Page
     private string _effortCustom = "", _combatEffortCustom = "";
 
     public override string TitleKey => "ui.tab.api";
-    public override bool WantsSnapshot => false;
+    public override ulong SnapshotIntervalMs => 0;
 
     protected override void BuildContent()
     {
@@ -269,6 +269,13 @@ internal sealed class ApiPage : Page
     /// <summary>Profile from the editor fields; <paramref name="errors"/> lists fields that cannot be parsed.</summary>
     private LlmProfile BuildProfile(out List<string> errors)
     {
+        // A number still being typed is only applied on Enter / focus loss: take it now, so Save and Test use what
+        // the user sees (applying it re-enters through OnFieldChanged, which ApplySpin guards against).
+        if (!UiKit.Syncing && !_loading)
+        {
+            UiKit.ApplySpin(_maxTokens);
+            UiKit.ApplySpin(_timeout);
+        }
         errors = new List<string>();
         var p = new LlmProfile
         {
@@ -349,7 +356,7 @@ internal sealed class ApiPage : Page
             return;
         }
         var name = _editName;
-        Edit(s =>
+        bool saved = Edit(s =>
         {
             int i = s.Profiles.FindIndex(x => x.Name == name);
             var copy = profile.Clone();
@@ -359,8 +366,11 @@ internal sealed class ApiPage : Page
         }, now: true);
         _dirty = false;
         Load(name);
-        UiKit.SetText(_testResult, L10n.T("ui.api.saved"));
-        UiKit.SetColor(_testResult, UiTheme.Good);
+        // A failed write still applies the profile for this session; say that it was not written to the file.
+        UiKit.SetText(_testResult, saved
+            ? L10n.T("ui.api.saved")
+            : L10n.T("ui.api.save_failed", SettingsDraft.SaveError ?? "?"));
+        UiKit.SetColor(_testResult, saved ? UiTheme.Good : UiTheme.Bad);
     }
 
     private void Test()
