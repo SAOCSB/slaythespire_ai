@@ -1,0 +1,25 @@
+Screen: Combat | Act 1 (Overgrowth) | Floor 7 | Ascension 2 | Boss: Ceremonial Beast | Co-op
+You: Yang (Ironclad) HP 62/80 Energy 3/3 Gold 143
+  Powers: Strength 1
+  Potions [2/3]: #0 Fire Potion [AnyEnemy] Deal 20 damage to target enemy.; #1 Block Potion [Self] Gain 12 Block.
+  Relics: Burning Blood (At the end of combat, heal 6 HP.); Vajra (At the start of each combat, gain 1 Strength.); Pen Nib (Every 10th Attack you play deals double damage.) [7]
+  Deck (12): Bash, Defend x4, Inflame, Pommel Strike+, Strike x5
+Teammate: Mika (Silent) [AI] HP 31/70 Block 5 Energy 1/3 Gold 99 Hand 4
+  Powers: Weak 1(debuff)
+  Potions [1/3]: #0 Weak Potion
+  Relics: Ring of the Snake
+Combat: round 2 (your turn) | Normal | Nibbits and Beetle
+Enemies:
+  e0 Nibbit HP 28/44 | Intent: Attack 12 → Yang | Vulnerable 1(debuff)
+  e1 Shrinker Beetle HP 19/38 Block 6 | Intent: Attack 4x2 → Mika + Debuff
+Threat: incoming 12, unblocked 12
+Hand (5):
+  h0 Strike [1] Attack, AnyEnemy, Basic: Deal 7 damage.
+  h1 Bash [2] Attack, AnyEnemy, Basic: Deal 10 damage. Apply 2 Vulnerable.
+  h2 Defend [1] Skill, Self, Basic: Gain 5 Block.
+  h3 Pommel Strike+ [1] Attack, AnyEnemy, Common: Deal 11 damage. Draw 2 cards.
+  h4 Wound [-] Status, Status {Unplayable} (unplayable: Unplayable): Unplayable.
+Piles: draw 4, discard 4, exhaust 0
+  Draw pile (unordered): Defend, Inflame, Strike x2
+  Discard pile: Defend x2, Strike x2
+Glossary: Block: Until next turn, prevents damage. | Strength: Increases attack damage by 1 per stack. | Vulnerable: Takes 50% more damage from Attacks. | Weak: Deals 25% less damage with Attacks.

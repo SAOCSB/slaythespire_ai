@@ -1,0 +1,707 @@
+{
+  "sequence": 9001,
+  "screen": "Shop",
+  "screenName": "Everything",
+  "inRun": true,
+  "isMultiplayer": false,
+  "localPlayerId": 1,
+  "canAct": false,
+  "waitReason": "animations running",
+  "run": {
+    "act": 2,
+    "actName": "",
+    "floor": 23,
+    "ascensionLevel": 0,
+    "isDaily": false
+  },
+  "players": [
+    {
+      "netId": 2,
+      "name": "Bo",
+      "characterId": "",
+      "characterName": "",
+      "isLocal": false,
+      "isAiControlled": false,
+      "hasTeamLink": false,
+      "isAlive": false,
+      "hp": 0,
+      "maxHp": 60,
+      "block": 0,
+      "gold": 5,
+      "energy": 0,
+      "maxEnergy": 0,
+      "orbSlots": 0,
+      "orbs": [],
+      "powers": [],
+      "potionSlots": 2,
+      "potions": [
+        {
+          "slot": 1,
+          "id": "FEAR_POTION",
+          "name": "Fear Potion",
+          "description": "Apply 3 Vulnerable.",
+          "target": "",
+          "rarity": "",
+          "usableNow": false
+        }
+      ],
+      "relics": [],
+      "deck": [],
+      "deckCount": 0,
+      "companions": [],
+      "endedTurn": true,
+      "handCount": 0
+    },
+    {
+      "netId": 1,
+      "name": "Ada",
+      "characterId": "DEFECT",
+      "characterName": "Defect",
+      "isLocal": true,
+      "isAiControlled": false,
+      "hasTeamLink": false,
+      "isAlive": true,
+      "hp": 12,
+      "maxHp": 75,
+      "block": 3,
+      "gold": 300,
+      "energy": 2,
+      "maxEnergy": 3,
+      "stars": 2,
+      "orbSlots": 3,
+      "orbs": [
+        {
+          "id": "LIGHTNING_ORB",
+          "name": "Lightning",
+          "description": "Passive: deal [blue]3[/blue] damage\n to a random enemy."
+        },
+        {
+          "id": "DARK_ORB",
+          "name": "Dark",
+          "description": ""
+        }
+      ],
+      "powers": [
+        {
+          "id": "POISON_POWER",
+          "name": "Poison",
+          "amount": 4,
+          "isDebuff": true,
+          "description": ""
+        },
+        {
+          "id": "DOOM_POWER",
+          "name": "Doom",
+          "amount": 20,
+          "isDebuff": true,
+          "description": ""
+        },
+        {
+          "id": "BARRICADE_POWER",
+          "name": "Barricade",
+          "amount": 0,
+          "isDebuff": false,
+          "description": ""
+        }
+      ],
+      "potionSlots": 2,
+      "potions": [],
+      "relics": [
+        {
+          "id": "CRACKED_CORE",
+          "name": "Cracked Core",
+          "description": "",
+          "counter": -1
+        },
+        {
+          "id": "NUNCHAKU",
+          "name": "Nunchaku",
+          "description": "Every 10 Attacks, gain 1 energy.",
+          "counter": 3
+        }
+      ],
+      "deck": [],
+      "deckCount": 30,
+      "companions": [
+        {
+          "key": "o0",
+          "id": "OSTY",
+          "name": "Osty",
+          "hp": 10,
+          "maxHp": 15,
+          "block": 2,
+          "isAlive": true,
+          "powers": [
+            {
+              "id": "THORNS_POWER",
+              "name": "Thorns",
+              "amount": 3,
+              "isDebuff": false,
+              "description": ""
+            }
+          ],
+          "intents": []
+        },
+        {
+          "key": "o1",
+          "id": "PET",
+          "name": "Pet",
+          "hp": 1,
+          "maxHp": 1,
+          "block": 0,
+          "isAlive": true,
+          "powers": [],
+          "intents": []
+        }
+      ],
+      "endedTurn": false
+    }
+  ],
+  "combat": {
+    "round": 5,
+    "isPlayerTurn": true,
+    "encounterType": "Elite",
+    "hand": [
+      {
+        "key": "h0",
+        "id": "TEMPEST",
+        "name": "Tempest",
+        "upgraded": true,
+        "cost": -1,
+        "type": "Skill",
+        "rarity": "Uncommon",
+        "target": "Self",
+        "description": "Channel X Lightning.",
+        "keywords": []
+      },
+      {
+        "key": "h1",
+        "id": "STARFALL",
+        "name": "Starfall+",
+        "upgraded": true,
+        "cost": 0,
+        "starCost": 2,
+        "type": "Attack",
+        "rarity": "Rare",
+        "target": "AllEnemies",
+        "description": "[gold][/gold]",
+        "keywords": [
+          "Exhaust",
+          "Retain"
+        ],
+        "playable": false
+      },
+      {
+        "key": "",
+        "id": "X",
+        "name": "Nameless",
+        "upgraded": false,
+        "cost": 3,
+        "type": "Curse",
+        "rarity": "",
+        "target": "",
+        "description": "",
+        "keywords": []
+      }
+    ],
+    "drawPileCount": 1,
+    "discardPileCount": 2,
+    "exhaustPileCount": 1,
+    "drawPile": [
+      {
+        "key": "",
+        "id": "ZAP",
+        "name": "Zap",
+        "upgraded": false,
+        "cost": 1,
+        "type": "Skill",
+        "rarity": "Basic",
+        "target": "Self",
+        "description": "",
+        "keywords": []
+      }
+    ],
+    "discardPile": [
+      {
+        "key": "",
+        "id": "ZAP",
+        "name": "Zap",
+        "upgraded": true,
+        "cost": 1,
+        "type": "Skill",
+        "rarity": "Basic",
+        "target": "Self",
+        "description": "",
+        "keywords": []
+      },
+      {
+        "key": "",
+        "id": "ZAP",
+        "name": "Zap+",
+        "upgraded": true,
+        "cost": 1,
+        "type": "Skill",
+        "rarity": "Basic",
+        "target": "Self",
+        "description": "",
+        "keywords": []
+      }
+    ],
+    "exhaustPile": [
+      {
+        "key": "",
+        "id": "DUALCAST",
+        "name": "Dualcast",
+        "upgraded": false,
+        "cost": 1,
+        "type": "Skill",
+        "rarity": "Basic",
+        "target": "Self",
+        "description": "",
+        "keywords": []
+      }
+    ],
+    "enemies": [
+      {
+        "key": "e0",
+        "id": "SENTRY",
+        "name": "Sentry",
+        "hp": 30,
+        "maxHp": 40,
+        "block": 0,
+        "isAlive": true,
+        "powers": [],
+        "intents": [
+          {
+            "type": "Attack",
+            "damage": 5,
+            "hits": 3
+          },
+          {
+            "type": "Attack",
+            "damage": 99,
+            "targetName": "Bo"
+          },
+          {
+            "type": "Attack",
+            "damage": 2,
+            "targetName": "ada"
+          }
+        ]
+      },
+      {
+        "key": "e1",
+        "id": "SENTRY",
+        "name": "Sentry",
+        "hp": 1,
+        "maxHp": 40,
+        "block": 0,
+        "isAlive": true,
+        "powers": [],
+        "intents": [
+          {
+            "type": "Sleep"
+          }
+        ]
+      }
+    ]
+  },
+  "map": {
+    "nodes": [
+      {
+        "key": "0,0",
+        "col": 0,
+        "row": 0,
+        "type": "Ancient",
+        "typeName": "Ancient",
+        "children": [
+          "0,1"
+        ],
+        "visited": false
+      },
+      {
+        "key": "0,1",
+        "col": 0,
+        "row": 1,
+        "type": "Unknown",
+        "typeName": "Unknown",
+        "children": [],
+        "visited": false
+      }
+    ],
+    "reachable": [
+      "0,0",
+      "9,9"
+    ],
+    "rows": 2,
+    "teammateVotes": {}
+  },
+  "rewards": {
+    "items": [
+      {
+        "index": 0,
+        "kind": "Gold",
+        "description": "25 [gold]Gold[/gold]",
+        "amount": 25
+      },
+      {
+        "index": 1,
+        "kind": "Potion",
+        "description": "Swift Potion"
+      }
+    ],
+    "cardChoices": [
+      {
+        "key": "r0",
+        "id": "BALL_LIGHTNING",
+        "name": "Ball Lightning",
+        "upgraded": false,
+        "cost": 1,
+        "type": "Attack",
+        "rarity": "Common",
+        "target": "AnyEnemy",
+        "description": "Deal 7 damage. Channel 1 Lightning.",
+        "keywords": []
+      }
+    ],
+    "canSkipCards": true
+  },
+  "shop": {
+    "items": [
+      {
+        "index": 0,
+        "kind": "Card",
+        "name": "Ball Lightning",
+        "description": "Deal 7 damage.",
+        "price": 37,
+        "onSale": true,
+        "affordable": true
+      },
+      {
+        "index": 1,
+        "kind": "Relic",
+        "name": "Anchor",
+        "description": "Start each combat with 10 Block.",
+        "price": 350,
+        "onSale": false,
+        "affordable": false
+      },
+      {
+        "index": 2,
+        "kind": "Potion",
+        "name": "Fear Potion",
+        "description": "",
+        "price": 50,
+        "onSale": false,
+        "affordable": true
+      }
+    ],
+    "removalPrice": 75,
+    "removalAvailable": false
+  },
+  "event": {
+    "id": "BIG_FISH",
+    "title": "Big Fish",
+    "body": "A man offers you food.  Pick one [or not\nat all",
+    "options": [
+      {
+        "index": 0,
+        "text": "[Banana] Heal 1/3 of your max HP",
+        "locked": false
+      },
+      {
+        "index": 1,
+        "text": "[Donut]",
+        "description": "Max HP +5",
+        "locked": false
+      },
+      {
+        "index": 2,
+        "text": "Box",
+        "description": "Receive a relic. Become [purple]Cursed[/purple].",
+        "locked": true
+      }
+    ]
+  },
+  "restSite": {
+    "options": [
+      {
+        "index": 0,
+        "id": "REST",
+        "name": "Rest",
+        "description": "Heal 30% of your max HP.",
+        "enabled": true
+      },
+      {
+        "index": 1,
+        "id": "SMITH",
+        "name": "Smith",
+        "description": "Upgrade a card.",
+        "enabled": false
+      }
+    ]
+  },
+  "selection": {
+    "purpose": "Upgrade",
+    "prompt": "Choose up to 2 cards to [gold]upgrade[/gold].",
+    "minSelect": 0,
+    "maxSelect": 2,
+    "candidates": [
+      {
+        "key": "c0",
+        "id": "ZAP",
+        "name": "Zap",
+        "upgraded": false,
+        "cost": 1,
+        "type": "Skill",
+        "rarity": "Basic",
+        "target": "Self",
+        "description": "Channel 1 Lightning.",
+        "keywords": []
+      },
+      {
+        "key": "c1",
+        "id": "DUALCAST",
+        "name": "Dualcast",
+        "upgraded": false,
+        "cost": 1,
+        "type": "Skill",
+        "rarity": "Basic",
+        "target": "None",
+        "description": "Evoke your next Orb twice.",
+        "keywords": []
+      }
+    ],
+    "otherOptions": [
+      "[Skip] Take nothing"
+    ],
+    "selectedKeys": [
+      "c0",
+      "c1"
+    ],
+    "canConfirm": true,
+    "canCancel": true
+  },
+  "characterSelect": {
+    "characters": [
+      {
+        "id": "IRONCLAD",
+        "name": "Ironclad",
+        "locked": false,
+        "selected": true
+      },
+      {
+        "id": "SILENT",
+        "name": "Silent",
+        "locked": false,
+        "selected": false
+      },
+      {
+        "id": "REGENT",
+        "name": "Regent",
+        "locked": true,
+        "selected": false
+      }
+    ],
+    "ascension": 3,
+    "maxAscension": 5,
+    "lobbyPicks": {
+      "Mika": "SILENT",
+      "Bo": "REGENT"
+    },
+    "localReady": false
+  },
+  "gameOver": {
+    "victory": false,
+    "floorReached": 23
+  },
+  "actions": [
+    {
+      "id": "a0",
+      "kind": "Proceed",
+      "label": "Proceed / leave",
+      "args": {},
+      "semanticKey": "proceed",
+      "unpredictable": false
+    }
+  ],
+  "notes": [
+    "Popup: [red]Are you sure?[/red]",
+    "Unsupported   screen\thint"
+  ],
+  "glossary": {
+    "Zap": "About [gold]Zap[/gold].",
+    "block": "About [gold]block[/gold].",
+    "Block": "About [gold]Block[/gold].",
+    "Ågility": "About [gold]Ågility[/gold].",
+    "äther": "About [gold]äther[/gold].",
+    "Artifact": "About [gold]Artifact[/gold].",
+    "artifact": "About [gold]artifact[/gold].",
+    "Channel": "About [gold]Channel[/gold].",
+    "Dark": "About [gold]Dark[/gold].",
+    "Dexterity": "About [gold]Dexterity[/gold].",
+    "Evoke": "About [gold]Evoke[/gold].",
+    "Exhaust": "About [gold]Exhaust[/gold].",
+    "Focus": "About [gold]Focus[/gold].",
+    "Frail": "About [gold]Frail[/gold].",
+    "Innate": "About [gold]Innate[/gold].",
+    "Intangible": "About [gold]Intangible[/gold].",
+    "Lightning": "About [gold]Lightning[/gold].",
+    "Plated Armor": "About [gold]Plated Armor[/gold].",
+    "Poison": "About [gold]Poison[/gold].",
+    "Retain": "About [gold]Retain[/gold].",
+    "Ritual": "About [gold]Ritual[/gold].",
+    "Scry": "About [gold]Scry[/gold].",
+    "Strength": "About [gold]Strength[/gold].",
+    "Thorns": "About [gold]Thorns[/gold].",
+    "Vigor": "About [gold]Vigor[/gold].",
+    "Vulnerable": "About [gold]Vulnerable[/gold].",
+    "Weak": "About [gold]Weak[/gold].",
+    "X": "About [gold]X[/gold].",
+    "Ethereal": "About [gold]Ethereal[/gold].",
+    "Doom": "About [gold]Doom[/gold]."
+  },
+  "localPlayer": {
+    "netId": 1,
+    "name": "Ada",
+    "characterId": "DEFECT",
+    "characterName": "Defect",
+    "isLocal": true,
+    "isAiControlled": false,
+    "hasTeamLink": false,
+    "isAlive": true,
+    "hp": 12,
+    "maxHp": 75,
+    "block": 3,
+    "gold": 300,
+    "energy": 2,
+    "maxEnergy": 3,
+    "stars": 2,
+    "orbSlots": 3,
+    "orbs": [
+      {
+        "id": "LIGHTNING_ORB",
+        "name": "Lightning",
+        "description": "Passive: deal [blue]3[/blue] damage\n to a random enemy."
+      },
+      {
+        "id": "DARK_ORB",
+        "name": "Dark",
+        "description": ""
+      }
+    ],
+    "powers": [
+      {
+        "id": "POISON_POWER",
+        "name": "Poison",
+        "amount": 4,
+        "isDebuff": true,
+        "description": ""
+      },
+      {
+        "id": "DOOM_POWER",
+        "name": "Doom",
+        "amount": 20,
+        "isDebuff": true,
+        "description": ""
+      },
+      {
+        "id": "BARRICADE_POWER",
+        "name": "Barricade",
+        "amount": 0,
+        "isDebuff": false,
+        "description": ""
+      }
+    ],
+    "potionSlots": 2,
+    "potions": [],
+    "relics": [
+      {
+        "id": "CRACKED_CORE",
+        "name": "Cracked Core",
+        "description": "",
+        "counter": -1
+      },
+      {
+        "id": "NUNCHAKU",
+        "name": "Nunchaku",
+        "description": "Every 10 Attacks, gain 1 energy.",
+        "counter": 3
+      }
+    ],
+    "deck": [],
+    "deckCount": 30,
+    "companions": [
+      {
+        "key": "o0",
+        "id": "OSTY",
+        "name": "Osty",
+        "hp": 10,
+        "maxHp": 15,
+        "block": 2,
+        "isAlive": true,
+        "powers": [
+          {
+            "id": "THORNS_POWER",
+            "name": "Thorns",
+            "amount": 3,
+            "isDebuff": false,
+            "description": ""
+          }
+        ],
+        "intents": []
+      },
+      {
+        "key": "o1",
+        "id": "PET",
+        "name": "Pet",
+        "hp": 1,
+        "maxHp": 1,
+        "block": 0,
+        "isAlive": true,
+        "powers": [],
+        "intents": []
+      }
+    ],
+    "endedTurn": false
+  },
+  "teammates": [
+    {
+      "netId": 2,
+      "name": "Bo",
+      "characterId": "",
+      "characterName": "",
+      "isLocal": false,
+      "isAiControlled": false,
+      "hasTeamLink": false,
+      "isAlive": false,
+      "hp": 0,
+      "maxHp": 60,
+      "block": 0,
+      "gold": 5,
+      "energy": 0,
+      "maxEnergy": 0,
+      "orbSlots": 0,
+      "orbs": [],
+      "powers": [],
+      "potionSlots": 2,
+      "potions": [
+        {
+          "slot": 1,
+          "id": "FEAR_POTION",
+          "name": "Fear Potion",
+          "description": "Apply 3 Vulnerable.",
+          "target": "",
+          "rarity": "",
+          "usableNow": false
+        }
+      ],
+      "relics": [],
+      "deck": [],
+      "deckCount": 0,
+      "companions": [],
+      "endedTurn": true,
+      "handCount": 0
+    }
+  ]
+}
