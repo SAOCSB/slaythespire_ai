@@ -101,6 +101,9 @@ either (`-p:Sts2GameVersion=0.107|0.111`), with `#if STS2_V0107` / `#if STS2_V01
   `undo_end_turn`, `cardreward:reroll`, `cardreward:alt:<id>`, `deselect:<CARD_ID>[+n]`, `cancel:preview`,
   `choose:<RELIC_ID>`, `choose:bundle:<ids>`, `map:close`, `event:dialogue:<line>`; companion targets
   `O:<MONSTER_ID>@o<slot>`; duplicate otherwise-identical options get a `#n` suffix.
+  Card keys (`play:`, `select:`, `deselect:`) carry variant suffixes when a copy differs from the plain card:
+  `~c<cost>`, `~s<stars>`, `~<ENCHANT><amount>`, `~<AFFLICTION>[amount]`, `~retain`, `~sly`, `~+kw` / `~-kw`, and
+  `~v<hash>` for base values that grew during the fight (never the description, whose numbers follow Strength).
   Two actions with the same key must be interchangeable (identical cards).
 - `unpredictable: true` for anything whose outcome cannot be foreseen (draw / random / choices / screen changes).
 - Executors: re-check `GodotObject.IsInstanceValid` for every node they captured, perform the action through the

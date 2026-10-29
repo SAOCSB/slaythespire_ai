@@ -516,7 +516,8 @@ public sealed class PilotLoop : IDisposable
     /// <summary>Which screens the current mode lets the AI handle.</summary>
     public static bool ModeAllows(PilotMode mode, GameSnapshot s)
     {
-        bool combatDecision = s.Screen is ScreenKind.Combat or ScreenKind.HandSelect ||
+        // A finished combat room (only its Proceed button left) is out of combat: no fight is running.
+        bool combatDecision = s.Screen is ScreenKind.Combat && s.Combat != null || s.Screen is ScreenKind.HandSelect ||
                               s.Combat != null && s.Screen is ScreenKind.ChooseOne or ScreenKind.CardGridSelect or ScreenKind.Popup;
         return mode switch
         {
