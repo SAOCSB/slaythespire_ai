@@ -1,0 +1,63 @@
+{
+  "id": "defect-evoke-lethal",
+  "rationale": "Only Dualcast kills: evoking Lightning twice deals 8+8=16 to the last enemy (16 HP). Strike + passives is 12, Zap + passives 9, and Defend leaves 3 HP.",
+  "tags": ["combat", "orbs", "lethal", "survival", "defect", "en"],
+  "language": "en",
+  "expect_any": ["play:DUALCAST+0@-"],
+  "forbid": ["end_turn"],
+  "snapshot": {
+    "sequence": 2780,
+    "screen": "Combat",
+    "inRun": true,
+    "isMultiplayer": false,
+    "localPlayerId": 1,
+    "canAct": true,
+    "run": { "act": 1, "actName": "Overgrowth", "floor": 9, "ascensionLevel": 2, "bossName": "The Kin" },
+    "players": [
+      {
+        "netId": 1, "name": "Ann", "characterId": "DEFECT", "characterName": "Defect", "isLocal": true,
+        "hp": 13, "maxHp": 75, "block": 0, "gold": 119, "energy": 1, "maxEnergy": 3,
+        "orbSlots": 3,
+        "orbs": [
+          { "id": "LIGHTNING_ORB", "name": "Lightning", "description": "Passive: at the end of your turn, deal 3 damage to a random enemy. Evoke: deal 8 damage to a random enemy." },
+          { "id": "LIGHTNING_ORB", "name": "Lightning", "description": "Passive: at the end of your turn, deal 3 damage to a random enemy. Evoke: deal 8 damage to a random enemy." }
+        ],
+        "potionSlots": 3, "potions": [],
+        "relics": [ { "id": "CRACKED_CORE", "name": "Cracked Core", "description": "At the start of each combat, Channel 1 Lightning." } ],
+        "deckCount": 14
+      }
+    ],
+    "combat": {
+      "round": 3,
+      "isPlayerTurn": true,
+      "encounterType": "Normal",
+      "encounterName": "Sludge Spinner",
+      "hand": [
+        { "key": "h0", "id": "STRIKE_DEFECT", "name": "Strike", "cost": 1, "type": "Attack", "rarity": "Basic", "target": "AnyEnemy", "description": "Deal 6 damage.", "playable": true },
+        { "key": "h1", "id": "ZAP", "name": "Zap", "cost": 1, "type": "Skill", "rarity": "Basic", "target": "Self", "description": "Channel 1 Lightning.", "keywords": ["Channel"], "playable": true },
+        { "key": "h2", "id": "DUALCAST", "name": "Dualcast", "cost": 1, "type": "Skill", "rarity": "Basic", "target": "Self", "description": "Evoke your next Orb twice.", "keywords": ["Evoke"], "playable": true },
+        { "key": "h3", "id": "DEFEND_DEFECT", "name": "Defend", "cost": 1, "type": "Skill", "rarity": "Basic", "target": "Self", "description": "Gain 5 Block.", "playable": true }
+      ],
+      "drawPileCount": 3,
+      "discardPileCount": 7,
+      "exhaustPileCount": 0,
+      "enemies": [
+        {
+          "key": "e0", "id": "SLUDGE_SPINNER", "name": "Sludge Spinner", "hp": 16, "maxHp": 40, "block": 0,
+          "intents": [ { "type": "Attack", "damage": 15, "hits": 1 } ]
+        }
+      ]
+    },
+    "actions": [
+      { "id": "a0", "kind": "PlayCard", "label": "Play Strike → Sludge Spinner (6 dmg)", "semanticKey": "play:STRIKE_DEFECT+0@E:SLUDGE_SPINNER#0", "args": { "index": "0", "target": "e0" } },
+      { "id": "a1", "kind": "PlayCard", "label": "Play Zap (channel Lightning)", "semanticKey": "play:ZAP+0@-", "args": { "index": "1" } },
+      { "id": "a2", "kind": "PlayCard", "label": "Play Dualcast (evoke Lightning twice: 8+8 dmg)", "semanticKey": "play:DUALCAST+0@-", "args": { "index": "2" } },
+      { "id": "a3", "kind": "PlayCard", "label": "Play Defend (5 block)", "semanticKey": "play:DEFEND_DEFECT+0@-", "args": { "index": "3" } },
+      { "id": "a4", "kind": "EndTurn", "label": "End turn", "semanticKey": "end_turn" }
+    ],
+    "glossary": {
+      "Channel": "Put an Orb into your next empty slot. If none are empty, Evoke your oldest Orb first.",
+      "Evoke": "Use up an Orb's evoke effect and remove it."
+    }
+  }
+}

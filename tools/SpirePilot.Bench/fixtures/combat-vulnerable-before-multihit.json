@@ -1,0 +1,61 @@
+{
+  "id": "combat-vulnerable-before-multihit",
+  "rationale": "No attack incoming; Bash first makes both Twin Strike hits deal 10 (30 total) instead of 7 (24 total), and Defend is wasted on a Buff turn.",
+  "tags": ["combat", "sequencing", "vulnerable", "elite", "ironclad", "en"],
+  "language": "en",
+  "expect_any": ["play:BASH+0@E:BYRDONIS#0"],
+  "forbid": ["play:TWIN_STRIKE+0@E:BYRDONIS#0", "play:DEFEND_IRONCLAD+0@-", "end_turn"],
+  "snapshot": {
+    "sequence": 905,
+    "screen": "Combat",
+    "inRun": true,
+    "isMultiplayer": false,
+    "localPlayerId": 1,
+    "canAct": true,
+    "run": { "act": 1, "actName": "Overgrowth", "floor": 10, "ascensionLevel": 3, "bossName": "Vantom" },
+    "players": [
+      {
+        "netId": 1, "name": "Ann", "characterId": "IRONCLAD", "characterName": "Ironclad", "isLocal": true,
+        "hp": 52, "maxHp": 80, "block": 0, "gold": 205, "energy": 3, "maxEnergy": 3,
+        "powers": [ { "id": "STRENGTH_POWER", "name": "Strength", "amount": 2, "description": "Increases attack damage by 2." } ],
+        "potionSlots": 3, "potions": [],
+        "relics": [ { "id": "BURNING_BLOOD", "name": "Burning Blood", "description": "At the end of combat, heal 6 HP." } ],
+        "deckCount": 15
+      }
+    ],
+    "combat": {
+      "round": 2,
+      "isPlayerTurn": true,
+      "encounterType": "Elite",
+      "encounterName": "Byrdonis",
+      "hand": [
+        { "key": "h0", "id": "TWIN_STRIKE", "name": "Twin Strike", "cost": 1, "type": "Attack", "rarity": "Common", "target": "AnyEnemy", "description": "Deal 7 damage twice.", "playable": true },
+        { "key": "h1", "id": "STRIKE_IRONCLAD", "name": "Strike", "cost": 1, "type": "Attack", "rarity": "Basic", "target": "AnyEnemy", "description": "Deal 8 damage.", "playable": true },
+        { "key": "h2", "id": "DEFEND_IRONCLAD", "name": "Defend", "cost": 1, "type": "Skill", "rarity": "Basic", "target": "Self", "description": "Gain 5 Block.", "playable": true },
+        { "key": "h3", "id": "BASH", "name": "Bash", "cost": 2, "type": "Attack", "rarity": "Basic", "target": "AnyEnemy", "description": "Deal 10 damage. Apply 2 Vulnerable.", "keywords": ["Vulnerable"], "playable": true },
+        { "key": "h4", "id": "DEFEND_IRONCLAD", "name": "Defend", "cost": 1, "type": "Skill", "rarity": "Basic", "target": "Self", "description": "Gain 5 Block.", "playable": true }
+      ],
+      "drawPileCount": 5,
+      "discardPileCount": 5,
+      "exhaustPileCount": 0,
+      "enemies": [
+        {
+          "key": "e0", "id": "BYRDONIS", "name": "Byrdonis", "hp": 64, "maxHp": 82, "block": 0,
+          "intents": [ { "type": "Buff", "description": "Gains Strength." } ],
+          "powers": []
+        }
+      ]
+    },
+    "actions": [
+      { "id": "a0", "kind": "PlayCard", "label": "Play Twin Strike → Byrdonis (7×2 dmg)", "semanticKey": "play:TWIN_STRIKE+0@E:BYRDONIS#0", "args": { "index": "0", "target": "e0" } },
+      { "id": "a1", "kind": "PlayCard", "label": "Play Strike → Byrdonis (8 dmg)", "semanticKey": "play:STRIKE_IRONCLAD+0@E:BYRDONIS#0", "args": { "index": "1", "target": "e0" } },
+      { "id": "a2", "kind": "PlayCard", "label": "Play Defend (5 block)", "semanticKey": "play:DEFEND_IRONCLAD+0@-", "args": { "index": "2" } },
+      { "id": "a3", "kind": "PlayCard", "label": "Play Bash → Byrdonis (10 dmg, +2 Vulnerable)", "semanticKey": "play:BASH+0@E:BYRDONIS#0", "args": { "index": "3", "target": "e0" } },
+      { "id": "a4", "kind": "EndTurn", "label": "End turn", "semanticKey": "end_turn" }
+    ],
+    "glossary": {
+      "Vulnerable": "Vulnerable creatures take 50% more damage from Attacks.",
+      "Strength": "Increases damage dealt by Attacks."
+    }
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "id": "combat-kill-attacker-over-block",
+  "rationale": "Killing the 6-HP 小啃怪 removes 11 incoming damage (take 7) while Defend only blocks 5 (take 13), and a dead attacker stays dead next turn.",
+  "tags": ["combat", "kill", "ironclad", "zh"],
+  "language": "zh",
+  "expect_any": ["play:STRIKE_IRONCLAD+0@E:NIBBIT#0"],
+  "forbid": ["play:DEFEND_IRONCLAD+0@-", "play:STRIKE_IRONCLAD+0@E:SHRINKER_BEETLE#0", "end_turn"],
+  "snapshot": {
+    "sequence": 702,
+    "screen": "Combat",
+    "inRun": true,
+    "isMultiplayer": false,
+    "localPlayerId": 1,
+    "canAct": true,
+    "run": { "act": 1, "actName": "密林", "floor": 8, "ascensionLevel": 2, "bossName": "仪式兽" },
+    "players": [
+      {
+        "netId": 1, "name": "阿杰", "characterId": "IRONCLAD", "characterName": "铁甲战士", "isLocal": true,
+        "hp": 20, "maxHp": 80, "block": 0, "gold": 98, "energy": 1, "maxEnergy": 3,
+        "potionSlots": 3, "potions": [],
+        "relics": [ { "id": "BURNING_BLOOD", "name": "燃烧之血", "description": "战斗结束时，回复 6 点生命。" } ],
+        "deckCount": 14
+      }
+    ],
+    "combat": {
+      "round": 2,
+      "isPlayerTurn": true,
+      "encounterType": "Normal",
+      "encounterName": "小啃怪与缩小甲虫",
+      "hand": [
+        { "key": "h0", "id": "DEFEND_IRONCLAD", "name": "防御", "cost": 1, "type": "Skill", "rarity": "Basic", "target": "Self", "description": "获得 5 点格挡。", "playable": true },
+        { "key": "h1", "id": "STRIKE_IRONCLAD", "name": "打击", "cost": 1, "type": "Attack", "rarity": "Basic", "target": "AnyEnemy", "description": "造成 6 点伤害。", "playable": true },
+        { "key": "h2", "id": "BASH", "name": "痛击", "cost": 2, "type": "Attack", "rarity": "Basic", "target": "AnyEnemy", "description": "造成 8 点伤害。给予 2 层易伤。", "playable": false, "unplayableReason": "能量不足" }
+      ],
+      "drawPileCount": 3,
+      "discardPileCount": 8,
+      "exhaustPileCount": 0,
+      "enemies": [
+        {
+          "key": "e0", "id": "SHRINKER_BEETLE", "name": "缩小甲虫", "hp": 38, "maxHp": 38, "block": 0,
+          "intents": [ { "type": "Attack", "damage": 7, "hits": 1 } ]
+        },
+        {
+          "key": "e1", "id": "NIBBIT", "name": "小啃怪", "hp": 6, "maxHp": 44, "block": 0,
+          "intents": [ { "type": "Attack", "damage": 11, "hits": 1 } ]
+        }
+      ]
+    },
+    "actions": [
+      { "id": "a0", "kind": "PlayCard", "label": "打出 防御 (5 格挡)", "semanticKey": "play:DEFEND_IRONCLAD+0@-", "args": { "index": "0" } },
+      { "id": "a1", "kind": "PlayCard", "label": "打出 打击 → 缩小甲虫 (6 伤害)", "semanticKey": "play:STRIKE_IRONCLAD+0@E:SHRINKER_BEETLE#0", "args": { "index": "1", "target": "e0" } },
+      { "id": "a2", "kind": "PlayCard", "label": "打出 打击 → 小啃怪 (6 伤害)", "semanticKey": "play:STRIKE_IRONCLAD+0@E:NIBBIT#0", "args": { "index": "1", "target": "e1" } },
+      { "id": "a3", "kind": "EndTurn", "label": "结束回合", "semanticKey": "end_turn" }
+    ]
+  }
+}

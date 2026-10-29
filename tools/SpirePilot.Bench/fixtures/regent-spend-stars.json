@@ -1,0 +1,60 @@
+{
+  "id": "regent-spend-stars",
+  "rationale": "Astral Pulse costs 0 energy and 3 of our 4 Stars and deals 13 to ALL enemies (12 and 13 HP): it ends the fight now; hoarding Stars with Venerate wastes the turn.",
+  "tags": ["combat", "stars", "lethal", "aoe", "regent", "en"],
+  "language": "en",
+  "expect_any": ["play:ASTRAL_PULSE+0@-"],
+  "forbid": ["play:VENERATE+0@-", "end_turn"],
+  "snapshot": {
+    "sequence": 1174,
+    "screen": "Combat",
+    "inRun": true,
+    "isMultiplayer": false,
+    "localPlayerId": 1,
+    "canAct": true,
+    "run": { "act": 1, "actName": "Overgrowth", "floor": 6, "ascensionLevel": 0, "bossName": "Vantom" },
+    "players": [
+      {
+        "netId": 1, "name": "Kai", "characterId": "REGENT", "characterName": "Regent", "isLocal": true,
+        "hp": 30, "maxHp": 75, "block": 0, "gold": 102, "energy": 1, "maxEnergy": 3, "stars": 4,
+        "potionSlots": 3, "potions": [],
+        "relics": [ { "id": "DIVINE_RIGHT", "name": "Divine Right", "description": "Whenever you enter a room, gain 3 Stars." } ],
+        "deckCount": 13
+      }
+    ],
+    "combat": {
+      "round": 2,
+      "isPlayerTurn": true,
+      "encounterType": "Normal",
+      "encounterName": "Toadpole + Seapunk",
+      "hand": [
+        { "key": "h0", "id": "VENERATE", "name": "Venerate", "cost": 1, "type": "Skill", "rarity": "Basic", "target": "Self", "description": "Gain 2 Stars.", "playable": true },
+        { "key": "h1", "id": "STRIKE_REGENT", "name": "Strike", "cost": 1, "type": "Attack", "rarity": "Basic", "target": "AnyEnemy", "description": "Deal 6 damage.", "playable": true },
+        { "key": "h2", "id": "ASTRAL_PULSE", "name": "Astral Pulse", "cost": 0, "starCost": 3, "type": "Attack", "rarity": "Common", "target": "AllEnemies", "description": "Deal 13 damage to ALL enemies.", "playable": true },
+        { "key": "h3", "id": "DEFEND_REGENT", "name": "Defend", "cost": 1, "type": "Skill", "rarity": "Basic", "target": "Self", "description": "Gain 5 Block.", "playable": true }
+      ],
+      "drawPileCount": 5,
+      "discardPileCount": 4,
+      "exhaustPileCount": 0,
+      "enemies": [
+        {
+          "key": "e0", "id": "TOADPOLE", "name": "Toadpole", "hp": 12, "maxHp": 21, "block": 0,
+          "intents": [ { "type": "Attack", "damage": 6, "hits": 1 } ]
+        },
+        {
+          "key": "e1", "id": "SEAPUNK", "name": "Seapunk", "hp": 13, "maxHp": 30, "block": 0,
+          "intents": [ { "type": "Attack", "damage": 6, "hits": 1 } ]
+        }
+      ]
+    },
+    "actions": [
+      { "id": "a0", "kind": "PlayCard", "label": "Play Venerate (+2★)", "semanticKey": "play:VENERATE+0@-", "args": { "index": "0" } },
+      { "id": "a1", "kind": "PlayCard", "label": "Play Strike → Toadpole (6 dmg)", "semanticKey": "play:STRIKE_REGENT+0@E:TOADPOLE#0", "args": { "index": "1", "target": "e0" } },
+      { "id": "a2", "kind": "PlayCard", "label": "Play Strike → Seapunk (6 dmg)", "semanticKey": "play:STRIKE_REGENT+0@E:SEAPUNK#0", "args": { "index": "1", "target": "e1" } },
+      { "id": "a3", "kind": "PlayCard", "label": "Play Astral Pulse (13 dmg to ALL, 3★)", "semanticKey": "play:ASTRAL_PULSE+0@-", "args": { "index": "2" } },
+      { "id": "a4", "kind": "PlayCard", "label": "Play Defend (5 block)", "semanticKey": "play:DEFEND_REGENT+0@-", "args": { "index": "3" } },
+      { "id": "a5", "kind": "EndTurn", "label": "End turn", "semanticKey": "end_turn" }
+    ],
+    "glossary": { "Stars": "The Regent's second resource, spent by cards with a ★ cost." }
+  }
+}

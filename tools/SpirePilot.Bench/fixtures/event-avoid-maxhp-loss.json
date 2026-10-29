@@ -1,0 +1,41 @@
+{
+  "id": "event-avoid-maxhp-loss",
+  "rationale": "8 Max HP is a permanent cost for a one-off 40 gold; losing current HP for gold or simply leaving are both acceptable.",
+  "tags": ["event", "max_hp", "silent", "zh"],
+  "language": "zh",
+  "expect_any": ["event:1:*", "event:2:*"],
+  "forbid": ["event:0:*"],
+  "snapshot": {
+    "sequence": 1210,
+    "screen": "Event",
+    "inRun": true,
+    "isMultiplayer": false,
+    "localPlayerId": 1,
+    "canAct": true,
+    "run": { "act": 1, "actName": "密林", "floor": 5, "ascensionLevel": 0, "bossName": "仪式兽" },
+    "players": [
+      {
+        "netId": 1, "name": "小雨", "characterId": "SILENT", "characterName": "静默猎手", "isLocal": true,
+        "hp": 50, "maxHp": 70, "block": 0, "gold": 80, "energy": 3, "maxEnergy": 3,
+        "potionSlots": 3, "potions": [],
+        "relics": [ { "id": "RING_OF_THE_SNAKE", "name": "蛇之戒指", "description": "每场战斗开始时，额外抽 2 张牌。" } ],
+        "deckCount": 12
+      }
+    ],
+    "event": {
+      "id": "SHADY_DEALER",
+      "title": "可疑的商贩",
+      "body": "一个裹着斗篷的身影从树后探出头来：「一点点生命力，换一袋金币，很公道吧？」",
+      "options": [
+        { "index": 0, "text": "献祭", "description": "失去 8 点[red]最大生命值[/red]。获得 40 金币。" },
+        { "index": 1, "text": "讨价还价", "description": "失去 6 点生命。获得 25 金币。" },
+        { "index": 2, "text": "离开", "description": "什么也不会发生。" }
+      ]
+    },
+    "actions": [
+      { "id": "a0", "kind": "ChooseEventOption", "label": "事件选项: 献祭：失去 8 点最大生命值。获得 40 金币。", "semanticKey": "event:0:SHADY_DEALER.SACRIFICE", "args": { "index": "0" }, "unpredictable": true },
+      { "id": "a1", "kind": "ChooseEventOption", "label": "事件选项: 讨价还价：失去 6 点生命。获得 25 金币。", "semanticKey": "event:1:SHADY_DEALER.HAGGLE", "args": { "index": "1" }, "unpredictable": true },
+      { "id": "a2", "kind": "ChooseEventOption", "label": "事件选项: 离开", "semanticKey": "event:2:SHADY_DEALER.LEAVE", "args": { "index": "2" }, "unpredictable": true }
+    ]
+  }
+}

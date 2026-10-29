@@ -1,0 +1,69 @@
+{
+  "id": "combat-must-block-or-potion",
+  "rationale": "Ending the turn takes 16 at 7 HP; Block Potion + Defend blocks all of it, while Strike first leaves 3 HP at best.",
+  "tags": ["combat", "survival", "potion", "ironclad", "en"],
+  "language": "en",
+  "history": [
+    "F6 R3: Play Strike → Shrinker Beetle (6 dmg)",
+    "F6 R3: Play Strike → Shrinker Beetle (6 dmg)"
+  ],
+  "expect_any": ["play:DEFEND_IRONCLAD+0@-", "potion:BLOCK_POTION@-"],
+  "forbid": ["end_turn"],
+  "snapshot": {
+    "sequence": 412,
+    "screen": "Combat",
+    "screenName": "NCombatRoom",
+    "inRun": true,
+    "isMultiplayer": false,
+    "localPlayerId": 1,
+    "canAct": true,
+    "run": { "act": 1, "actName": "Overgrowth", "floor": 6, "ascensionLevel": 2, "bossName": "Ceremonial Beast" },
+    "players": [
+      {
+        "netId": 1, "name": "Ann", "characterId": "IRONCLAD", "characterName": "Ironclad", "isLocal": true,
+        "hp": 7, "maxHp": 80, "block": 0, "gold": 131, "energy": 1, "maxEnergy": 3,
+        "potionSlots": 3,
+        "potions": [
+          { "slot": 0, "id": "BLOCK_POTION", "name": "Block Potion", "description": "Gain [blue]12[/blue] Block.", "target": "AnyPlayer", "rarity": "Common", "usableNow": true }
+        ],
+        "relics": [
+          { "id": "BURNING_BLOOD", "name": "Burning Blood", "description": "At the end of combat, heal 6 HP." }
+        ],
+        "deckCount": 13
+      }
+    ],
+    "combat": {
+      "round": 3,
+      "isPlayerTurn": true,
+      "encounterType": "Normal",
+      "encounterName": "Shrinker Beetle",
+      "hand": [
+        { "key": "h0", "id": "STRIKE_IRONCLAD", "name": "Strike", "cost": 1, "type": "Attack", "rarity": "Basic", "target": "AnyEnemy", "description": "Deal 6 damage.", "playable": true },
+        { "key": "h1", "id": "DEFEND_IRONCLAD", "name": "Defend", "cost": 1, "type": "Skill", "rarity": "Basic", "target": "Self", "description": "Gain 5 Block.", "playable": true },
+        { "key": "h2", "id": "BASH", "name": "Bash", "cost": 2, "type": "Attack", "rarity": "Basic", "target": "AnyEnemy", "description": "Deal 8 damage. Apply 2 Vulnerable.", "playable": false, "unplayableReason": "Not enough energy" }
+      ],
+      "drawPileCount": 4,
+      "discardPileCount": 6,
+      "exhaustPileCount": 0,
+      "drawPile": [
+        { "key": "d0", "id": "STRIKE_IRONCLAD", "name": "Strike", "cost": 1, "type": "Attack" },
+        { "key": "d1", "id": "DEFEND_IRONCLAD", "name": "Defend", "cost": 1, "type": "Skill" },
+        { "key": "d2", "id": "DEFEND_IRONCLAD", "name": "Defend", "cost": 1, "type": "Skill" },
+        { "key": "d3", "id": "SHRUG_IT_OFF", "name": "Shrug It Off", "cost": 1, "type": "Skill" }
+      ],
+      "enemies": [
+        {
+          "key": "e0", "id": "SHRINKER_BEETLE", "name": "Shrinker Beetle", "hp": 22, "maxHp": 38, "block": 0,
+          "intents": [ { "type": "Attack", "damage": 4, "hits": 4 } ]
+        }
+      ]
+    },
+    "actions": [
+      { "id": "a0", "kind": "PlayCard", "label": "Play Strike → Shrinker Beetle (6 dmg)", "semanticKey": "play:STRIKE_IRONCLAD+0@E:SHRINKER_BEETLE#0", "args": { "index": "0", "target": "e0" } },
+      { "id": "a1", "kind": "PlayCard", "label": "Play Defend (5 block)", "semanticKey": "play:DEFEND_IRONCLAD+0@-", "args": { "index": "1" } },
+      { "id": "a2", "kind": "UsePotion", "label": "Use potion Block Potion (12 block)", "semanticKey": "potion:BLOCK_POTION@-", "args": { "slot": "0" } },
+      { "id": "a3", "kind": "EndTurn", "label": "End turn", "semanticKey": "end_turn" }
+    ],
+    "glossary": {}
+  }
+}

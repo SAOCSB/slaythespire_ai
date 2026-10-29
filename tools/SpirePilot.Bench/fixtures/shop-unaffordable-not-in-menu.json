@@ -1,0 +1,45 @@
+{
+  "id": "shop-unaffordable-not-in-menu",
+  "rationale": "The tempting relic, Glacier and the removal are (can't afford) and not in the MENU: the first answer must be a legal id (no repair turn); a potion for an empty slot or leaving beats a weak card.",
+  "tags": ["shop", "menu", "validity", "defect", "en"],
+  "language": "en",
+  "expect_any": ["shop:potion:FIRE_POTION", "shop:leave"],
+  "max_llm_calls": 1,
+  "snapshot": {
+    "sequence": 3307,
+    "screen": "Shop",
+    "inRun": true,
+    "isMultiplayer": false,
+    "localPlayerId": 1,
+    "canAct": true,
+    "run": { "act": 2, "actName": "Hive", "floor": 21, "ascensionLevel": 0, "bossName": "The Insatiable" },
+    "players": [
+      {
+        "netId": 1, "name": "Ann", "characterId": "DEFECT", "characterName": "Defect", "isLocal": true,
+        "hp": 49, "maxHp": 75, "block": 0, "gold": 64, "energy": 3, "maxEnergy": 3,
+        "potionSlots": 3,
+        "potions": [ { "slot": 0, "id": "FOCUS_POTION", "name": "Focus Potion", "description": "Gain 2 Focus.", "target": "AnyPlayer", "rarity": "Common", "usableNow": false } ],
+        "relics": [
+          { "id": "CRACKED_CORE", "name": "Cracked Core", "description": "At the start of each combat, Channel 1 Lightning." },
+          { "id": "DATA_DISK", "name": "Data Disk", "description": "Start each combat with 1 Focus." }
+        ],
+        "deckCount": 22
+      }
+    ],
+    "shop": {
+      "items": [
+        { "index": 0, "kind": "Relic", "name": "Runic Capacitor", "description": "Start each combat with 3 additional Orb slots.", "price": 192, "affordable": false },
+        { "index": 1, "kind": "Card", "name": "Glacier", "description": "Gain 7 Block. Channel 2 Frost.", "price": 78, "affordable": false },
+        { "index": 2, "kind": "Card", "name": "Steam Barrier", "description": "Gain 6 Block. Decrease this card's Block by 1 this combat.", "price": 49, "affordable": true },
+        { "index": 3, "kind": "Potion", "name": "Fire Potion", "description": "Deal 20 damage to an enemy.", "price": 52, "affordable": true }
+      ],
+      "removalPrice": 100,
+      "removalAvailable": true
+    },
+    "actions": [
+      { "id": "a0", "kind": "BuyItem", "label": "Buy Steam Barrier (49 gold)", "semanticKey": "shop:card:STEAM_BARRIER", "args": { "index": "2" } },
+      { "id": "a1", "kind": "BuyItem", "label": "Buy Fire Potion (52 gold)", "semanticKey": "shop:potion:FIRE_POTION", "args": { "index": "3" } },
+      { "id": "a2", "kind": "Proceed", "label": "Proceed / leave", "semanticKey": "shop:leave" }
+    ]
+  }
+}

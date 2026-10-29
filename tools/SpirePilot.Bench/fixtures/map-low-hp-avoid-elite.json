@@ -1,0 +1,61 @@
+{
+  "id": "map-low-hp-avoid-elite",
+  "rationale": "At 22/80 HP with no potions an elite can end the run; the rest site (or a safer event) is the right next node.",
+  "tags": ["map", "route", "hp", "ironclad", "zh"],
+  "language": "zh",
+  "expect_any": ["map:2,7", "map:3,7"],
+  "forbid": ["map:1,7"],
+  "max_plan_len": 1,
+  "snapshot": {
+    "sequence": 1450,
+    "screen": "Map",
+    "inRun": true,
+    "isMultiplayer": false,
+    "localPlayerId": 1,
+    "canAct": true,
+    "run": { "act": 1, "actName": "密林", "floor": 7, "ascensionLevel": 3, "bossName": "仪式兽" },
+    "players": [
+      {
+        "netId": 1, "name": "阿杰", "characterId": "IRONCLAD", "characterName": "铁甲战士", "isLocal": true,
+        "hp": 22, "maxHp": 80, "block": 0, "gold": 96, "energy": 3, "maxEnergy": 3,
+        "potionSlots": 3, "potions": [],
+        "relics": [ { "id": "BURNING_BLOOD", "name": "燃烧之血", "description": "战斗结束时，回复 6 点生命。" } ],
+        "deckCount": 13
+      }
+    ],
+    "map": {
+      "current": "2,6",
+      "rows": 15,
+      "reachable": ["1,7", "2,7", "3,7"],
+      "nodes": [
+        { "key": "2,6", "col": 2, "row": 6, "type": "Monster", "typeName": "Monster", "children": ["1,7", "2,7", "3,7"], "visited": true },
+        { "key": "1,7", "col": 1, "row": 7, "type": "Elite", "typeName": "Elite", "children": ["1,8"] },
+        { "key": "2,7", "col": 2, "row": 7, "type": "RestSite", "typeName": "RestSite", "children": ["2,8"] },
+        { "key": "3,7", "col": 3, "row": 7, "type": "Event", "typeName": "Event", "children": ["2,8", "3,8"] },
+        { "key": "1,8", "col": 1, "row": 8, "type": "Monster", "typeName": "Monster", "children": ["1,9"] },
+        { "key": "2,8", "col": 2, "row": 8, "type": "Monster", "typeName": "Monster", "children": ["2,9"] },
+        { "key": "3,8", "col": 3, "row": 8, "type": "Shop", "typeName": "Shop", "children": ["3,9"] },
+        { "key": "1,9", "col": 1, "row": 9, "type": "Event", "typeName": "Event", "children": ["1,10"] },
+        { "key": "2,9", "col": 2, "row": 9, "type": "Elite", "typeName": "Elite", "children": ["2,10"] },
+        { "key": "3,9", "col": 3, "row": 9, "type": "Monster", "typeName": "Monster", "children": ["2,10", "3,10"] },
+        { "key": "1,10", "col": 1, "row": 10, "type": "Monster", "typeName": "Monster", "children": ["1,11"] },
+        { "key": "2,10", "col": 2, "row": 10, "type": "Treasure", "typeName": "Treasure", "children": ["2,11"] },
+        { "key": "3,10", "col": 3, "row": 10, "type": "Event", "typeName": "Event", "children": ["3,11"] },
+        { "key": "1,11", "col": 1, "row": 11, "type": "Elite", "typeName": "Elite", "children": ["1,12"] },
+        { "key": "2,11", "col": 2, "row": 11, "type": "Monster", "typeName": "Monster", "children": ["2,12"] },
+        { "key": "3,11", "col": 3, "row": 11, "type": "Monster", "typeName": "Monster", "children": ["2,12"] },
+        { "key": "1,12", "col": 1, "row": 12, "type": "Event", "typeName": "Event", "children": ["1,13"] },
+        { "key": "2,12", "col": 2, "row": 12, "type": "Event", "typeName": "Event", "children": ["2,13"] },
+        { "key": "1,13", "col": 1, "row": 13, "type": "Monster", "typeName": "Monster", "children": ["2,14"] },
+        { "key": "2,13", "col": 2, "row": 13, "type": "Monster", "typeName": "Monster", "children": ["2,14"] },
+        { "key": "2,14", "col": 2, "row": 14, "type": "RestSite", "typeName": "RestSite", "children": ["2,15"] },
+        { "key": "2,15", "col": 2, "row": 15, "type": "Boss", "typeName": "Boss", "children": [] }
+      ]
+    },
+    "actions": [
+      { "id": "a0", "kind": "ChooseMapNode", "label": "前往 1,7 (精英)", "semanticKey": "map:1,7", "args": { "node": "1,7" } },
+      { "id": "a1", "kind": "ChooseMapNode", "label": "前往 2,7 (篝火)", "semanticKey": "map:2,7", "args": { "node": "2,7" } },
+      { "id": "a2", "kind": "ChooseMapNode", "label": "前往 3,7 (问号事件)", "semanticKey": "map:3,7", "args": { "node": "3,7" } }
+    ]
+  }
+}

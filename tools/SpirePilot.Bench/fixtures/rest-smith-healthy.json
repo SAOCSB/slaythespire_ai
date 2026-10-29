@@ -1,0 +1,54 @@
+{
+  "id": "rest-smith-healthy",
+  "rationale": "At 61/70 HP mid-act, resting only restores 9 HP; upgrading a core card (Catalyst / Noxious Fumes) helps every remaining fight.",
+  "tags": ["rest_site", "smith", "silent", "zh"],
+  "language": "zh",
+  "expect_any": ["rest:SMITH"],
+  "forbid": ["rest:HEAL"],
+  "snapshot": {
+    "sequence": 1802,
+    "screen": "RestSite",
+    "inRun": true,
+    "isMultiplayer": false,
+    "localPlayerId": 1,
+    "canAct": true,
+    "run": { "act": 1, "actName": "密林", "floor": 8, "ascensionLevel": 2, "bossName": "仪式兽" },
+    "players": [
+      {
+        "netId": 1, "name": "小雨", "characterId": "SILENT", "characterName": "静默猎手", "isLocal": true,
+        "hp": 61, "maxHp": 70, "block": 0, "gold": 132, "energy": 3, "maxEnergy": 3,
+        "potionSlots": 3,
+        "potions": [ { "slot": 0, "id": "POISON_POTION", "name": "毒药水", "description": "给予 6 层中毒。", "target": "AnyEnemy", "rarity": "Common", "usableNow": false } ],
+        "relics": [ { "id": "RING_OF_THE_SNAKE", "name": "蛇之戒指", "description": "每场战斗开始时，额外抽 2 张牌。" } ],
+        "deck": [
+          { "key": "m0", "id": "STRIKE_SILENT", "name": "打击", "cost": 1, "type": "Attack", "rarity": "Basic", "description": "造成 6 点伤害。" },
+          { "key": "m1", "id": "STRIKE_SILENT", "name": "打击", "cost": 1, "type": "Attack", "rarity": "Basic", "description": "造成 6 点伤害。" },
+          { "key": "m2", "id": "STRIKE_SILENT", "name": "打击", "cost": 1, "type": "Attack", "rarity": "Basic", "description": "造成 6 点伤害。" },
+          { "key": "m3", "id": "STRIKE_SILENT", "name": "打击", "cost": 1, "type": "Attack", "rarity": "Basic", "description": "造成 6 点伤害。" },
+          { "key": "m4", "id": "DEFEND_SILENT", "name": "防御", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "获得 5 点格挡。" },
+          { "key": "m5", "id": "DEFEND_SILENT", "name": "防御", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "获得 5 点格挡。" },
+          { "key": "m6", "id": "DEFEND_SILENT", "name": "防御", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "获得 5 点格挡。" },
+          { "key": "m7", "id": "DEFEND_SILENT", "name": "防御", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "获得 5 点格挡。" },
+          { "key": "m8", "id": "NEUTRALIZE", "name": "中和", "cost": 0, "type": "Attack", "rarity": "Basic", "description": "造成 3 点伤害。给予 1 层虚弱。" },
+          { "key": "m9", "id": "SURVIVOR", "name": "生存者", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "获得 8 点格挡。丢弃 1 张牌。" },
+          { "key": "m10", "id": "DEADLY_POISON", "name": "致命毒药", "cost": 1, "type": "Skill", "rarity": "Common", "description": "给予 5 层中毒。" },
+          { "key": "m11", "id": "NOXIOUS_FUMES", "name": "毒雾", "cost": 1, "type": "Power", "rarity": "Uncommon", "description": "在你的回合开始时，给予所有敌人 2 层中毒。" },
+          { "key": "m12", "id": "CATALYST", "name": "催化剂", "cost": 1, "type": "Skill", "rarity": "Uncommon", "description": "使一名敌人的中毒层数翻倍。消耗。" },
+          { "key": "m13", "id": "FOOTWORK", "name": "灵动步法", "cost": 1, "type": "Power", "rarity": "Uncommon", "description": "获得 2 点敏捷。" }
+        ],
+        "deckCount": 14
+      }
+    ],
+    "restSite": {
+      "options": [
+        { "index": 0, "id": "HEAL", "name": "休息", "description": "回复 30% 最大生命值（21）。", "enabled": true },
+        { "index": 1, "id": "SMITH", "name": "锻造", "description": "升级你牌组中的一张牌。", "enabled": true }
+      ]
+    },
+    "actions": [
+      { "id": "a0", "kind": "ChooseRestOption", "label": "篝火: 休息 (回复 21)", "semanticKey": "rest:HEAL", "args": { "index": "0" } },
+      { "id": "a1", "kind": "ChooseRestOption", "label": "篝火: 锻造", "semanticKey": "rest:SMITH", "args": { "index": "1" }, "unpredictable": true }
+    ],
+    "glossary": { "中毒": "回合开始时失去等同于中毒层数的生命，然后中毒层数减 1。", "敏捷": "提高从卡牌获得的格挡。" }
+  }
+}

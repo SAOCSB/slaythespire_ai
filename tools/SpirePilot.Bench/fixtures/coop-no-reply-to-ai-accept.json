@@ -1,0 +1,79 @@
+{
+  "id": "coop-no-reply-to-ai-accept",
+  "rationale": "Mira (an AI) accepted our focus request; an accept needs no answer — replying ('thanks!') is how two AIs end up chatting forever. Just play the turn.",
+  "tags": ["coop", "team_chat", "ping_pong", "silent", "en"],
+  "language": "en",
+  "memo": "Asked Mira to focus Phrog Parasite this fight; poison it, she hits it with Lightning.",
+  "history": [ "F12 R1: Play Deadly Poison → Phrog Parasite (5 Poison)" ],
+  "inbox": [
+    {
+      "id": "m3", "kind": "accept", "from": 2, "to": 1, "fromName": "Mira", "fromAi": true,
+      "text": "OK! Focusing Phrog Parasite with Lightning.", "replyTo": "c41d9e2b7a10"
+    }
+  ],
+  "max_messages": 0,
+  "forbid": ["end_turn"],
+  "snapshot": {
+    "sequence": 3540,
+    "screen": "Combat",
+    "inRun": true,
+    "isMultiplayer": true,
+    "localPlayerId": 1,
+    "canAct": true,
+    "run": { "act": 1, "actName": "Overgrowth", "floor": 12, "ascensionLevel": 0, "bossName": "The Kin" },
+    "players": [
+      {
+        "netId": 1, "name": "Ann", "characterId": "SILENT", "characterName": "Silent", "isLocal": true, "hasTeamLink": true,
+        "hp": 44, "maxHp": 70, "block": 0, "gold": 150, "energy": 3, "maxEnergy": 3,
+        "potionSlots": 3, "potions": [],
+        "relics": [ { "id": "RING_OF_THE_SNAKE", "name": "Ring of the Snake", "description": "At the start of each combat, draw 2 additional cards." } ],
+        "deckCount": 15
+      },
+      {
+        "netId": 2, "name": "Mira", "characterId": "DEFECT", "characterName": "Defect", "isLocal": false, "isAiControlled": true, "hasTeamLink": true,
+        "hp": 52, "maxHp": 75, "block": 6, "gold": 101, "energy": 2, "maxEnergy": 3,
+        "orbSlots": 3,
+        "orbs": [
+          { "id": "LIGHTNING_ORB", "name": "Lightning" },
+          { "id": "LIGHTNING_ORB", "name": "Lightning" }
+        ],
+        "potionSlots": 3, "potions": [],
+        "handCount": 4
+      }
+    ],
+    "combat": {
+      "round": 2,
+      "isPlayerTurn": true,
+      "encounterType": "Elite",
+      "encounterName": "Phrog Parasite",
+      "hand": [
+        { "key": "h0", "id": "NEUTRALIZE", "name": "Neutralize", "cost": 0, "type": "Attack", "rarity": "Basic", "target": "AnyEnemy", "description": "Deal 3 damage. Apply 1 Weak.", "keywords": ["Weak"], "playable": true },
+        { "key": "h1", "id": "DEADLY_POISON", "name": "Deadly Poison", "cost": 1, "type": "Skill", "rarity": "Common", "target": "AnyEnemy", "description": "Apply 5 Poison.", "keywords": ["Poison"], "playable": true },
+        { "key": "h2", "id": "STRIKE_SILENT", "name": "Strike", "cost": 1, "type": "Attack", "rarity": "Basic", "target": "AnyEnemy", "description": "Deal 6 damage.", "playable": true },
+        { "key": "h3", "id": "DEFEND_SILENT", "name": "Defend", "cost": 1, "type": "Skill", "rarity": "Basic", "target": "Self", "description": "Gain 5 Block.", "playable": true },
+        { "key": "h4", "id": "DEFEND_SILENT", "name": "Defend", "cost": 1, "type": "Skill", "rarity": "Basic", "target": "Self", "description": "Gain 5 Block.", "playable": true }
+      ],
+      "drawPileCount": 6,
+      "discardPileCount": 4,
+      "exhaustPileCount": 0,
+      "enemies": [
+        {
+          "key": "e0", "id": "PHROG_PARASITE", "name": "Phrog Parasite", "hp": 30, "maxHp": 62, "block": 0,
+          "intents": [ { "type": "Attack", "damage": 10, "hits": 1, "targetName": "Ann" } ],
+          "powers": [ { "id": "POISON_POWER", "name": "Poison", "amount": 4, "isDebuff": true, "description": "Loses 4 HP at the start of its turn." } ]
+        }
+      ]
+    },
+    "actions": [
+      { "id": "a0", "kind": "PlayCard", "label": "Play Neutralize → Phrog Parasite (3 dmg, +1 Weak)", "semanticKey": "play:NEUTRALIZE+0@E:PHROG_PARASITE#0", "args": { "index": "0", "target": "e0" } },
+      { "id": "a1", "kind": "PlayCard", "label": "Play Deadly Poison → Phrog Parasite (+5 Poison)", "semanticKey": "play:DEADLY_POISON+0@E:PHROG_PARASITE#0", "args": { "index": "1", "target": "e0" } },
+      { "id": "a2", "kind": "PlayCard", "label": "Play Strike → Phrog Parasite (6 dmg)", "semanticKey": "play:STRIKE_SILENT+0@E:PHROG_PARASITE#0", "args": { "index": "2", "target": "e0" } },
+      { "id": "a3", "kind": "PlayCard", "label": "Play Defend (5 block)", "semanticKey": "play:DEFEND_SILENT+0@-", "args": { "index": "3" } },
+      { "id": "a4", "kind": "EndTurn", "label": "End turn", "semanticKey": "end_turn" }
+    ],
+    "glossary": {
+      "Poison": "Poisoned creatures lose HP at the start of their turn. Each turn, Poison is reduced by 1.",
+      "Weak": "Weakened creatures deal 25% less damage with Attacks."
+    }
+  }
+}

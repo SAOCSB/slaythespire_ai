@@ -1,0 +1,79 @@
+{
+  "id": "coop-owner-forbids-potion-giving",
+  "rationale": "The owner disabled giving potions and 小雨 survives this turn anyway (25 HP vs 12): decline her request with a reply instead of ignoring it, and keep the potion.",
+  "tags": ["coop", "potion", "team_request", "owner_settings", "defect", "zh"],
+  "language": "zh",
+  "settings": { "team": { "allowGivingPotions": false } },
+  "inbox": [
+    {
+      "id": "m2", "kind": "request_potion", "from": 2, "to": 1, "fromName": "小雨", "fromAi": false,
+      "text": "能给我用一下鲜血药水吗？血有点低。", "potion": "鲜血药水"
+    }
+  ],
+  "forbid": ["potion:BLOOD_POTION@P:2"],
+  "expect_message_kind": "decline",
+  "forbid_message_kind": "accept",
+  "expect_reply_to": "m2",
+  "snapshot": {
+    "sequence": 2477,
+    "screen": "Combat",
+    "inRun": true,
+    "isMultiplayer": true,
+    "localPlayerId": 1,
+    "canAct": true,
+    "run": { "act": 1, "actName": "密林", "floor": 9, "ascensionLevel": 0, "bossName": "仪式兽" },
+    "players": [
+      {
+        "netId": 1, "name": "阿杰", "characterId": "DEFECT", "characterName": "故障机器人", "isLocal": true, "hasTeamLink": true,
+        "hp": 40, "maxHp": 75, "block": 0, "gold": 133, "energy": 2, "maxEnergy": 3,
+        "orbSlots": 3,
+        "orbs": [ { "id": "LIGHTNING_ORB", "name": "闪电", "description": "被动：回合结束时，对随机敌人造成 3 点伤害。激发：对随机敌人造成 8 点伤害。" } ],
+        "potionSlots": 3,
+        "potions": [
+          { "slot": 0, "id": "BLOOD_POTION", "name": "鲜血药水", "description": "回复 20% 最大生命值。", "target": "AnyPlayer", "rarity": "Common", "usableNow": true }
+        ],
+        "relics": [ { "id": "CRACKED_CORE", "name": "破损核心", "description": "每场战斗开始时，生成 1 个闪电充能球。" } ],
+        "deckCount": 14
+      },
+      {
+        "netId": 2, "name": "小雨", "characterId": "SILENT", "characterName": "静默猎手", "isLocal": false, "hasTeamLink": true,
+        "hp": 25, "maxHp": 70, "block": 0, "gold": 88, "energy": 1, "maxEnergy": 3,
+        "potionSlots": 3, "potions": [],
+        "handCount": 3
+      }
+    ],
+    "combat": {
+      "round": 3,
+      "isPlayerTurn": true,
+      "encounterType": "Normal",
+      "encounterName": "墨点群",
+      "hand": [
+        { "key": "h0", "id": "ZAP", "name": "电击", "cost": 1, "type": "Skill", "rarity": "Basic", "target": "Self", "description": "生成 1 个闪电充能球。", "playable": true },
+        { "key": "h1", "id": "STRIKE_DEFECT", "name": "打击", "cost": 1, "type": "Attack", "rarity": "Basic", "target": "AnyEnemy", "description": "造成 6 点伤害。", "playable": true },
+        { "key": "h2", "id": "DEFEND_DEFECT", "name": "防御", "cost": 1, "type": "Skill", "rarity": "Basic", "target": "Self", "description": "获得 5 点格挡。", "playable": true }
+      ],
+      "drawPileCount": 5,
+      "discardPileCount": 6,
+      "exhaustPileCount": 0,
+      "enemies": [
+        {
+          "key": "e0", "id": "INKLET", "name": "小墨怪", "hp": 14, "maxHp": 18, "block": 0,
+          "intents": [ { "type": "Attack", "damage": 12, "hits": 1, "targetName": "小雨" } ]
+        },
+        {
+          "key": "e1", "id": "INKLET", "name": "小墨怪", "hp": 18, "maxHp": 18, "block": 0,
+          "intents": [ { "type": "Attack", "damage": 7, "hits": 1, "targetName": "阿杰" } ]
+        }
+      ]
+    },
+    "actions": [
+      { "id": "a0", "kind": "PlayCard", "label": "打出 电击 (生成 1 个闪电)", "semanticKey": "play:ZAP+0@-", "args": { "index": "0" } },
+      { "id": "a1", "kind": "PlayCard", "label": "打出 打击 → 小墨怪 e0 (6 伤害)", "semanticKey": "play:STRIKE_DEFECT+0@E:INKLET#0", "args": { "index": "1", "target": "e0" } },
+      { "id": "a2", "kind": "PlayCard", "label": "打出 打击 → 小墨怪 e1 (6 伤害)", "semanticKey": "play:STRIKE_DEFECT+0@E:INKLET#1", "args": { "index": "1", "target": "e1" } },
+      { "id": "a3", "kind": "PlayCard", "label": "打出 防御 (5 格挡)", "semanticKey": "play:DEFEND_DEFECT+0@-", "args": { "index": "2" } },
+      { "id": "a4", "kind": "UsePotion", "label": "使用药水 鲜血药水 → 阿杰 (自己, 回复 15)", "semanticKey": "potion:BLOOD_POTION@P:1", "args": { "slot": "0", "target": "p0" } },
+      { "id": "a5", "kind": "UsePotion", "label": "使用药水 鲜血药水 → 小雨 (回复 14)", "semanticKey": "potion:BLOOD_POTION@P:2", "args": { "slot": "0", "target": "p1" } },
+      { "id": "a6", "kind": "EndTurn", "label": "结束回合", "semanticKey": "end_turn" }
+    ]
+  }
+}

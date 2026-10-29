@@ -1,0 +1,73 @@
+{
+  "id": "owner-instruction-overrides-pin",
+  "rationale": "A live owner instruction outranks the pinned route: the engine must hand the decision to the model (no Rule) and the model must go to the shop at 3,4.",
+  "tags": ["map", "owner_instruction", "pinned_route", "owner_settings", "ironclad", "zh"],
+  "language": "zh",
+  "settings": {
+    "route": { "pinnedPath": ["0,0", "1,1", "1,2", "1,3", "1,4", "1,5", "1,6"], "pinnedAct": 1 }
+  },
+  "live_instruction": "这次别按固定路线走，去右边 3,4 的商店把「悔恨」删掉。",
+  "expect_any": ["map:3,4"],
+  "forbid": ["map:1,4"],
+  "snapshot": {
+    "sequence": 455,
+    "screen": "Map",
+    "inRun": true,
+    "isMultiplayer": false,
+    "localPlayerId": 1,
+    "canAct": true,
+    "run": { "act": 1, "actName": "密林", "floor": 4, "ascensionLevel": 1, "bossName": "仪式兽" },
+    "players": [
+      {
+        "netId": 1, "name": "阿杰", "characterId": "IRONCLAD", "characterName": "铁甲战士", "isLocal": true,
+        "hp": 61, "maxHp": 80, "block": 0, "gold": 190, "energy": 3, "maxEnergy": 3,
+        "potionSlots": 3, "potions": [],
+        "relics": [ { "id": "BURNING_BLOOD", "name": "燃烧之血", "description": "战斗结束时，回复 6 点生命。" } ],
+        "deck": [
+          { "key": "m0", "id": "STRIKE_IRONCLAD", "name": "打击", "cost": 1, "type": "Attack", "rarity": "Basic", "description": "造成 6 点伤害。" },
+          { "key": "m1", "id": "STRIKE_IRONCLAD", "name": "打击", "cost": 1, "type": "Attack", "rarity": "Basic", "description": "造成 6 点伤害。" },
+          { "key": "m2", "id": "STRIKE_IRONCLAD", "name": "打击", "cost": 1, "type": "Attack", "rarity": "Basic", "description": "造成 6 点伤害。" },
+          { "key": "m3", "id": "STRIKE_IRONCLAD", "name": "打击", "cost": 1, "type": "Attack", "rarity": "Basic", "description": "造成 6 点伤害。" },
+          { "key": "m4", "id": "STRIKE_IRONCLAD", "name": "打击", "cost": 1, "type": "Attack", "rarity": "Basic", "description": "造成 6 点伤害。" },
+          { "key": "m5", "id": "DEFEND_IRONCLAD", "name": "防御", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "获得 5 点格挡。" },
+          { "key": "m6", "id": "DEFEND_IRONCLAD", "name": "防御", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "获得 5 点格挡。" },
+          { "key": "m7", "id": "DEFEND_IRONCLAD", "name": "防御", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "获得 5 点格挡。" },
+          { "key": "m8", "id": "DEFEND_IRONCLAD", "name": "防御", "cost": 1, "type": "Skill", "rarity": "Basic", "description": "获得 5 点格挡。" },
+          { "key": "m9", "id": "BASH", "name": "痛击", "cost": 2, "type": "Attack", "rarity": "Basic", "description": "造成 8 点伤害。给予 2 层易伤。" },
+          { "key": "m10", "id": "REGRET", "name": "悔恨", "type": "Curse", "rarity": "Curse", "description": "不能被打出。在你的回合结束时，你手牌中每有一张牌，失去 1 点生命。", "keywords": ["不能被打出"] },
+          { "key": "m11", "id": "POMMEL_STRIKE", "name": "剑柄打击", "cost": 1, "type": "Attack", "rarity": "Common", "description": "造成 9 点伤害。抽 1 张牌。" }
+        ],
+        "deckCount": 12
+      }
+    ],
+    "map": {
+      "current": "1,3",
+      "rows": 15,
+      "reachable": ["1,4", "3,4"],
+      "nodes": [
+        { "key": "1,3", "col": 1, "row": 3, "type": "Event", "typeName": "Event", "children": ["1,4", "3,4"], "visited": true },
+        { "key": "1,4", "col": 1, "row": 4, "type": "Monster", "typeName": "Monster", "children": ["1,5"] },
+        { "key": "3,4", "col": 3, "row": 4, "type": "Shop", "typeName": "Shop", "children": ["2,5", "3,5"] },
+        { "key": "1,5", "col": 1, "row": 5, "type": "Event", "typeName": "Event", "children": ["1,6"] },
+        { "key": "2,5", "col": 2, "row": 5, "type": "Monster", "typeName": "Monster", "children": ["1,6"] },
+        { "key": "3,5", "col": 3, "row": 5, "type": "Elite", "typeName": "Elite", "children": ["3,6"] },
+        { "key": "1,6", "col": 1, "row": 6, "type": "RestSite", "typeName": "RestSite", "children": ["1,7"] },
+        { "key": "3,6", "col": 3, "row": 6, "type": "Monster", "typeName": "Monster", "children": ["2,7"] },
+        { "key": "1,7", "col": 1, "row": 7, "type": "Monster", "typeName": "Monster", "children": ["2,8"] },
+        { "key": "2,7", "col": 2, "row": 7, "type": "Event", "typeName": "Event", "children": ["2,8"] },
+        { "key": "2,8", "col": 2, "row": 8, "type": "Treasure", "typeName": "Treasure", "children": ["2,9"] },
+        { "key": "2,9", "col": 2, "row": 9, "type": "Monster", "typeName": "Monster", "children": ["2,10"] },
+        { "key": "2,10", "col": 2, "row": 10, "type": "Elite", "typeName": "Elite", "children": ["2,11"] },
+        { "key": "2,11", "col": 2, "row": 11, "type": "Event", "typeName": "Event", "children": ["2,12"] },
+        { "key": "2,12", "col": 2, "row": 12, "type": "Monster", "typeName": "Monster", "children": ["2,13"] },
+        { "key": "2,13", "col": 2, "row": 13, "type": "Shop", "typeName": "Shop", "children": ["2,14"] },
+        { "key": "2,14", "col": 2, "row": 14, "type": "RestSite", "typeName": "RestSite", "children": ["2,15"] },
+        { "key": "2,15", "col": 2, "row": 15, "type": "Boss", "typeName": "Boss", "children": [] }
+      ]
+    },
+    "actions": [
+      { "id": "a0", "kind": "ChooseMapNode", "label": "前往 1,4 (普通怪)", "semanticKey": "map:1,4", "args": { "node": "1,4" } },
+      { "id": "a1", "kind": "ChooseMapNode", "label": "前往 3,4 (商店)", "semanticKey": "map:3,4", "args": { "node": "3,4" } }
+    ]
+  }
+}
