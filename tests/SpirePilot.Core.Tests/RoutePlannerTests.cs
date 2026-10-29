@@ -64,3 +64,16 @@ public class RoutePlannerTests
         Assert.Empty(RoutePlanner.Plan(new MapInfo(), new RouteSettings()));
     }
 }
+
+public class PinnedRouteSeedTests
+{
+    [Fact]
+    public void A_pin_from_another_run_is_ignored()
+    {
+        var settings = new SpirePilot.Core.Config.RouteSettings { PinnedPath = { "1,0" }, PinnedAct = 1, PinnedSeed = "ABC" };
+        Assert.Equal("1,0", RoutePlanner.PinnedNext(TestData.Map(), settings, act: 1, seed: "ABC"));
+        Assert.Null(RoutePlanner.PinnedNext(TestData.Map(), settings, act: 1, seed: "XYZ"));
+        settings.PinnedSeed = ""; // older settings without a seed still work
+        Assert.Equal("1,0", RoutePlanner.PinnedNext(TestData.Map(), settings, act: 1, seed: "XYZ"));
+    }
+}

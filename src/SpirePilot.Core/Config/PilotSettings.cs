@@ -122,6 +122,8 @@ public sealed class RouteSettings
     /// <summary>Path the user pinned in the route tab (node keys in travel order), for <see cref="PinnedAct"/>.</summary>
     public List<string> PinnedPath { get; set; } = new();
     public int PinnedAct { get; set; }
+    /// <summary>Seed of the run the path was pinned in: a pin never applies to another run's map.</summary>
+    public string PinnedSeed { get; set; } = "";
     /// <summary>Free-text routing instructions passed to the AI.</summary>
     public string Instruction { get; set; } = "";
     /// <summary>Ping the chosen node on the map so teammates can see where the AI wants to go.</summary>
@@ -252,6 +254,7 @@ public sealed class PilotSettings
         Route.CustomWeights ??= new();
         Route.PinnedPath ??= new();
         Route.PinnedPath.RemoveAll(string.IsNullOrWhiteSpace);
+        Route.PinnedSeed ??= "";
         Route.Instruction ??= "";
         Characters.Allowed ??= new();
         Characters.Allowed.RemoveAll(string.IsNullOrWhiteSpace);

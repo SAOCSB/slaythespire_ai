@@ -83,7 +83,8 @@ public sealed class SettingsStore
                 // The existing file could not be read at startup: keep it as a backup before the first overwrite.
                 try { File.Copy(Path, Path + ".bak", overwrite: true); _protectFile = false; }
                 catch (Exception) { /* still unreadable: keep protecting */ }
-                if (_protectFile) return;
+                if (_protectFile)
+                    throw new IOException($"Settings were not saved: {Path} could not be read at startup and cannot be backed up.");
             }
             var tmp = Path + ".tmp";
             File.WriteAllText(tmp, JsonSerializer.Serialize(Current, JsonOptions));

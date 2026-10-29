@@ -126,10 +126,12 @@ public static class RoutePlanner
     /// <summary>
     /// If the user pinned a path for this act and the next pinned node is reachable, returns it.
     /// The pinned path may include already-visited nodes; the first pinned node that is currently reachable wins.
+    /// A pin made in another run (different seed) never applies: every act map uses the same coordinate grid.
     /// </summary>
-    public static string? PinnedNext(MapInfo map, RouteSettings settings, int act)
+    public static string? PinnedNext(MapInfo map, RouteSettings settings, int act, string? seed = null)
     {
         if (settings.PinnedPath.Count == 0 || settings.PinnedAct != act) return null;
+        if (!string.IsNullOrEmpty(settings.PinnedSeed) && !string.IsNullOrEmpty(seed) && settings.PinnedSeed != seed) return null;
         return settings.PinnedPath.FirstOrDefault(key => map.Reachable.Contains(key));
     }
 

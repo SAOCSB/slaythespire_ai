@@ -52,7 +52,7 @@ public static class FallbackPolicy
                 {
                     var me = s.LocalPlayer;
                     double hp = me is { MaxHp: > 0 } ? (double)me.Hp / me.MaxHp : 1;
-                    var target = RoutePlanner.PinnedNext(map, settings.Route, s.Run?.Act ?? 0)
+                    var target = RoutePlanner.PinnedNext(map, settings.Route, s.Run?.Act ?? 0, s.Run?.Seed)
                                  ?? RoutePlanner.BestNext(map, settings.Route, hp, me?.Gold ?? 0);
                     var pick = actions.FirstOrDefault(a => a.Kind == ActionKind.ChooseMapNode && a.Arg(ActionArgs.Node) == target);
                     if (pick != null) return pick;

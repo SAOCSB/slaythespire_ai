@@ -328,6 +328,9 @@ public sealed class PilotLoop : IDisposable
             var advice = action.Label + (decision.Messages.Count > 0 ? "  💬 " + string.Join(" / ", decision.Messages.Select(m => m.Text)) : "");
             SetStatus(PilotState.Advising, L10n.T("status.advice", advice));
             await WaitForChangeAsync(snap, waitForStep: false, ct).ConfigureAwait(false);
+            // The advice was for that state only: never leave it executable in the next one.
+            Advice = null;
+            AdviceAction = null;
             _engine.Memory.ClearPlan();
             return;
         }
@@ -368,7 +371,7 @@ public sealed class PilotLoop : IDisposable
         }
 
         if (target.Kind == ActionKind.ChooseMapNode && fresh.Map is { } map &&
-            Route.RoutePlanner.PinnedNext(map, settings.Route, fresh.Run?.Act ?? 0) is { } pinned && pinned != target.Arg(ActionArgs.Node) &&
+            Route.RoutePlanner.PinnedNext(map, settings.Route, fresh.Run?.Act ?? 0, fresh.Run?.Seed) is { } pinned && pinned != target.Arg(ActionArgs.Node) &&
             fresh.Actions.FirstOrDefault(a => a.Kind == ActionKind.ChooseMapNode && a.Arg(ActionArgs.Node) == pinned) is { } pinnedMove)
         {
             // The owner pinned a route while the model was thinking: the pin wins.
@@ -433,7 +436,7 @@ public sealed class PilotLoop : IDisposable
                 if (_runEndedSinceEnabled) AutoRunsStarted++;
                 _runEndedSinceEnabled = false;
                 _engine.Memory.Reset();
-                RunStarted?.Invoke();
+                try { RunStarted?.Invoke(); } catch (Exception ex) { _log.Warn("run-start handler failed: " + ex.Message); }
             }
         }
         await SafeDelay(TimeSpan.FromMilliseconds(settings.Control.ActionDelayMs), ct).ConfigureAwait(false);

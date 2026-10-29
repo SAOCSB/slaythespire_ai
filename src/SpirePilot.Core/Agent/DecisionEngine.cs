@@ -289,7 +289,7 @@ public sealed class DecisionEngine
         {
             var me = s.LocalPlayer;
             double hp = me is { MaxHp: > 0 } ? (double)me.Hp / me.MaxHp : 1;
-            var target = RoutePlanner.PinnedNext(map, settings.Route, s.Run?.Act ?? 0);
+            var target = RoutePlanner.PinnedNext(map, settings.Route, s.Run?.Act ?? 0, s.Run?.Seed);
             string why = "(pinned route)";
             if (target == null && !settings.Route.LetAiChooseNodes)
             {
@@ -373,7 +373,7 @@ public sealed class DecisionEngine
             var me = s.LocalPlayer;
             double hp = me is { MaxHp: > 0 } ? (double)me.Hp / me.MaxHp : 1;
             ctx.RouteSuggestions = RoutePlanner.Plan(map, settings.Route, hp, me?.Gold ?? 0, 3);
-            ctx.PinnedNext = RoutePlanner.PinnedNext(map, settings.Route, s.Run?.Act ?? 0);
+            ctx.PinnedNext = RoutePlanner.PinnedNext(map, settings.Route, s.Run?.Act ?? 0, s.Run?.Seed);
         }
         return ctx;
     }
