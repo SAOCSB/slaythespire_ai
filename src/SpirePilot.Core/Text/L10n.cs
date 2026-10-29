@@ -116,6 +116,7 @@ public static class L10n
         ["status.step_ready"] = ("待执行（按“单步”执行）: {0}", "Ready (press Step): {0}"),
         ["status.advice"] = ("建议: {0}", "Suggestion: {0}"),
         ["status.config_error"] = ("AI 设置有误，已暂停：{0}（请在“API 设置”中修改后点继续）", "AI settings problem, paused: {0} (fix it in the API tab, then resume)"),
+        ["status.no_allowed_character"] = ("允许的角色（{0}）都还没解锁，已暂停。请在“角色”页调整。", "None of the allowed characters ({0}) is unlocked; paused. Adjust the Characters tab."),
         ["status.stuck"] = ("同一操作重复执行但游戏没有变化，已暂停：{0}", "Same action repeated without effect, paused: {0}"),
         ["ui.run_started"] = ("AI 开始了新的一局。", "The AI started a new run."),
         ["team.link_unavailable"] = ("队友通信不可用：对方没有安装 SpirePilot，消息只显示在本地。", "Team link unavailable: teammates without SpirePilot can't receive messages (shown locally only)."),

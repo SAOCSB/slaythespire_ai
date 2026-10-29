@@ -184,6 +184,9 @@ public sealed class DecisionEngine
 
     private static AgentDecision? RuleDecision(GameSnapshot s, PilotSettings settings, bool softRules)
     {
+        if (s.Screen == ScreenKind.CharacterSelect && s.CharacterSelect is { Characters.Count: > 0 } info &&
+            settings.Characters.Allowed.Count > 0 && CharacterPicker.AllowedIds(info, settings).Count == 0)
+            throw new PilotConfigException(L10n.T("status.no_allowed_character", string.Join(", ", settings.Characters.Allowed)));
         if (s.Screen == ScreenKind.CharacterSelect && settings.Characters.Policy != CharacterPickPolicy.AiChoice)
         {
             var pick = CharacterPicker.Choose(s, settings);

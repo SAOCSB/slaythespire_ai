@@ -185,6 +185,21 @@ public class DecisionEngineTests
     }
 
     [Fact]
+    public async Task Pauses_when_no_allowed_character_is_unlocked()
+    {
+        var settings = Settings();
+        settings.Characters.Allowed = new() { "DEFECT" };
+        var (engine, _, _) = Make(settings);
+        var snap = new GameSnapshot
+        {
+            Screen = ScreenKind.CharacterSelect,
+            CharacterSelect = new CharacterSelectInfo { Characters = { new CharacterOption { Id = "IRONCLAD" }, new CharacterOption { Id = "DEFECT", Locked = true } } },
+            Actions = { new ActionOption { Id = "a0", Kind = ActionKind.SelectCharacter, Args = { [ActionArgs.Character] = "IRONCLAD" } } },
+        };
+        await Assert.ThrowsAsync<PilotConfigException>(() => engine.DecideAsync(snap, null, CancellationToken.None));
+    }
+
+    [Fact]
     public async Task Ai_character_choice_only_sees_allowed_characters()
     {
         var settings = Settings();

@@ -171,12 +171,15 @@ public static class CharacterPicker
                ?? selects.FirstOrDefault(a => allowed.Contains(a.Arg(ActionArgs.Character) ?? "", StringComparer.OrdinalIgnoreCase));
     }
 
-    /// <summary>Unlocked characters the user allows (all unlocked ones when the allow-list is empty or matches nothing).</summary>
+    /// <summary>
+    /// Unlocked characters the user allows: all unlocked ones when the allow-list is empty; otherwise only allowed ones
+    /// (possibly none — the restriction is never silently widened).
+    /// </summary>
     public static List<string> AllowedIds(CharacterSelectInfo cs, PilotSettings settings)
     {
         var unlocked = cs.Characters.Where(c => !c.Locked).Select(c => c.Id).ToList();
-        var allowed = unlocked.Where(id => settings.Characters.Allowed.Contains(id, StringComparer.OrdinalIgnoreCase)).ToList();
-        return allowed.Count > 0 ? allowed : unlocked;
+        if (settings.Characters.Allowed.Count == 0) return unlocked;
+        return unlocked.Where(id => settings.Characters.Allowed.Contains(id, StringComparer.OrdinalIgnoreCase)).ToList();
     }
 
     public static int DesiredAscension(CharacterSelectInfo cs, PilotSettings settings) =>
