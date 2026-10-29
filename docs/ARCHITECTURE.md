@@ -24,6 +24,9 @@ src/SpirePilot/        the mod (references sts2.dll, GodotSharp.dll, 0Harmony.dl
   Ui/                  Overlay (in-game control panel)
   Api/                 LocalHttpApi (optional, 127.0.0.1)
 tests/SpirePilot.Core.Tests/   xUnit tests for the core (no game needed)
+tools/SpirePilot.Bench/        offline decision benchmark: fixtures (GET /state snapshots + expectations) → real LLM
+tests/SpirePilot.Bench.Tests/  fixture validity and scoring tests (no API calls)
+tools/mcp/                     MCP server (Python) over the local HTTP API, for Claude Desktop / Claude Code / Cursor
 ```
 
 ## Data flow
@@ -34,9 +37,12 @@ PilotLoop (worker thread)
   │                                 GameContext.Capture → PlayerReader / CombatReader.FillState
   │                                 ScreenResolver.Resolve → one Reader → snapshot fields + ActionSink entries
   │                                 Readiness.Check → CanAct / WaitReason
+  ├─ (cannot act, but a teammate asked something) → DecisionEngine.ReplyOnlyAsync → team messages only
   ├─ DecisionEngine.DecideAsync (worker): plan step? → owner rules → trivial? → LLM (+repair) → fallback
-  ├─ re-capture, re-validate the chosen action by SemanticKey
-  ├─ TeamChatHub.Send (AI messages) / map ping
+  │     (cancelled when the user pauses or switches mode while the model thinks)
+  ├─ re-capture (waits out transient "animating"/"settling"), re-validate the chosen action by SemanticKey,
+  │     re-check pause / mode / a freshly pinned route
+  ├─ TeamChatHub.Send (AI messages; emotes for teammates without the mod) / map ping
   └─ IGameBridge.ExecuteAsync ──► main thread: ActionSink executor (presses the game's own buttons /
                                     calls the game's synchronized entry points, then waits until settled)
 ```
@@ -52,6 +58,12 @@ Rules that keep this robust:
 - **Co-op safety.** Only act for the local player, always through the game's synchronized paths (action queue,
   synchronizers, real buttons). Never mutate game state directly, never cancel running actions in co-op,
   never declare INetMessage types in this assembly.
+- **Owner rules are menu filters, not prompt text.** Character allow-list and ascension, "no potions for
+  teammates", saved runs of disallowed characters: the engine removes the actions before any model sees the menu.
+- **Things the human opened are the human's.** Popups over the pause menu / settings / viewers, abandon / quit /
+  disconnect confirmations, and anything outside a run when menus are not the AI's to handle get no actions.
+- **No progress means stop.** The same state + action three times within the last eight steps pauses the pilot
+  (catches A,A,A and A,B,A,B cycles); three failed actions in a row pause it too.
 
 ## Game versions
 
@@ -62,8 +74,10 @@ either (`-p:Sts2GameVersion=0.107|0.111`), with `#if STS2_V0107` / `#if STS2_V01
 
 ## Snapshot conventions
 
-- Creature keys: enemies `e0..eN` (index in the combat's enemy list, stable during a fight, dead ones keep their
-  index); players `p0..pN` (player slot index); companions/pets `o<slot>` (e.g. Osty of player slot 0 = `o0`).
+- Creature keys: enemies `e0..eN` (numbered in the order this client first saw them, keyed by the game's
+  `Creature.CombatId`, stable during a fight, dead ones keep their number); players `p0..pN` (player slot index);
+  companions/pets `o<slot>` (e.g. Osty of player slot 0 = `o0`). Keys are local to one client: team messages
+  name enemies by `CombatId` ("Cultist (cid:12)"), which every client shares, and the receiver maps it back.
 - Card keys: hand `h0..`, selection candidates `c0..`, card-reward choices `r0..`, shop cards `s0..`.
 - Map node keys: `"col,row"` (`MapCoord`), reachable nodes in `MapInfo.Reachable`.
 - Card `Type` uses the game's `CardType` names (Attack, Skill, Power, Status, Curse ...); `Target` uses `TargetType`
@@ -82,7 +96,10 @@ either (`-p:Sts2GameVersion=0.107|0.111`), with `#if STS2_V0107` / `#if STS2_V01
   `reward:<kind>:<id>`, `reward:skip`, `cardreward:<CARD_ID>`, `cardreward:skip`, `shop:<kind>:<id>`, `shop:remove`,
   `shop:leave`, `rest:<option id>`, `event:<index>:<option text key or text>`, `select:<CARD_ID>[+n]`, `confirm`,
   `cancel`, `chest:open`, `chest:relic:<RELIC_ID>`, `proceed`, `popup:confirm`, `popup:dismiss`, `menu:continue`,
-  `menu:new_run`, `char:<CHARACTER_ID>`, `ascension:<n>`, `embark`, `gameover:continue`, `gameover:menu`.
+  `menu:new_run`, `char:<CHARACTER_ID>`, `ascension:<n>`, `embark`, `gameover:continue`, `gameover:menu`,
+  `undo_end_turn`, `cardreward:reroll`, `cardreward:alt:<id>`, `deselect:<CARD_ID>[+n]`, `cancel:preview`,
+  `choose:<RELIC_ID>`, `choose:bundle:<ids>`, `map:close`, `event:dialogue:<line>`; companion targets
+  `O:<MONSTER_ID>@o<slot>`; duplicate otherwise-identical options get a `#n` suffix.
   Two actions with the same key must be interchangeable (identical cards).
 - `unpredictable: true` for anything whose outcome cannot be foreseen (draw / random / choices / screen changes).
 - Executors: re-check `GodotObject.IsInstanceValid` for every node they captured, perform the action through the
@@ -111,3 +128,14 @@ Raw packets over the game's transport (client→host `NetClient.SendMessageToHos
 sent to peers known to run SpirePilot (mod list from the handshake / hello), the host relays client↔client
 messages, and every message also carries readable text so human teammates can read it. Without the mod on the
 other side, the AI still sees teammates' full state (co-op simulates everyone locally) and can use vanilla map pings.
+
+Conversation rules (Core, `DecisionEngine` / `PilotLoop` / `AgentMemory`):
+- Requests, questions and human chat are actionable; accept/decline answers and AI chat are context only, and an
+  AI's counter-request (a request with `reply_to`) is never actionable — two AIs cannot keep each other talking.
+- The AI remembers its own open requests/offers (not repeated; a "yes" to its offer is actionable), and accepted
+  requests until fulfilled (a potion used on that player) or until their round / fight ends.
+- While it cannot act (turn ended, enemy turn) a teammate's request still gets an answer (reply-only call); with
+  only "undo end turn" on the menu the model may take the turn back to help, never on its own.
+- Teammates without SpirePilot are marked in the state; messages to them become a vanilla reaction emote.
+- Inbox is bounded (5 unread per sender, 20 total, newest 8 in a prompt) and expires on the local clock; teammate
+  text is one line inside a fence it cannot close, and cannot forge section headers.
