@@ -25,6 +25,16 @@ namespace SpirePilot.Game;
 /// </summary>
 internal static class ModelText
 {
+    /// <summary>
+    /// The game's text language ("eng", "zhs", ...; "" before localization is ready). Caches of game text key on it: the
+    /// player can switch it at any time, independently of the mod's own language.
+    /// </summary>
+    public static string GameLanguage()
+    {
+        try { return LocManager.Instance?.Language ?? ""; }
+        catch (Exception) { return ""; }
+    }
+
     /// <summary>Localized text of a LocString with markup removed; "" when missing.</summary>
     public static string Loc(LocString? text)
     {
@@ -110,7 +120,7 @@ internal static class ModelText
 
     // Pile listings (draw / discard / exhaust) only need names: the prompt prints names, and the full rules text costs a
     // dynamic-variable preview plus formatting per card on every snapshot. The localized name and the static fields are
-    // cached per card instance and refreshed when the card's id, upgrade level or enchantment changes.
+    // cached per card instance and refreshed when the card's id, upgrade level, enchantment or the game language changes.
     private static readonly ConditionalWeakTable<CardModel, PileEntry> PileCache = new();
 
     private sealed class PileEntry
@@ -132,7 +142,7 @@ internal static class ModelText
         var info = new CardInfo();
         if (card == null) return info;
         info.Id = SafeId(card);
-        string sig = info.Id + "+" + UpgradeLevel(card);
+        string sig = info.Id + "+" + UpgradeLevel(card) + "|" + GameLanguage();
         try
         {
             var ench = card.Enchantment;
@@ -247,6 +257,12 @@ internal static class ModelText
             try { text = Clean(card.Description?.GetRawText()); }
             catch (Exception) { }
         }
+        return WithModifiers(text, card);
+    }
+
+    /// <summary><paramref name="text"/> followed by the card's enchantment and affliction, e.g. "… (Sharp 2)".</summary>
+    private static string WithModifiers(string text, CardModel card)
+    {
         try
         {
             var ench = card.Enchantment;
@@ -269,6 +285,103 @@ internal static class ModelText
             }
         }
         catch (Exception) { }
+        return text;
+    }
+
+    // ------------------------------------------------------------------ upgrade previews
+
+    /// <summary>
+    /// A detached, upgraded copy of a card's canonical model (never the live card, which stays untouched) with its
+    /// text out of combat. The copy depends only on the card id, the upgrade level and the game language; its last
+    /// in-combat text is kept for the live text it was previewed against.
+    /// </summary>
+    private sealed record UpgradedCopy(CardModel Card, string Text, int? Cost)
+    {
+        public string? PreviewedFor { get; set; }
+        public string PreviewedText { get; set; } = "";
+    }
+
+    private static readonly Dictionary<string, UpgradedCopy?> UpgradedCopies = new();
+    private const int MaxUpgradedCopies = 256;
+
+    /// <summary>
+    /// Rules text of <paramref name="card"/> after its next upgrade, with the energy cost in front when the upgrade
+    /// changes it ("(cost 1) Deal 9 damage."); null when the card cannot be upgraded, the preview failed or nothing
+    /// visible changes. The game's own preview text (<see cref="CardModel.GetDescriptionForUpgradePreview"/>) only
+    /// differs for a card that has just been upgraded, so it is read from an upgraded copy of the canonical card. In a
+    /// fight the copy's numbers are previewed through the live card (Strength and the like, as its own text shows them).
+    /// Main thread only, never throws.
+    /// </summary>
+    public static string? UpgradePreview(CardModel card, string currentText, bool inCombat)
+    {
+        try
+        {
+            if (card == null || !card.IsUpgradable) return null;
+            int level = UpgradeLevel(card);
+            string key = SafeId(card) + "+" + level + "|" + GameLanguage();
+            if (!UpgradedCopies.TryGetValue(key, out var copy))
+            {
+                if (UpgradedCopies.Count >= MaxUpgradedCopies) UpgradedCopies.Clear();
+                copy = BuildUpgradedCopy(card, level);
+                UpgradedCopies[key] = copy;
+            }
+            if (copy == null) return null;
+
+            string text = copy.Text;
+            if (inCombat)
+            {
+                if (copy.PreviewedFor != currentText)
+                {
+                    copy.PreviewedText = "";
+                    try
+                    {
+                        card.UpdateDynamicVarPreview(CardPreviewMode.Normal, null, copy.Card.DynamicVars);
+                        copy.PreviewedText = UpgradedText(copy.Card);
+                    }
+                    catch (Exception) { /* keep the base values */ }
+                    copy.PreviewedFor = currentText;
+                }
+                if (copy.PreviewedText.Length > 0) text = copy.PreviewedText;
+            }
+            text = WithModifiers(text, card);
+            int? cost = null;
+            try { cost = card.EnergyCost is { CostsX: false } live ? live.Canonical : null; }
+            catch (Exception) { }
+            bool costChanged = copy.Cost is { } upgradedCost && cost is { } liveCost && upgradedCost != liveCost;
+            if (!costChanged && text == currentText) return null;
+            return costChanged ? $"(cost {copy.Cost}) {text}" : text;
+        }
+        catch (Exception) { return null; }
+    }
+
+    private static UpgradedCopy? BuildUpgradedCopy(CardModel card, int level)
+    {
+        try
+        {
+            var canonical = card.CanonicalInstance ?? ModelDb.GetByIdOrNull<CardModel>(card.Id);
+            if (canonical == null) return null;
+            var copy = canonical.ToMutable();
+            for (int i = 0; i <= level; i++) copy.UpgradeInternal();
+            var text = UpgradedText(copy);
+            if (text.Length == 0) return null;
+            int? cost = null;
+            try { cost = copy.EnergyCost is { CostsX: false } c ? c.Canonical : null; }
+            catch (Exception) { }
+            return new UpgradedCopy(copy, text, cost);
+        }
+        catch (Exception) { return null; }
+    }
+
+    private static string UpgradedText(CardModel upgraded)
+    {
+        string text = "";
+        try { text = Clean(upgraded.GetDescriptionForUpgradePreview()); }
+        catch (Exception) { }
+        if (text.Length == 0)
+        {
+            try { text = Clean(upgraded.GetDescriptionForPile(PileType.None)); }
+            catch (Exception) { }
+        }
         return text;
     }
 
@@ -448,7 +561,7 @@ internal static class ModelText
         try { info.Counter = relic.ShowCounter ? relic.DisplayAmount : null; }
         catch (Exception) { }
         if (withDescription)
-            info.Description = CachedOr(RelicTexts, relic, info.Counter + "|" + L10n.Language, () => RelicDescription(relic));
+            info.Description = CachedOr(RelicTexts, relic, info.Counter + "|" + GameLanguage(), () => RelicDescription(relic));
         return info;
     }
 
@@ -484,7 +597,7 @@ internal static class ModelText
         });
         if (!withDescription) return info;
         string name = info.Name;
-        info.Description = CachedOr(PowerTexts, power, info.Amount + "|" + L10n.Language, () => PowerDescription(power, name));
+        info.Description = CachedOr(PowerTexts, power, info.Amount + "|" + GameLanguage(), () => PowerDescription(power, name));
         if (noteGlossary && Glossary.Collecting)
         {
             string ownTip = "";

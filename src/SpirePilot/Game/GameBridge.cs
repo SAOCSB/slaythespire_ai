@@ -30,7 +30,7 @@ internal sealed class GameBridge : IGameBridge
     /// <summary>Raised on the main thread after each capture.</summary>
     public event Action<GameSnapshot>? Captured;
 
-    public Task<GameSnapshot?> CaptureAsync(CancellationToken cancellationToken) => MainThread.Run(CaptureOnMainThread);
+    public Task<GameSnapshot?> CaptureAsync(CancellationToken cancellationToken) => MainThread.Run(CaptureOnMainThread, cancellationToken);
 
     /// <summary>Main thread only.</summary>
     public GameSnapshot? CaptureOnMainThread()
@@ -93,7 +93,7 @@ internal sealed class GameBridge : IGameBridge
     }
 
     public Task<ActionResult> ExecuteAsync(ActionOption action, CancellationToken cancellationToken) =>
-        MainThread.RunAsync(() => ExecuteOnMainThread(action, cancellationToken));
+        MainThread.RunAsync(() => ExecuteOnMainThread(action, cancellationToken), cancellationToken);
 
     private async Task<ActionResult> ExecuteOnMainThread(ActionOption action, CancellationToken ct)
     {

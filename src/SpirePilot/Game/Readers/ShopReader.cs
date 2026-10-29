@@ -118,6 +118,8 @@ internal static class ShopReader
                 if (card == null) continue;
                 var info = ModelText.Card(card, "s" + index, false);
                 int upgrades = SafeUpgrades(card);
+                if (upgrades == 0) info.UpgradedDescription = ModelText.UpgradePreview(card, info.Description, inCombat: false);
+                Glossary.NoteCard(card);
                 var id = ModelText.SafeId(card) + (upgrades > 0 ? "+" + upgrades : "");
                 Add(e, "Card", id, info.Name, info.Description, info, SafeBool(() => e.IsOnSale));
             }
@@ -129,6 +131,7 @@ internal static class ShopReader
             {
                 if (e == null || !Stocked(e) || e.Model == null) continue;
                 var relic = ModelText.Relic(e.Model);
+                Glossary.NoteRelic(e.Model);
                 Add(e, "Relic", ModelText.SafeId(e.Model), relic.Name, relic.Description, null, false);
             }
             catch (Exception ex) { ThrottledLog.Warn("shop:relic", "shop relic unreadable: " + ex.Message); }
@@ -139,6 +142,7 @@ internal static class ShopReader
             {
                 if (e == null || !Stocked(e) || e.Model == null) continue;
                 var potion = ModelText.Potion(e.Model, -1, false);
+                Glossary.NotePotion(e.Model);
                 Add(e, "Potion", ModelText.SafeId(e.Model), potion?.Name ?? ModelText.SafeId(e.Model), potion?.Description ?? "", null, false);
             }
             catch (Exception ex) { ThrottledLog.Warn("shop:potion", "shop potion unreadable: " + ex.Message); }

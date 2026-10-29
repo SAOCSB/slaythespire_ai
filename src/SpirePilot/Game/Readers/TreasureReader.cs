@@ -185,7 +185,7 @@ internal static class TreasureReader
             return;
         }
 
-        var holders = SceneUtil.Descendants<NTreasureRoomRelicHolder>(collection).Where(h => SceneUtil.VisibleInTree(h)).ToList();
+        var holders = SceneUtil.Descendants<NTreasureRoomRelicHolder>(collection, intoMatches: false).Where(h => SceneUtil.VisibleInTree(h)).ToList();
         int picks = 0;
         for (int i = 0; i < infos.Count; i++)
         {

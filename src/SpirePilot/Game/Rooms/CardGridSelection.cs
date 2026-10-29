@@ -90,10 +90,12 @@ internal static class CardGridSelection
         };
         snap.Selection = sel;
 
+        bool upgrade = sel.Purpose == "Upgrade";
         var infos = new List<CardInfo>();
         for (int i = 0; i < cards.Count; i++)
         {
             var ci = RoomUtil.CardInfo(cards[i], "c" + i, inCombat);
+            if (upgrade) ci.UpgradedDescription = ModelText.UpgradePreview(cards[i], ci.Description, inCombat);
             infos.Add(ci);
             sel.Candidates.Add(ci);
             if (selected != null && selected.Contains(cards[i])) sel.SelectedKeys.Add(ci.Key);
@@ -220,7 +222,8 @@ internal static class CardGridSelection
     }
 
     private static List<NGridCardHolder> VisibleHolders(Node screen) =>
-        SceneUtil.ByScreenPosition(SceneUtil.Descendants<NGridCardHolder>(screen).Where(h => SceneUtil.VisibleInTree(h) && h.CardModel != null).ToList());
+        SceneUtil.ByScreenPosition(SceneUtil.Descendants<NGridCardHolder>(screen, intoMatches: false)
+            .Where(h => SceneUtil.VisibleInTree(h) && h.CardModel != null).ToList());
 
     private static NCardGrid? Grid(NCardGridSelectionScreen screen) =>
         RoomUtil.NodeOf<NCardGrid>(screen, "_grid", "%CardGrid") ?? SceneUtil.First<NCardGrid>(screen);
@@ -375,7 +378,7 @@ internal static class CardGridSelection
         try { holder = Grid(screen)?.GetCardHolder(card); }
         catch (Exception) { /* not displayed */ }
         if (SceneUtil.Alive(holder) && ReferenceEquals(holder!.CardModel, card)) return holder;
-        return SceneUtil.Descendants<NGridCardHolder>(screen).FirstOrDefault(h => ReferenceEquals(h.CardModel, card));
+        return SceneUtil.Descendants<NGridCardHolder>(screen, intoMatches: false).FirstOrDefault(h => ReferenceEquals(h.CardModel, card));
     }
 
     /// <summary>
@@ -495,10 +498,10 @@ internal static class CardGridSelection
     public static async Task<ActionResult> Confirm(NCardGridSelectionScreen screen, CancellationToken ct)
     {
         if (!SceneUtil.Alive(screen)) return ActionResult.Fail("selection screen is gone");
-        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var time = new FrameTime();
         int mainClicks = 0, cooldown = 0;
         bool pressedAnything = false;
-        while (sw.Elapsed < UiActions.DefaultTimeout && !ct.IsCancellationRequested)
+        while (time.Elapsed < UiActions.DefaultTimeout && !ct.IsCancellationRequested)
         {
             if (Closed(screen)) break;
             if (PreviewConfirm(screen) is { } preview)
@@ -518,12 +521,12 @@ internal static class CardGridSelection
                 mainClicks++;
                 cooldown = 5;
             }
-            else if (!pressedAnything && sw.Elapsed > TimeSpan.FromSeconds(2))
+            else if (!pressedAnything && time.Elapsed > TimeSpan.FromSeconds(2))
             {
                 // Nothing became pressable (a preview may need a moment to animate in, hence the grace period).
                 return ActionResult.Fail("no confirm button is enabled (select more cards first?)");
             }
-            await MainThread.NextFrame();
+            await time.NextFrame();
         }
         if (!Closed(screen)) return ActionResult.Fail("confirm selection: no effect (timed out)");
         await RoomUtil.SettleAsync(ct);
@@ -573,13 +576,13 @@ internal static class CardGridSelection
                 },
                 new Dictionary<string, string> { [ActionArgs.Card] = ci.Key, [ActionArgs.Index] = i.ToString() }, unpredictable: true);
         }
-        var confirm = SceneUtil.Descendants<NConfirmButton>(screen).FirstOrDefault(SceneUtil.Usable);
+        var confirm = SceneUtil.Descendants<NConfirmButton>(screen, intoMatches: false).FirstOrDefault(SceneUtil.Usable);
         if (confirm != null)
         {
             sel.CanConfirm = true;
             sink.Add(ActionKind.ConfirmSelection, RoomUtil.T("act.confirm"), "confirm", ct => PressUntilLeft(screen, confirm, "confirm", ct), unpredictable: true);
         }
-        var back = SceneUtil.Descendants<NBackButton>(screen).FirstOrDefault(SceneUtil.Usable);
+        var back = SceneUtil.Descendants<NBackButton>(screen, intoMatches: false).FirstOrDefault(SceneUtil.Usable);
         if (back != null)
         {
             sel.CanCancel = true;
@@ -592,8 +595,8 @@ internal static class CardGridSelection
     {
         try
         {
-            var holders = SceneUtil.Descendants<NGridCardHolder>(screen).Count(h => SceneUtil.VisibleInTree(h));
-            var buttons = SceneUtil.Descendants<NConfirmButton>(screen).Count(SceneUtil.Usable);
+            var holders = SceneUtil.Descendants<NGridCardHolder>(screen, intoMatches: false).Count(h => SceneUtil.VisibleInTree(h));
+            var buttons = SceneUtil.Descendants<NConfirmButton>(screen, intoMatches: false).Count(SceneUtil.Usable);
             return holders + "/" + buttons;
         }
         catch (Exception) { return ""; }

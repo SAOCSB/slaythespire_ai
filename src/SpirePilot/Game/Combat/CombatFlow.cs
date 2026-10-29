@@ -360,11 +360,12 @@ internal static class CombatFlow
 
     /// <summary>
     /// Waits frame by frame until <paramref name="done"/> holds, a choice prompt opens (when
-    /// <paramref name="stopOnChoice"/>), the fight ends, the timeout passes or the token is cancelled.
+    /// <paramref name="stopOnChoice"/>), the fight ends, the timeout (game time, <see cref="FrameTime"/>) passes or
+    /// the token is cancelled.
     /// </summary>
     public static async Task<WaitOutcome> WaitFor(Func<bool> done, TimeSpan timeout, CancellationToken ct, bool stopOnChoice = true)
     {
-        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var time = new FrameTime();
         while (true)
         {
             if (ct.IsCancellationRequested) return WaitOutcome.Cancelled;
@@ -378,8 +379,8 @@ internal static class CombatFlow
             try { over = CombatManager.Instance is not { IsInProgress: true }; }
             catch (Exception) { over = true; }
             if (over) return WaitOutcome.CombatOver;
-            if (sw.Elapsed > timeout) return WaitOutcome.TimedOut;
-            await MainThread.NextFrame();
+            if (time.Elapsed > timeout) return WaitOutcome.TimedOut;
+            await time.NextFrame();
         }
     }
 }

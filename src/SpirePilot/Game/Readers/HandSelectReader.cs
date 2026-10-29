@@ -72,13 +72,14 @@ internal static class HandSelectReader
             CanCancel = false,
         };
 
+        bool upgrade = info.Purpose == "Upgrade";
         int k = 0;
         var selectable = new List<(NHandCardHolder Holder, CardModel Card, string Key, CardInfo Info)>();
         foreach (var holder in sel.Selectable)
         {
             var card = holder.CardModel;
             string key = "c" + k++;
-            var ci = Candidate(card, key);
+            var ci = Candidate(card, key, upgrade);
             info.Candidates.Add(ci);
             selectable.Add((holder, card, key, ci));
         }
@@ -86,7 +87,7 @@ internal static class HandSelectReader
         foreach (var (card, holder) in sel.Selected)
         {
             string key = "c" + k++;
-            var ci = Candidate(card, key);
+            var ci = Candidate(card, key, upgrade);
             info.Candidates.Add(ci);
             info.SelectedKeys.Add(key);
             selected.Add((card, holder, key, ci));
@@ -122,12 +123,14 @@ internal static class HandSelectReader
             sink.Add(ActionKind.ConfirmSelection, L10n.T("act.confirm"), "confirm", Confirm, unpredictable: true);
     }
 
-    private static CardInfo Candidate(CardModel card, string key)
+    private static CardInfo Candidate(CardModel card, string key, bool upgrade)
     {
         var info = ModelText.Card(card, key, inCombat: true);
         // Playability of a card is irrelevant while choosing it.
         info.Playable = null;
         info.UnplayableReason = null;
+        if (upgrade) info.UpgradedDescription = ModelText.UpgradePreview(card, info.Description, inCombat: true);
+        Glossary.NoteCard(card);
         return info;
     }
 

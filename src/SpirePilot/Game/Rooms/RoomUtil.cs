@@ -316,9 +316,10 @@ internal static class RoomUtil
         catch (Exception) { return id; }
     }
 
-    /// <summary>Snapshot data of a card, never throwing.</summary>
+    /// <summary>Snapshot data of a card offered on screen (its keyword tips go to the glossary), never throwing.</summary>
     public static CardInfo CardInfo(CardModel card, string key, bool inCombat)
     {
+        Glossary.NoteCard(card);
         try { return ModelText.Card(card, key, inCombat); }
         catch (Exception)
         {
@@ -328,8 +329,10 @@ internal static class RoomUtil
         }
     }
 
+    /// <summary>Snapshot data of a relic offered on screen (its keyword tips go to the glossary), never throwing.</summary>
     public static RelicInfo RelicInfo(RelicModel relic)
     {
+        Glossary.NoteRelic(relic);
         try { return ModelText.Relic(relic); }
         catch (Exception) { return new RelicInfo { Id = ModelText.SafeId(relic) }; }
     }

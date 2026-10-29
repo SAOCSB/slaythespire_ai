@@ -15,15 +15,27 @@ internal static class SceneUtil
     /// <summary>Visible, enabled clickable control.</summary>
     public static bool Usable(NClickableControl? b) => VisibleInTree(b) && b!.IsEnabled;
 
-    public static IEnumerable<T> Descendants<T>(Node? root, int maxDepth = 64) where T : class
+    /// <summary>
+    /// Nodes of type <typeparamref name="T"/> below <paramref name="root"/>, in child order. With
+    /// <paramref name="intoMatches"/> false a match's own subtree is not searched (a card holder's card, a button's
+    /// label and icons), and at most <paramref name="maxNodes"/> nodes are visited: holder and button searches run on
+    /// every capture, some on every frame of a wait.
+    /// </summary>
+    public static IEnumerable<T> Descendants<T>(Node? root, int maxDepth = 64, bool intoMatches = true, int maxNodes = int.MaxValue)
+        where T : class
     {
         if (!Alive(root)) yield break;
         var stack = new Stack<(Node node, int depth)>();
         stack.Push((root!, 0));
-        while (stack.Count > 0)
+        int visited = 0;
+        while (stack.Count > 0 && visited++ < maxNodes)
         {
             var (node, depth) = stack.Pop();
-            if (node is T match && !ReferenceEquals(node, root)) yield return match;
+            if (node is T match && !ReferenceEquals(node, root))
+            {
+                yield return match;
+                if (!intoMatches) continue;
+            }
             if (depth >= maxDepth) continue;
             int count;
             try { count = node.GetChildCount(); }

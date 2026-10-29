@@ -88,6 +88,12 @@ public sealed class GameSnapshot
 
     public ActionOption? FindAction(string id) =>
         Actions.FirstOrDefault(a => string.Equals(a.Id, id, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// A potion use offered outside combat: an optional extra next to the screen's own actions, never what moves the
+    /// run on (a screen with one action of its own plus such potions still has one real choice).
+    /// </summary>
+    public bool IsOutOfCombatPotion(ActionOption a) => a.Kind == ActionKind.UsePotion && Combat == null;
 }
 
 public sealed class RunInfo

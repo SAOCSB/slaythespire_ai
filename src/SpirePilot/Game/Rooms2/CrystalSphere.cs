@@ -23,7 +23,7 @@ internal static class CrystalSphere
         // works from the UI alone: the cells carry their public cell entities, the buttons and labels are nodes.
         var game = Reflect.Get<CrystalSphereMinigame>(screen, "_entity");
 
-        var cells = SceneUtil.Descendants<NCrystalSphereCell>(screen)
+        var cells = SceneUtil.Descendants<NCrystalSphereCell>(screen, intoMatches: false)
             .Where(c => SceneUtil.VisibleInTree(c) && SafeEntity(c) != null)
             .OrderBy(c => c.Entity.Y).ThenBy(c => c.Entity.X)
             .ToList();
