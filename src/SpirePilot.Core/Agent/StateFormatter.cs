@@ -126,12 +126,26 @@ public sealed class StateFormatter
                 incoming += d * Math.Max(1, i.Hits ?? 1);
             }
         int unblocked = Math.Max(0, incoming - me.Block);
-        int poison = me.Powers.Where(p => p.Id.Contains("POISON", StringComparison.OrdinalIgnoreCase)).Sum(p => p.Amount);
-        int doom = me.Powers.Where(p => p.Id.Contains("DOOM", StringComparison.OrdinalIgnoreCase)).Sum(p => p.Amount);
+        int Mine(string id) => me.Powers.Where(p => p.Id.Contains(id, StringComparison.OrdinalIgnoreCase)).Sum(p => p.Amount);
+        int poison = Mine("POISON");
+        int doom = Mine("DOOM");
+        // Constrict hits at the end of your turn and is blocked by whatever block the attacks left over.
+        int constrict = Mine("CONSTRICT");
+        int constrictHit = Math.Max(0, constrict - Math.Max(0, me.Block - incoming));
+        // Magic Bomb goes off after the turn and ignores block.
+        int bomb = Mine("MAGIC_BOMB");
+        // Sandpit belongs to the enemy and counts down to an instant kill, whatever HP or block you have.
+        int? sandpit = c.Enemies.Where(e => e.IsAlive).SelectMany(e => e.Powers)
+            .Where(p => p.Id.Contains("SANDPIT", StringComparison.OrdinalIgnoreCase) && (p.TargetNetId == null || p.TargetNetId == me.NetId))
+            .Select(p => (int?)p.Amount).Min();
         sb.Append("Threat: incoming ").Append(incoming).Append(", unblocked ").Append(unblocked);
+        if (constrict > 0) sb.Append(", constrict ").Append(constrictHit);
+        if (bomb > 0) sb.Append(", magic bomb ").Append(bomb);
         if (poison > 0) sb.Append(", poison ").Append(poison);
         if (doom > 0) sb.Append(", doom ").Append(doom);
-        bool lethal = unblocked + poison >= me.Hp || doom > 0 && doom >= me.Hp - unblocked;
+        if (sandpit is { } sp) sb.Append(", sandpit ").Append(sp);
+        int damage = unblocked + constrictHit + bomb;
+        bool lethal = damage + poison >= me.Hp || doom > 0 && doom >= me.Hp - damage || sandpit is <= 1;
         sb.Append(lethal ? " — ENDING THE TURN NOW WOULD KILL YOU" : "").AppendLine();
     }
 
@@ -229,7 +243,7 @@ public sealed class StateFormatter
         var sb = new StringBuilder();
         if (withKey && c.Key.Length > 0) sb.Append(c.Key).Append(' ');
         sb.Append(c.Name);
-        if (c.Upgraded && !c.Name.EndsWith('+')) sb.Append('+');
+        if (c.Upgraded && !c.Name.Contains('+')) sb.Append('+');
         sb.Append(" [").Append(c.Cost switch { null => "-", -1 => "X", var v => v.ToString() });
         if (c.StarCost is > 0) sb.Append("+").Append(c.StarCost).Append('★');
         sb.Append("] ").Append(c.Type);
@@ -242,7 +256,7 @@ public sealed class StateFormatter
     }
 
     private static string Grouped(IEnumerable<CardInfo> cards) =>
-        string.Join(", ", cards.GroupBy(c => c.Name + (c.Upgraded && !c.Name.EndsWith('+') ? "+" : ""))
+        string.Join(", ", cards.GroupBy(c => c.Name + (c.Upgraded && !c.Name.Contains('+') ? "+" : ""))
             .OrderBy(g => g.Key, StringComparer.Ordinal)
             .Select(g => g.Count() > 1 ? $"{g.Key} x{g.Count()}" : g.Key));
 

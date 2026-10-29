@@ -104,7 +104,7 @@ public sealed class DecisionEngine
         {
             var step = snapshot.Actions.FirstOrDefault(a => a.SemanticKey == key);
             if (step != null)
-                return new AgentDecision { Source = DecisionSource.Plan, ActionIds = { step.Id }, Thought = "(plan)", HandledInboxIds = info.Select(m => m.Id).ToList() };
+                return new AgentDecision { Source = DecisionSource.Plan, ActionIds = { step.Id }, Thought = "(plan)" };
             Memory.ClearPlan();
             Memory.AddHistory("(plan stopped: planned action no longer available)");
         }
@@ -115,20 +115,21 @@ public sealed class DecisionEngine
 
         // 2) Rules from settings. Soft rules (pinned route / planner routing) yield to a live instruction or a
         //    teammate request, which the LLM must see; hard rules (character allow-list) always apply.
+        // Informational messages (answers, AI chat) are not marked read on these non-LLM paths: they are context
+        // for the next prompt, which is the only place they can matter.
         if (RuleDecision(snapshot, settings, softRules: !hasInstruction && actionable.Count == 0) is { } rule)
-        {
-            rule.HandledInboxIds = info.Select(m => m.Id).ToList();
             return rule;
-        }
+        // Owner rules may have filtered the menu (hard restrictions); with nothing left there is nothing to do.
+        if (snapshot.Actions.Count == 0) return null;
 
         // 3) Trivial decisions.
-        if (settings.Control.SkipTrivialDecisions && actionable.Count == 0 && !hasInstruction && IsTrivial(snapshot))
-            return new AgentDecision { Source = DecisionSource.Trivial, ActionIds = { snapshot.Actions[0].Id }, Thought = "(only option)", HandledInboxIds = info.Select(m => m.Id).ToList() };
+        if (settings.Control.SkipTrivialDecisions && actionable.Count == 0 && !hasInstruction && TrivialAction(snapshot) is { } only)
+            return new AgentDecision { Source = DecisionSource.Trivial, ActionIds = { only.Id }, Thought = "(only option)" };
 
         // 4) Ask the LLM (unless it keeps failing and is cooling down).
         var context = BuildContext(snapshot, settings, actionable, info, liveInstruction);
         if (_clock() < _llmCooldownUntil && settings.Control.FallbackOnLlmFailure)
-            return Fallback(snapshot, settings, "AI temporarily unavailable: " + LastLlmError, info);
+            return Fallback(snapshot, settings, "AI temporarily unavailable: " + LastLlmError);
 
         try
         {
@@ -169,11 +170,11 @@ public sealed class DecisionEngine
             }
             if (!settings.Control.FallbackOnLlmFailure) throw;
             // Teammate requests stay unread: the rule-based fallback cannot answer them, the LLM can once it is back.
-            return Fallback(snapshot, settings, ex.Message, info);
+            return Fallback(snapshot, settings, ex.Message);
         }
     }
 
-    private AgentDecision Fallback(GameSnapshot snapshot, PilotSettings settings, string why, IEnumerable<TeamMessage> seen)
+    private AgentDecision Fallback(GameSnapshot snapshot, PilotSettings settings, string why)
     {
         var fb = FallbackPolicy.Choose(snapshot, settings) ?? throw new LlmException("no fallback action: " + why);
         Memory.ClearPlan();
@@ -182,28 +183,17 @@ public sealed class DecisionEngine
             Source = DecisionSource.Fallback,
             ActionIds = { fb.Id },
             Thought = "(fallback) " + why,
-            HandledInboxIds = seen.Select(m => m.Id).ToList(),
         };
     }
 
     private static AgentDecision? RuleDecision(GameSnapshot s, PilotSettings settings, bool softRules)
     {
-        if (s.Screen == ScreenKind.CharacterSelect && s.CharacterSelect is { Characters.Count: > 0 } info &&
-            settings.Characters.Allowed.Count > 0 && CharacterPicker.AllowedIds(info, settings).Count == 0)
-            throw new PilotConfigException(L10n.T("status.no_allowed_character", string.Join(", ", settings.Characters.Allowed)));
-        if (s.Screen == ScreenKind.CharacterSelect && settings.Characters.Policy != CharacterPickPolicy.AiChoice)
+        if (s.Screen == ScreenKind.CharacterSelect && CharacterRules(s, settings) is { } characterRule)
+            return characterRule;
+        if (!settings.Team.AllowGivingPotions)
         {
-            var pick = CharacterPicker.Choose(s, settings);
-            if (pick != null) return new AgentDecision { Source = DecisionSource.Rule, ActionIds = { pick.Id }, Thought = "(character policy)" };
-        }
-        if (s.Screen == ScreenKind.CharacterSelect && settings.Characters.Policy == CharacterPickPolicy.AiChoice && s.CharacterSelect is { } cs)
-        {
-            // Hard rule as a menu filter: the model may only pick allowed characters.
-            var allowed = CharacterPicker.AllowedIds(cs, settings);
-            s.Actions.RemoveAll(a => a.Kind == ActionKind.SelectCharacter && !allowed.Contains(a.Arg(ActionArgs.Character) ?? "", StringComparer.OrdinalIgnoreCase));
-            var current = cs.Characters.FirstOrDefault(c => c.Selected);
-            if (current == null || !allowed.Contains(current.Id, StringComparer.OrdinalIgnoreCase))
-                s.Actions.RemoveAll(a => a.Kind == ActionKind.Embark);
+            // Hard rule: no potion (or throw) aimed at a teammate when the owner said so.
+            s.Actions.RemoveAll(a => a.Kind == ActionKind.UsePotion && TargetsTeammate(a, s));
         }
         if (softRules && s.Screen == ScreenKind.Map && s.Map is { } map)
         {
@@ -222,13 +212,58 @@ public sealed class DecisionEngine
         return null;
     }
 
-    /// <summary>One action, or only "proceed"/"dismiss" style actions.</summary>
-    public static bool IsTrivial(GameSnapshot s)
+    /// <summary>
+    /// Character select as hard owner rules, whatever the pick policy: only allowed characters can be selected,
+    /// embarking needs an allowed character, and the ascension setting is applied before embarking. Returns the
+    /// rule's action, or null with the menu filtered.
+    /// </summary>
+    private static AgentDecision? CharacterRules(GameSnapshot s, PilotSettings settings)
     {
-        if (s.Actions.Count == 1) return s.Actions[0].Kind != ActionKind.DiscardPotion;
-        return s.Actions.All(a => a.Kind is ActionKind.Proceed or ActionKind.DismissPopup) ||
-               s.Screen == ScreenKind.Popup && s.Actions.Count(a => a.Kind == ActionKind.DismissPopup) == 1;
+        AgentDecision Rule(ActionOption a, string why) => new() { Source = DecisionSource.Rule, ActionIds = { a.Id }, Thought = why };
+        if (s.CharacterSelect is not { Characters.Count: > 0 } cs)
+        {
+            // Without the character list the restriction cannot be checked: never select or embark blindly.
+            s.Actions.RemoveAll(a => a.Kind is ActionKind.SelectCharacter or ActionKind.Embark or ActionKind.SetAscension);
+            return null;
+        }
+        var allowed = CharacterPicker.AllowedIds(cs, settings);
+        if (settings.Characters.Allowed.Count > 0 && allowed.Count == 0)
+            throw new PilotConfigException(L10n.T("status.no_allowed_character", string.Join(", ", settings.Characters.Allowed)));
+
+        s.Actions.RemoveAll(a => a.Kind == ActionKind.SelectCharacter && !allowed.Contains(a.Arg(ActionArgs.Character) ?? "", StringComparer.OrdinalIgnoreCase));
+        var current = cs.Characters.FirstOrDefault(c => c.Selected);
+        bool currentAllowed = current != null && allowed.Contains(current.Id, StringComparer.OrdinalIgnoreCase);
+        if (!currentAllowed)
+        {
+            s.Actions.RemoveAll(a => a.Kind is ActionKind.Embark or ActionKind.SetAscension);
+        }
+        else
+        {
+            int wanted = CharacterPicker.DesiredAscension(cs, settings);
+            if (cs.Ascension != wanted &&
+                s.Actions.FirstOrDefault(a => a.Kind == ActionKind.SetAscension && a.IntArg(ActionArgs.Ascension) == wanted) is { } asc)
+                return Rule(asc, "(ascension setting)");
+            // The owner sets the ascension; the model does not change it.
+            s.Actions.RemoveAll(a => a.Kind == ActionKind.SetAscension);
+        }
+        if (settings.Characters.Policy != CharacterPickPolicy.AiChoice && CharacterPicker.Choose(s, settings) is { } pick)
+            return Rule(pick, "(character policy)");
+        return null;
     }
+
+    /// <summary>An action aimed at another player: its semantic key names the target as "…@P:&lt;netId&gt;".</summary>
+    public static bool TargetsTeammate(ActionOption a, GameSnapshot s)
+    {
+        var key = a.SemanticKey;
+        int at = key.IndexOf("@P:", StringComparison.Ordinal);
+        if (at < 0) return false;
+        var idText = new string(key[(at + 3)..].TakeWhile(char.IsDigit).ToArray());
+        return ulong.TryParse(idText, out var id) && id != s.LocalPlayerId;
+    }
+
+    /// <summary>The action to take without asking when the menu has exactly one choice (never discarding a potion).</summary>
+    public static ActionOption? TrivialAction(GameSnapshot s) =>
+        s.Actions.Count == 1 && s.Actions[0].Kind != ActionKind.DiscardPotion ? s.Actions[0] : null;
 
     private DecisionContext BuildContext(GameSnapshot s, PilotSettings settings, List<TeamMessage> inbox, List<TeamMessage> info, string? liveInstruction)
     {

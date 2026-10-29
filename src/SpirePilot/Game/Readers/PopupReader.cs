@@ -16,9 +16,9 @@ namespace SpirePilot.Game.Readers;
 /// <summary>
 /// Modals, confirmation popups, FTUE tutorials, unlock screens: describe and offer confirm/dismiss actions. Called for
 /// ScreenKind.Popup. The popup's text goes into the snapshot notes. Rules: tutorials and info popups are simply
-/// confirmed (multi-page tutorials page by page); confirmations of destructive actions (abandon run, disconnect,
-/// quit, delete) only expose their cancel button; popups that are the human's decision (mod loading, settings,
-/// multiplayer invites / warnings) expose nothing.
+/// confirmed (multi-page tutorials page by page). Confirmations of destructive actions (abandon run, disconnect,
+/// quit, delete) expose nothing: the AI never opens them, so the human did, and only the human answers them.
+/// Popups that are the human's decision (mod loading, settings, multiplayer invites / warnings) expose nothing either.
 /// </summary>
 internal static class PopupReader
 {
@@ -114,12 +114,7 @@ internal static class PopupReader
         bool destructive = texts.Any(t => DestructiveWords.Any(w => t.Contains(w, StringComparison.OrdinalIgnoreCase)));
         if (destructive)
         {
-            if (no != null)
-            {
-                snap.Notes.Add(R2Text.T("note.popup_destructive"));
-                AddDismiss(sink, no, node!, isModal);
-            }
-            else snap.Notes.Add(R2Text.T("note.popup_human"));
+            snap.Notes.Add(R2Text.T("note.popup_human"));
             return;
         }
         if (yes != null) AddConfirm(sink, yes, node!, isModal, ftue: false);
@@ -207,20 +202,12 @@ internal static class PopupReader
 
     // ---------------------------------------------------------------- actions
 
-    private static void AddCancelOnly(GameSnapshot snap, ActionSink sink, Node popup, bool isModal)
-    {
-        var vp = VerticalPopup(popup);
-        NClickableControl? no = Usable(vp?.NoButton) ? vp!.NoButton : null;
-        no ??= RoomUtil.Node<NClickableControl>(popup, "_noButton");
-        if (!Usable(no)) no = ButtonsByName(popup).no;
-        if (no == null)
-        {
-            snap.Notes.Add(R2Text.T("note.popup_human"));
-            return;
-        }
-        snap.Notes.Add(R2Text.T("note.popup_destructive"));
-        AddDismiss(sink, no, popup, isModal);
-    }
+    /// <summary>
+    /// Abandon / disconnect confirmations: the human opened them (the AI is never offered those buttons), so neither
+    /// answer is the AI's to give — cancelling would stop the human from quitting while the pilot runs.
+    /// </summary>
+    private static void AddCancelOnly(GameSnapshot snap, ActionSink sink, Node popup, bool isModal) =>
+        snap.Notes.Add(R2Text.T("note.popup_human"));
 
     /// <summary>Captions of buttons that leave the game flow (bug reports, feedback, links).</summary>
     private static readonly string[] NeverPressText = { "report", "bug", "feedback", "discord", "报告", "反馈", "问题" };

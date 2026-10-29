@@ -66,6 +66,7 @@ internal static class PilotRuntime
         };
         Loop = new PilotLoop(Bridge, Engine, Team, () => Store.Current, log);
         Loop.RunStarted += OnRunStarted;
+        Loop.NewRunDetected += OnNewRunDetected;
         var traces = new TraceWriter(DataDir);
         Loop.DecisionTraced += t => { if (Store.Current.SaveDecisionTraces) traces.Write(t); };
         // Status changes come from the loop's worker thread; the team link only runs on the main thread.
@@ -167,6 +168,16 @@ internal static class PilotRuntime
         s.Characters.RoundRobinCursor++;
         SaveSettings(s);
         Team.AddSystemNote(L10n.T("ui.run_started"));
+    }
+
+    /// <summary>A pinned route belongs to the map it was drawn on; a new run has a different map.</summary>
+    private static void OnNewRunDetected()
+    {
+        if (Settings.Route.PinnedPath.Count == 0) return;
+        var s = SettingsStore.Clone(Settings);
+        s.Route.PinnedPath.Clear();
+        SaveSettings(s);
+        ModLog.Info("new run: pinned route cleared");
     }
 
     private static void ApplyHttpApi()

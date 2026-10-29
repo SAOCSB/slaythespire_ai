@@ -64,7 +64,7 @@ public static class FallbackPolicy
                 return Of(ActionKind.Proceed) ?? actions[0];
 
             case ScreenKind.Event:
-                return Of(ActionKind.ChooseEventOption) ?? Of(ActionKind.Proceed) ?? actions[0];
+                return SafeEventOption(s) ?? Of(ActionKind.Proceed) ?? actions[0];
 
             case ScreenKind.RestSite:
             {
@@ -91,6 +91,32 @@ public static class FallbackPolicy
             default:
                 return Of(ActionKind.Proceed) ?? Of(ActionKind.DismissPopup) ?? actions[0];
         }
+    }
+
+    private static readonly string[] CostWords =
+        { "lose", "hp", "damage", "curse", "max hp", "失去", "生命", "伤害", "诅咒", "受到" };
+    private static readonly string[] LeaveWords = { "leave", "continue", "ignore", "离开", "继续", "无视", "忽略" };
+
+    /// <summary>
+    /// Events without the LLM: never a lethal option; when hurt, prefer leaving or an option without an HP / curse
+    /// cost; otherwise the first option.
+    /// </summary>
+    private static ActionOption? SafeEventOption(GameSnapshot s)
+    {
+        var options = s.Actions.Where(a => a.Kind == ActionKind.ChooseEventOption && a.Arg("lethal") != "true" &&
+                                           !a.Label.Contains("LETHAL", StringComparison.OrdinalIgnoreCase)).ToList();
+        if (options.Count == 0) return null;
+        string Text(ActionOption a)
+        {
+            var info = s.Event?.Options.FirstOrDefault(o => a.IntArg(ActionArgs.Index) == o.Index);
+            return (a.Label + " " + info?.Description).ToLowerInvariant();
+        }
+        var me = s.LocalPlayer;
+        bool hurt = me is { MaxHp: > 0 } && me.Hp < me.MaxHp * 0.5;
+        if (!hurt) return options[0];
+        return options.FirstOrDefault(a => LeaveWords.Any(w => Text(a).Contains(w)))
+               ?? options.FirstOrDefault(a => !CostWords.Any(w => Text(a).Contains(w)))
+               ?? options[^1];
     }
 
     private static bool IsCardReward(ActionOption a, GameSnapshot s)

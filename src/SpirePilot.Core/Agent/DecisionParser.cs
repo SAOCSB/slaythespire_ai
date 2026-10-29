@@ -104,8 +104,10 @@ public static class DecisionParser
             // Remaining plan steps are remembered by semantic key so they survive index shifts.
             foreach (var id in decision.ActionIds.Skip(1))
             {
+                // A step without a stable key cannot be replayed later: the plan is only trusted up to it.
                 var key = snapshot.FindAction(id)?.SemanticKey;
-                if (!string.IsNullOrEmpty(key)) decision.PlanKeys.Add(key);
+                if (string.IsNullOrEmpty(key)) break;
+                decision.PlanKeys.Add(key);
             }
 
             if (TryGet(root, out var messages, "messages", "say", "team_messages") && messages.ValueKind == JsonValueKind.Array)
@@ -247,11 +249,12 @@ public static class DecisionParser
         }
     }
 
+    /// <summary>Finds the first alias present, in alias priority order (not document order).</summary>
     private static bool TryGet(JsonElement obj, out JsonElement value, params string[] names)
     {
-        foreach (var p in obj.EnumerateObject())
+        foreach (var n in names)
         {
-            foreach (var n in names)
+            foreach (var p in obj.EnumerateObject())
             {
                 if (string.Equals(p.Name, n, StringComparison.OrdinalIgnoreCase))
                 {

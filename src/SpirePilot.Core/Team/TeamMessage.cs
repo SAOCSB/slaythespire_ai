@@ -69,10 +69,25 @@ public sealed class TeamMessage
     /// <summary>Clamp field sizes so a malformed or hostile message cannot blow up the UI or the prompt.</summary>
     public TeamMessage Sanitized()
     {
-        static string? Cut(string? s, int max) => s == null ? null : (s.Length > max ? s[..max] : s).Replace('\0', ' ');
+        // Peers are untrusted: one line per field, no control characters, bounded length.
+        static string? Cut(string? s, int max)
+        {
+            if (s == null) return null;
+            if (s.Length > max) s = s[..max];
+            return string.Create(s.Length, s, static (span, src) =>
+            {
+                for (int i = 0; i < src.Length; i++) span[i] = char.IsControl(src[i]) ? ' ' : src[i];
+            });
+        }
+        static string? IdOf(string? s)
+        {
+            if (string.IsNullOrEmpty(s)) return null;
+            var clean = new string(s.Where(c => c < 128 && (char.IsLetterOrDigit(c) || c is '-' or '_')).Take(32).ToArray());
+            return clean.Length > 0 ? clean : null;
+        }
         return new TeamMessage
         {
-            Id = Cut(Id, 32) ?? NewId(),
+            Id = IdOf(Id) ?? NewId(),
             Kind = Enum.IsDefined(Kind) ? Kind : TeamMessageKind.Chat,
             From = From,
             To = To,
@@ -82,7 +97,7 @@ public sealed class TeamMessage
             Potion = Cut(Potion, 64),
             Debuff = Cut(Debuff, 64),
             Target = Cut(Target, 64),
-            ReplyTo = Cut(ReplyTo, 32),
+            ReplyTo = IdOf(ReplyTo),
             Time = Time,
         };
     }

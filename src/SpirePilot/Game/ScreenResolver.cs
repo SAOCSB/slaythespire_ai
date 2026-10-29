@@ -62,7 +62,12 @@ internal static class ScreenResolver
         try { modal = NModalContainer.Instance?.OpenModal; }
         catch (Exception) { }
         if (modal is Node modalNode && SceneUtil.Alive(modalNode))
-            return new ScreenProbe { Kind = ScreenKind.Popup, Screen = modal, Modal = modalNode, Underlying = current, Name = modalNode.GetType().Name };
+            return new ScreenProbe
+            {
+                Kind = ScreenKind.Popup, Screen = modal, Modal = modalNode, Underlying = current, Name = modalNode.GetType().Name,
+                // A popup over the pause menu / settings / a viewer was opened by the human: theirs to answer.
+                HumanOnlyReason = IsHumanOnly(current) ? "menu open" : null,
+            };
 
         if (current == null)
             return new ScreenProbe { Kind = ScreenKind.Loading, Name = "none" };
@@ -71,9 +76,7 @@ internal static class ScreenResolver
 
         // 2) Human-only menus pushed on top of a run (pause, settings, compendium...).
         if (current is NCapstoneSubmenuStack) return Make(ScreenKind.Unknown, "menu open");
-        if (current is NCardsViewScreen or NCardLibrary or NCardPileScreen or NInspectCardScreen or NInspectRelicScreen or
-            NSendFeedbackScreen or NPatchNotesScreen)
-            return Make(ScreenKind.Unknown, "viewer open");
+        if (IsHumanOnly(current)) return Make(ScreenKind.Unknown, "viewer open");
 
         // 3) Unlock screens after a run behave like popups (one confirm button).
         if (current is NUnlockScreen) return Make(ScreenKind.Popup);
@@ -113,6 +116,10 @@ internal static class ScreenResolver
         }
         return Make(ScreenKind.Unknown);
     }
+
+    private static bool IsHumanOnly(IScreenContext? screen) =>
+        screen is NCapstoneSubmenuStack or NCardsViewScreen or NCardLibrary or NCardPileScreen or NInspectCardScreen or
+            NInspectRelicScreen or NSendFeedbackScreen or NPatchNotesScreen;
 
     /// <summary>True while the hand is in a select mode (discard / exhaust / upgrade from hand ...).</summary>
     public static bool IsHandSelection()

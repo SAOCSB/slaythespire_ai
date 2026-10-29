@@ -155,6 +155,8 @@ public sealed class PowerInfo
     public int Amount { get; set; }
     public bool IsDebuff { get; set; }
     public string Description { get; set; } = "";
+    /// <summary>For a power owned by one creature that threatens another (Sandpit): the threatened player's net id.</summary>
+    public ulong? TargetNetId { get; set; }
 }
 
 public sealed class OrbInfo

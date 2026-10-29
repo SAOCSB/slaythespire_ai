@@ -86,6 +86,8 @@ public sealed class PilotLoop : IDisposable
     private int _sameActionRepeats;
     private bool _runEndedSinceEnabled;
     private PilotMode _lastMode = PilotMode.Off;
+    private bool _wasPaused;
+    private string? _runIdentity;
 
     public PilotStatus Status { get; private set; } = new(PilotState.Off, "");
     public AgentDecision? Advice { get; private set; }
@@ -102,6 +104,8 @@ public sealed class PilotLoop : IDisposable
     public event Action<DecisionTrace>? DecisionTraced;
     /// <summary>Raised after the pilot embarked on a new run (the mod persists the round-robin cursor).</summary>
     public event Action? RunStarted;
+    /// <summary>Raised when the loop sees a different run than before (started by anyone); run memory is already reset.</summary>
+    public event Action? NewRunDetected;
 
     public PilotLoop(IGameBridge bridge, DecisionEngine engine, TeamChatHub team, Func<PilotSettings> settings, IPilotLog log)
     {
@@ -194,20 +198,33 @@ public sealed class PilotLoop : IDisposable
             _lastMode = mode;
             Advice = null;
             AdviceAction = null;
+            // A plan made under another mode may be stale (the human may have played in between).
+            _engine.Memory.ClearPlan();
         }
         if (mode == PilotMode.Off)
         {
+            _engine.Memory.ClearPlan();
             SetStatus(PilotState.Off, L10n.T("status.off"));
             await SafeDelay(IdleDelay * 2, ct).ConfigureAwait(false);
             return;
         }
         if (Paused)
         {
+            if (!_wasPaused)
+            {
+                // Resume starts fresh: no stale plan, no failure counts carried over.
+                _wasPaused = true;
+                _engine.Memory.ClearPlan();
+                _consecutiveFailures = 0;
+                _sameActionRepeats = 0;
+                _lastExecutedKey = null;
+            }
             // Keep showing why we stopped (error / stuck) until the user resumes.
             if (Status.State != PilotState.Error) SetStatus(PilotState.Paused, L10n.T("status.paused"));
             await SafeDelay(IdleDelay, ct).ConfigureAwait(false);
             return;
         }
+        _wasPaused = false;
 
         var snap = await _bridge.CaptureAsync(ct).ConfigureAwait(false);
         if (snap == null || !snap.CanAct || snap.Actions.Count == 0)
@@ -217,8 +234,11 @@ public sealed class PilotLoop : IDisposable
             return;
         }
         if (snap.Screen == ScreenKind.GameOver) _runEndedSinceEnabled = true;
+        DetectNewRun(snap);
         if (!ModeAllows(mode, snap) || !MenuAllowed(snap, settings))
         {
+            // The human acts now; whatever the AI planned is no longer trustworthy.
+            _engine.Memory.ClearPlan();
             SetStatus(PilotState.HumanTurn, L10n.T("status.waiting", snap.Screen.ToString()));
             await SafeDelay(IdleDelay * 2, ct).ConfigureAwait(false);
             return;
@@ -226,11 +246,38 @@ public sealed class PilotLoop : IDisposable
 
         SetStatus(PilotState.Thinking, L10n.T("status.thinking"));
         var instruction = LiveInstruction;
-        var decision = await _engine.DecideAsync(snap, instruction, ct).ConfigureAwait(false);
+        AgentDecision? decision;
+        // Pausing or switching modes while the model thinks cancels the call: the human may already be playing.
+        using (var decideCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
+        {
+            var watcher = WatchForInterruptAsync(mode, decideCts);
+            try
+            {
+                decision = await _engine.DecideAsync(snap, instruction, decideCts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                _engine.Memory.ClearPlan();
+                Emit(PilotEventKind.Info, "decision cancelled (paused or mode changed)");
+                return;
+            }
+            finally
+            {
+                decideCts.Cancel();
+                try { await watcher.ConfigureAwait(false); } catch (Exception) { /* watcher only */ }
+            }
+        }
+        if (Interrupted(mode))
+        {
+            _engine.Memory.ClearPlan();
+            return;
+        }
         var action = decision?.FirstActionId is { } id ? snap.FindAction(id) : null;
         if (decision == null || action == null)
         {
-            await SafeDelay(IdleDelay, ct).ConfigureAwait(false);
+            // Nothing the owner's rules allow here (e.g. no allowed character can be selected): wait for a change.
+            SetStatus(PilotState.Waiting, L10n.T("status.waiting", snap.Screen.ToString()));
+            await SafeDelay(IdleDelay * 2, ct).ConfigureAwait(false);
             return;
         }
         if (decision.Source is DecisionSource.Llm or DecisionSource.Fallback)
@@ -268,6 +315,13 @@ public sealed class PilotLoop : IDisposable
             Emit(PilotEventKind.Info, "state changed before acting; deciding again");
             return;
         }
+        // Last check before anything leaves the machine: the user may have paused or handed this screen back.
+        settings = _settings();
+        if (Interrupted(mode) || !ModeAllows(mode, fresh) || !MenuAllowed(fresh, settings))
+        {
+            _engine.Memory.ClearPlan();
+            return;
+        }
 
         var sentMessages = decision.Messages.Select(m => $"{DecisionParser.KindToWire(m.Kind)}→{m.To}: {m.Text}").ToList();
         SendMessages(decision, fresh, settings);
@@ -296,9 +350,9 @@ public sealed class PilotLoop : IDisposable
         var result = await _bridge.ExecuteAsync(target, ct).ConfigureAwait(false);
         _engine.Memory.AddHistory(HistoryLine(fresh, target, result, decision.Source));
         _team.MarkRead(decision.HandledInboxIds);
-        if (instruction != null)
+        if (instruction != null && decision.Source == DecisionSource.Llm && result.Success)
         {
-            // The instruction was used for a decision that got executed: consume it.
+            // The model saw the instruction and its decision got executed: consume it.
             lock (_lock) if (_liveInstruction == instruction) _liveInstruction = null;
         }
         Emit(PilotEventKind.Action, (result.Success ? "✔ " : "✘ ") + target.Label + (result.Message.Length > 0 ? " — " + result.Message : ""), decision);
@@ -326,6 +380,41 @@ public sealed class PilotLoop : IDisposable
             }
         }
         await SafeDelay(TimeSpan.FromMilliseconds(settings.Control.ActionDelayMs), ct).ConfigureAwait(false);
+    }
+
+    /// <summary>True when the user paused the pilot or changed the mode since <paramref name="mode"/> was read.</summary>
+    private bool Interrupted(PilotMode mode) => Paused || _settings().Control.Mode != mode;
+
+    private async Task WatchForInterruptAsync(PilotMode mode, CancellationTokenSource decide)
+    {
+        var token = decide.Token;
+        while (!token.IsCancellationRequested)
+        {
+            await Task.Delay(IdleDelay, token).ConfigureAwait(false);
+            if (Interrupted(mode))
+            {
+                try { decide.Cancel(); } catch (ObjectDisposedException) { }
+                return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// A different run (new seed, or the floor counter went back) means the memo, history and accepted
+    /// requests belong to another run: forget them, whoever started it.
+    /// </summary>
+    private void DetectNewRun(GameSnapshot snap)
+    {
+        if (!snap.InRun || snap.Run is not { } run) return;
+        var identity = !string.IsNullOrEmpty(run.Seed) ? "seed:" + run.Seed : null;
+        if (identity == null) return;
+        if (_runIdentity != null && _runIdentity != identity)
+        {
+            _engine.Memory.Reset();
+            _log.Info("new run detected; run memory cleared");
+            try { NewRunDetected?.Invoke(); } catch (Exception ex) { _log.Warn("new-run handler failed: " + ex.Message); }
+        }
+        _runIdentity = identity;
     }
 
     /// <summary>Which screens the current mode lets the AI handle.</summary>
@@ -369,7 +458,11 @@ public sealed class PilotLoop : IDisposable
     public static string Fingerprint(GameSnapshot s)
     {
         var sb = new StringBuilder();
-        sb.Append(s.Screen).Append('|').Append(s.CanAct).Append('|');
+        sb.Append(s.Screen).Append('|').Append(s.ScreenName).Append('|').Append(s.CanAct).Append('|');
+        // Screen content too: consecutive pages / popups with the same buttons are different states.
+        if (s.Event is { } ev) sb.Append(ev.Title).Append('/').Append(ev.Body?.Length ?? 0).Append('/').Append(ev.Body?.GetHashCode() ?? 0).Append('|');
+        if (s.Selection is { } sel) sb.Append(sel.Prompt).Append('/').Append(sel.SelectedKeys.Count).Append('|');
+        foreach (var n in s.Notes) sb.Append(n.GetHashCode()).Append(',');
         if (s.LocalPlayer is { } me) sb.Append(me.Hp).Append(',').Append(me.Energy).Append(',').Append(me.Block).Append('|');
         if (s.Combat is { } c) sb.Append(c.Round).Append(',').Append(c.Hand.Count).Append('|');
         foreach (var a in s.Actions) sb.Append(a.SemanticKey.Length > 0 ? a.SemanticKey : a.Label).Append(';');
@@ -424,6 +517,9 @@ public sealed class PilotLoop : IDisposable
                 _log.Info("AI team message dropped by rate limit: " + intent.Text);
                 continue;
             }
+            if (intent.Kind == TeamMessageKind.Accept && intent.ReplyTo != null &&
+                _team.PeekAiInbox().FirstOrDefault(m => m.Id == intent.ReplyTo) is { } accepted)
+                _engine.Memory.TrackAccepted(accepted);
             Emit(PilotEventKind.TeamMessage, "💬 " + intent.Text);
             if (settings.Team.SpeechBubbles)
             {

@@ -71,8 +71,8 @@ public static class PromptBuilder
             foreach (var m in context.InboxInfo) AppendMessage(sb, m, needsAnswer: false);
             foreach (var m in context.OpenRequests)
             {
-                sb.Append("accepted earlier, still open: [").Append(m.Id).Append("] ").Append(m.FromName).Append(" ")
-                  .Append(DecisionParser.KindToWire(m.Kind)).Append(": ").AppendLine(OneLine(m.Text));
+                sb.Append("accepted earlier (check HISTORY whether you already did it): [").Append(m.Id).Append("] ").Append(Safe(m.FromName)).Append(" ")
+                  .Append(DecisionParser.KindToWire(m.Kind)).Append(": ").AppendLine(Safe(m.Text));
             }
             sb.AppendLine("```");
         }
@@ -104,14 +104,21 @@ public static class PromptBuilder
 
     private static void AppendMessage(StringBuilder sb, TeamMessage m, bool needsAnswer)
     {
-        sb.Append('[').Append(m.Id).Append("] ").Append(m.FromName).Append(m.FromAi ? " (AI)" : "")
+        sb.Append('[').Append(Safe(m.Id)).Append("] ").Append(Safe(m.FromName)).Append(m.FromAi ? " (AI)" : "")
           .Append(" → ").Append(m.To == 0 ? "everyone" : "you").Append(" | ").Append(DecisionParser.KindToWire(m.Kind));
-        if (m.Potion != null) sb.Append(" potion=").Append(m.Potion);
-        if (m.Debuff != null) sb.Append(" debuff=").Append(m.Debuff);
-        if (m.Target != null) sb.Append(" target=").Append(m.Target);
-        if (m.ReplyTo != null) sb.Append(" reply_to=").Append(m.ReplyTo);
-        sb.Append(needsAnswer ? "" : " (no reply needed)").Append(": ").AppendLine(OneLine(m.Text));
+        if (m.Potion != null) sb.Append(" potion=").Append(Safe(m.Potion));
+        if (m.Debuff != null) sb.Append(" debuff=").Append(Safe(m.Debuff));
+        if (m.Target != null) sb.Append(" target=").Append(Safe(m.Target));
+        if (m.ReplyTo != null) sb.Append(" reply_to=").Append(Safe(m.ReplyTo));
+        sb.Append(needsAnswer ? "" : " (no reply needed)").Append(": ").AppendLine(Safe(m.Text));
     }
+
+    /// <summary>
+    /// Teammate-controlled text inside the inbox fence: one line, no backticks (cannot close the fence), no square
+    /// brackets (cannot forge a "[OWNER INSTRUCTION]"-style section header).
+    /// </summary>
+    internal static string Safe(string? s) =>
+        string.IsNullOrEmpty(s) ? "" : OneLine(s).Replace('`', '\'').Replace('[', '(').Replace(']', ')');
 
     public static string DecisionKind(GameSnapshot s) => s.Screen switch
     {

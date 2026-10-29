@@ -181,7 +181,9 @@ public class DecisionEngineTests
         var d = await engine.DecideAsync(next, null, CancellationToken.None);
         Assert.Equal(DecisionSource.Plan, d!.Source);
         Assert.Single(client.Requests);
-        Assert.Single(d.HandledInboxIds);
+        // The answer stays unread: it is context for the next LLM prompt, not consumed by a plan step.
+        Assert.Empty(d.HandledInboxIds);
+        Assert.Single(hub.PeekAiInbox());
     }
 
     [Fact]
@@ -288,12 +290,17 @@ public class DecisionEngineTests
         var settings = Settings();
         settings.Characters.Allowed = new() { "SILENT" };
         var (engine, _, _) = Make(settings);
-        var snap = new GameSnapshot
+        GameSnapshot Snap(string selected) => new()
         {
             Screen = ScreenKind.CharacterSelect,
             CharacterSelect = new CharacterSelectInfo
             {
-                Characters = { new CharacterOption { Id = "IRONCLAD", Selected = true }, new CharacterOption { Id = "SILENT" }, new CharacterOption { Id = "DEFECT", Locked = true } },
+                Characters =
+                {
+                    new CharacterOption { Id = "IRONCLAD", Selected = selected == "IRONCLAD" },
+                    new CharacterOption { Id = "SILENT", Selected = selected == "SILENT" },
+                    new CharacterOption { Id = "DEFECT", Locked = true },
+                },
             },
             Actions =
             {
@@ -302,12 +309,10 @@ public class DecisionEngineTests
                 new ActionOption { Id = "a2", Kind = ActionKind.Embark },
             },
         };
-        var d = await engine.DecideAsync(snap, null, CancellationToken.None);
+        var d = await engine.DecideAsync(Snap("IRONCLAD"), null, CancellationToken.None);
         Assert.Equal("a1", d!.FirstActionId);
 
-        snap.CharacterSelect.Characters[0].Selected = false;
-        snap.CharacterSelect.Characters[1].Selected = true;
-        d = await engine.DecideAsync(snap, null, CancellationToken.None);
+        d = await engine.DecideAsync(Snap("SILENT"), null, CancellationToken.None);
         Assert.Equal("a2", d!.FirstActionId);
     }
 

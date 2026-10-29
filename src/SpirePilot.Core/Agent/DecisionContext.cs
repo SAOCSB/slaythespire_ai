@@ -42,7 +42,10 @@ public sealed class PlanGuard
     {
         if (s.Combat == null) return "combat ended";
         if ((s.LocalPlayer?.Hp ?? 0) < Hp) return "took damage";
-        if (s.Combat.Hand.Count > HandCount - CardsPlayed) return "new cards in hand";
+        int expected = HandCount - CardsPlayed;
+        if (s.Combat.Hand.Count > expected) return "new cards in hand";
+        // Fewer cards than planned: someone else played (the human, between pauses) or a card left the hand.
+        if (s.Combat.Hand.Count < expected) return "hand changed";
         if (s.Combat.Enemies.Count(e => e.IsAlive) > AliveEnemies) return "new enemy";
         return null;
     }

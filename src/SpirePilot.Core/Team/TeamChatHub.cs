@@ -92,6 +92,8 @@ public sealed class TeamChatHub
             if (!Remember(message.Id)) return false;
             bool forUs = message.To == 0 || message.To == LocalNetId;
             if (!forUs) return false;
+            // Expiry runs on our clock, not the sender's (their PC clock may be off by minutes).
+            message.Time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             // Hello is link bookkeeping (handled by the transport), not something to show or answer.
             if (message.Kind == TeamMessageKind.Hello) return true;
             _aiInbox.Add(message);
