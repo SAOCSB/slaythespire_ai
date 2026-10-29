@@ -2,6 +2,7 @@ using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Models.Potions;
 using SpirePilot.Core.Model;
 using SpirePilot.Core.Text;
 using SpirePilot.Game.Combat;
@@ -42,7 +43,10 @@ internal static class PotionReader
         Add(sink, me, null);
     }
 
-    /// <summary>At rewards with a full belt: drinking a usable potion frees a slot for <paramref name="rewardText"/> without wasting it.</summary>
+    /// <summary>
+    /// At rewards with a full belt: drinking a usable potion frees a slot for <paramref name="rewardText"/> without
+    /// wasting it. Entropic Brew is left to the plain use: it fills the empty slots again, so it frees nothing.
+    /// </summary>
     public static void AddDrinksForReward(ActionSink sink, Player me, string rewardText) => Add(sink, me, rewardText);
 
     private static void Add(ActionSink sink, Player me, string? rewardText)
@@ -53,7 +57,7 @@ internal static class PotionReader
         for (int slot = 0; slot < slots.Count; slot++)
         {
             var potion = slots[slot];
-            if (potion == null || !ModelText.PotionUsable(potion, inCombat: false)) continue;
+            if (potion == null || (rewardText != null && potion is EntropicBrew) || !ModelText.PotionUsable(potion, inCombat: false)) continue;
             try
             {
                 if (AimsAtOwner(potion, me) is not { } atOwner) continue;

@@ -129,7 +129,7 @@ internal static class HandSelectReader
         // Playability of a card is irrelevant while choosing it.
         info.Playable = null;
         info.UnplayableReason = null;
-        if (upgrade) info.UpgradedDescription = ModelText.UpgradePreview(card, info.Description, inCombat: true);
+        if (upgrade) info.UpgradedDescription = ModelText.UpgradePreview(card, info.Description);
         Glossary.NoteCard(card);
         return info;
     }

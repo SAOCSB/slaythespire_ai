@@ -14,8 +14,9 @@ public sealed class StateFormatter
     {
         _local = s.LocalPlayer;
         _coop = s.IsMultiplayer;
+        _inCombat = s.Combat != null;
         // Out of combat the menu offers only the potions that can be used here: say so next to them.
-        _usableSlots = s.Combat == null
+        _usableSlots = !_inCombat
             ? s.Actions.Where(s.IsOutOfCombatPotion).Select(a => a.IntArg(ActionArgs.Slot)).OfType<int>().ToHashSet()
             : new HashSet<int>();
         var sb = new StringBuilder();
@@ -28,7 +29,9 @@ public sealed class StateFormatter
             if (!string.IsNullOrEmpty(run.BossName)) sb.Append(" | Boss: ").Append(run.BossName);
         }
         sb.AppendLine(s.IsMultiplayer ? " | Co-op" : "");
-        if (s.Run is { BossDescription.Length: > 0 } bossRun) sb.Append("Boss notes: ").AppendLine(Short(Clean(bossRun.BossDescription!), 300));
+        // Boss notes and teammates' decks inform route, rest, shop and reward choices; a fight shows its own enemies.
+        if (!_inCombat && s.Run is { BossDescription.Length: > 0 } bossRun)
+            sb.Append("Boss notes: ").AppendLine(Short(Clean(bossRun.BossDescription!), 300));
 
         if (s.LocalPlayer is { } me)
         {
@@ -230,13 +233,14 @@ public sealed class StateFormatter
         {
             if (p.Relics.Count > 0)
                 sb.Append("  Relics: ").AppendLine(string.Join(", ", p.Relics.Select(r => r.Name)));
-            if (_coop && p.Deck.Count > 0)
+            if (_coop && !_inCombat && p.Deck.Count > 0)
                 sb.Append("  Deck (").Append(p.Deck.Count).Append("): ").AppendLine(DeckSummary(p.Deck));
         }
     }
 
     private PlayerInfo? _local;
     private bool _coop;
+    private bool _inCombat;
     private HashSet<int> _usableSlots = new();
 
     private string UsableNow(PotionInfo potion) => _usableSlots.Contains(potion.Slot) ? " (usable now)" : "";

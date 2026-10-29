@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text;
 using MegaCrit.Sts2.Core.Combat;
@@ -291,98 +292,161 @@ internal static class ModelText
     // ------------------------------------------------------------------ upgrade previews
 
     /// <summary>
-    /// A detached, upgraded copy of a card's canonical model (never the live card, which stays untouched) with its
-    /// text out of combat. The copy depends only on the card id, the upgrade level and the game language; its last
-    /// in-combat text is kept for the live text it was previewed against.
+    /// Detached copies of a card's canonical model at a live card's upgrade level and one level up (the live card is
+    /// never touched), with the live card's base-value drift added to both. The last preview is kept for the live
+    /// card state it was made for.
     /// </summary>
-    private sealed record UpgradedCopy(CardModel Card, string Text, int? Cost)
+    private sealed class UpgradePair(CardModel current, CardModel upgraded)
     {
+        public CardModel Current { get; } = current;
+        public CardModel Upgraded { get; } = upgraded;
         public string? PreviewedFor { get; set; }
-        public string PreviewedText { get; set; } = "";
+        public string? Preview { get; set; }
     }
 
-    private static readonly Dictionary<string, UpgradedCopy?> UpgradedCopies = new();
-    private const int MaxUpgradedCopies = 256;
+    private static readonly Dictionary<string, UpgradePair?> UpgradePairs = new();
+    private const int MaxUpgradePairs = 256;
 
     /// <summary>
     /// Rules text of <paramref name="card"/> after its next upgrade, with the energy cost in front when the upgrade
-    /// changes it ("(cost 1) Deal 9 damage."); null when the card cannot be upgraded, the preview failed or nothing
-    /// visible changes. The game's own preview text (<see cref="CardModel.GetDescriptionForUpgradePreview"/>) only
-    /// differs for a card that has just been upgraded, so it is read from an upgraded copy of the canonical card. In a
-    /// fight the copy's numbers are previewed through the live card (Strength and the like, as its own text shows them).
+    /// changes it ("(cost 1) Deal 9 damage."); null when the card cannot be upgraded, nothing visible changes or the
+    /// preview cannot be trusted. Both texts come from copies of the canonical card (at the live level and one level
+    /// up) carrying the live card's base-value drift (permanent growth, changes made during a fight), previewed through
+    /// the live card (Strength and the like) and formatted the same way. The current-level copy must reproduce
+    /// <paramref name="currentText"/> exactly: whatever the copies do not carry over (an enchantment's numbers, state
+    /// outside the card's values, a format that drops the live previews) then means no preview, never a wrong one.
     /// Main thread only, never throws.
     /// </summary>
-    public static string? UpgradePreview(CardModel card, string currentText, bool inCombat)
+    public static string? UpgradePreview(CardModel card, string currentText)
     {
         try
         {
             if (card == null || !card.IsUpgradable) return null;
             int level = UpgradeLevel(card);
             string key = SafeId(card) + "+" + level + "|" + GameLanguage();
-            if (!UpgradedCopies.TryGetValue(key, out var copy))
+            var pair = UpgradePairFor(key, card, level, null);
+            var drift = pair == null ? null : BaseDrift(card, pair.Current);
+            if (drift is { Count: > 0 })
+                pair = UpgradePairFor(key + "~" + string.Join(",", drift.Select(d => d.Key + "=" + d.Value.ToString(CultureInfo.InvariantCulture))),
+                    card, level, drift);
+            if (pair == null) return null;
+            string state = CanonicalCost(card) + "|" + currentText;
+            if (pair.PreviewedFor != state)
             {
-                if (UpgradedCopies.Count >= MaxUpgradedCopies) UpgradedCopies.Clear();
-                copy = BuildUpgradedCopy(card, level);
-                UpgradedCopies[key] = copy;
+                pair.Preview = UpgradedText(card, pair, currentText);
+                pair.PreviewedFor = state;
             }
-            if (copy == null) return null;
-
-            string text = copy.Text;
-            if (inCombat)
-            {
-                if (copy.PreviewedFor != currentText)
-                {
-                    copy.PreviewedText = "";
-                    try
-                    {
-                        card.UpdateDynamicVarPreview(CardPreviewMode.Normal, null, copy.Card.DynamicVars);
-                        copy.PreviewedText = UpgradedText(copy.Card);
-                    }
-                    catch (Exception) { /* keep the base values */ }
-                    copy.PreviewedFor = currentText;
-                }
-                if (copy.PreviewedText.Length > 0) text = copy.PreviewedText;
-            }
-            text = WithModifiers(text, card);
-            int? cost = null;
-            try { cost = card.EnergyCost is { CostsX: false } live ? live.Canonical : null; }
-            catch (Exception) { }
-            bool costChanged = copy.Cost is { } upgradedCost && cost is { } liveCost && upgradedCost != liveCost;
-            if (!costChanged && text == currentText) return null;
-            return costChanged ? $"(cost {copy.Cost}) {text}" : text;
+            return pair.Preview;
         }
         catch (Exception) { return null; }
     }
 
-    private static UpgradedCopy? BuildUpgradedCopy(CardModel card, int level)
+    private static UpgradePair? UpgradePairFor(string key, CardModel card, int level, SortedDictionary<string, decimal>? drift)
+    {
+        if (UpgradePairs.TryGetValue(key, out var pair)) return pair;
+        if (UpgradePairs.Count >= MaxUpgradePairs) UpgradePairs.Clear();
+        pair = BuildUpgradePair(card, level, drift);
+        UpgradePairs[key] = pair;
+        return pair;
+    }
+
+    private static UpgradePair? BuildUpgradePair(CardModel card, int level, SortedDictionary<string, decimal>? drift)
     {
         try
         {
             var canonical = card.CanonicalInstance ?? ModelDb.GetByIdOrNull<CardModel>(card.Id);
             if (canonical == null) return null;
-            var copy = canonical.ToMutable();
-            for (int i = 0; i <= level; i++) copy.UpgradeInternal();
-            var text = UpgradedText(copy);
-            if (text.Length == 0) return null;
-            int? cost = null;
-            try { cost = copy.EnergyCost is { CostsX: false } c ? c.Canonical : null; }
-            catch (Exception) { }
-            return new UpgradedCopy(copy, text, cost);
+            var current = canonical.ToMutable();
+            var upgraded = canonical.ToMutable();
+            for (int i = 0; i < level; i++)
+            {
+                current.UpgradeInternal();
+                upgraded.UpgradeInternal();
+            }
+            upgraded.UpgradeInternal();
+            if (drift != null)
+            {
+                AddDrift(current, drift);
+                AddDrift(upgraded, drift);
+            }
+            return new UpgradePair(current, upgraded);
         }
         catch (Exception) { return null; }
     }
 
-    private static string UpgradedText(CardModel upgraded)
+    /// <summary>
+    /// Per variable, how far the live card's base value is from the canonical copy at the same level (nonzero only).
+    /// Upgrades add to base values, so the same drift applies one level up.
+    /// </summary>
+    private static SortedDictionary<string, decimal> BaseDrift(CardModel card, CardModel reference)
     {
-        string text = "";
-        try { text = Clean(upgraded.GetDescriptionForUpgradePreview()); }
-        catch (Exception) { }
-        if (text.Length == 0)
+        var drift = new SortedDictionary<string, decimal>(StringComparer.Ordinal);
+        try
         {
-            try { text = Clean(upgraded.GetDescriptionForPile(PileType.None)); }
-            catch (Exception) { }
+            var theirs = reference.DynamicVars;
+            foreach (var v in card.DynamicVars.Values)
+                if (v != null && theirs.TryGetValue(v.Name, out var r) && r != null && v.BaseValue != r.BaseValue)
+                    drift[v.Name] = v.BaseValue - r.BaseValue;
         }
-        return text;
+        catch (Exception) { /* a partial drift fails the copy's text check */ }
+        return drift;
+    }
+
+    private static void AddDrift(CardModel copy, SortedDictionary<string, decimal> drift)
+    {
+        foreach (var (name, delta) in drift)
+        {
+            if (!copy.DynamicVars.TryGetValue(name, out var v) || v == null) continue;
+            // Read first: a setter may move the other values along.
+            decimal baseValue = v.BaseValue + delta, enchanted = v.EnchantedValue + delta, preview = v.PreviewValue + delta;
+            v.BaseValue = baseValue;
+            v.EnchantedValue = enchanted;
+            v.PreviewValue = preview;
+        }
+    }
+
+    private static string? UpgradedText(CardModel card, UpgradePair pair, string currentText)
+    {
+        int? currentCost = CanonicalCost(pair.Current), upgradedCost = CanonicalCost(pair.Upgraded);
+        if (CanonicalCost(card) != currentCost) return null;
+        Creature? target = SafeGet(() => card.CurrentTarget);
+        var pile = SafeGet(() => card.Pile)?.Type ?? PileType.None;
+        // The live card's own format first; the game's upgrade-preview format when that one fails on a detached copy.
+        foreach (var format in new Func<CardModel, string>[]
+                 {
+                     c => c.GetDescriptionForPile(pile, target),
+                     c => c.GetDescriptionForUpgradePreview(),
+                 })
+        {
+            string before = CopyText(card, target, pair.Current, format);
+            if (before.Length == 0 || WithModifiers(before, card) != currentText) continue;
+            string after = CopyText(card, target, pair.Upgraded, format);
+            if (after.Length == 0) return null;
+            after = WithModifiers(after, card);
+            bool costChanged = upgradedCost is { } up && currentCost is { } now && up != now;
+            if (!costChanged && after == currentText) return null;
+            return costChanged ? $"(cost {upgradedCost}) {after}" : after;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// A copy's text in <paramref name="format"/>, with the live card's previews (its owner's modifiers, its target)
+    /// written into the copy's values first, as for the live card's own text.
+    /// </summary>
+    private static string CopyText(CardModel card, Creature? target, CardModel copy, Func<CardModel, string> format)
+    {
+        try { card.UpdateDynamicVarPreview(CardPreviewMode.Normal, target, copy.DynamicVars); }
+        catch (Exception) { /* previews unavailable (no combat): the stored values still format */ }
+        try { return Clean(format(copy)); }
+        catch (Exception) { return ""; }
+    }
+
+    /// <summary>Printed energy cost before modifiers; null for X costs or when unreadable.</summary>
+    private static int? CanonicalCost(CardModel card)
+    {
+        try { return card.EnergyCost is { CostsX: false } cost ? cost.Canonical : null; }
+        catch (Exception) { return null; }
     }
 
     /// <summary>Short localized reason why a card cannot be played.</summary>

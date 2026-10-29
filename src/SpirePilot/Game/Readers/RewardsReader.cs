@@ -401,7 +401,7 @@ internal static class RewardsReader
             {
                 var card = cards[i];
                 var ci = RoomUtil.CardInfo(card, "r" + i, false);
-                if (!ci.Upgraded) ci.UpgradedDescription = ModelText.UpgradePreview(card, ci.Description, inCombat: false);
+                if (!ci.Upgraded) ci.UpgradedDescription = ModelText.UpgradePreview(card, ci.Description);
                 info.CardChoices.Add(ci);
                 sink.Add(ActionKind.PickRewardCard, RoomUtil.T("act.pick_card", RoomUtil.CardText(ci)), "cardreward:" + RoomUtil.CardKey(card),
                     ct => PickCard(screen!, card, ct),

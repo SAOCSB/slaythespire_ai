@@ -67,7 +67,7 @@ public class GameContentTests
     [Fact]
     public void Teammate_deck_is_one_line_of_types_and_notable_cards_in_coop()
     {
-        var snap = TestData.Combat();
+        var snap = MapWithPotions();
         snap.IsMultiplayer = true;
         var mate = new PlayerInfo { NetId = 2, Name = "Mate", Hp = 40, MaxHp = 70, HasTeamLink = true };
         void Add(string name, string type, string rarity, bool upgraded = false) =>
@@ -87,13 +87,18 @@ public class GameContentTests
     }
 
     [Fact]
-    public void Teammate_deck_line_is_left_out_of_single_player_and_for_unknown_decks()
+    public void Teammate_deck_line_is_left_out_of_single_player_fights_and_unknown_decks()
     {
-        var snap = TestData.Combat();
+        var snap = MapWithPotions();
         snap.Players.Add(new PlayerInfo { NetId = 2, Name = "Mate", Deck = { new CardInfo { Name = "Strike", Type = "Attack", Rarity = "Basic" } } });
         Assert.DoesNotContain("Deck (1)", new StateFormatter().Format(snap));
 
         snap.IsMultiplayer = true;
+        Assert.Contains("  Deck (1): 1 Attack", new StateFormatter().Format(snap));
+        snap.Combat = TestData.Combat().Combat;
+        Assert.DoesNotContain("  Deck (", new StateFormatter().Format(snap));
+
+        snap.Combat = null;
         snap.Players[1].Deck.Clear();
         Assert.DoesNotContain("  Deck (", new StateFormatter().Format(snap));
     }
@@ -165,5 +170,16 @@ public class GameContentTests
         var line = text.Split('\n').Single(l => l.StartsWith("Boss notes: ", StringComparison.Ordinal));
         Assert.StartsWith("Boss notes: Ceremonial Beast (HP 252): moves Stamp, Plow", line);
         Assert.Equal("Boss notes: ".Length + 300, line.TrimEnd('\r').Length);
+    }
+
+    [Fact]
+    public void Boss_notes_are_left_out_of_fights()
+    {
+        var snap = TestData.Combat();
+        snap.Run!.BossName = "Ceremonial Beast";
+        snap.Run.BossDescription = "Ceremonial Beast (HP 252): moves Stamp, Plow";
+        var text = new StateFormatter().Format(snap);
+        Assert.Contains("Boss: Ceremonial Beast", text);
+        Assert.DoesNotContain("Boss notes:", text);
     }
 }

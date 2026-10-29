@@ -118,7 +118,7 @@ internal static class ShopReader
                 if (card == null) continue;
                 var info = ModelText.Card(card, "s" + index, false);
                 int upgrades = SafeUpgrades(card);
-                if (upgrades == 0) info.UpgradedDescription = ModelText.UpgradePreview(card, info.Description, inCombat: false);
+                if (upgrades == 0) info.UpgradedDescription = ModelText.UpgradePreview(card, info.Description);
                 Glossary.NoteCard(card);
                 var id = ModelText.SafeId(card) + (upgrades > 0 ? "+" + upgrades : "");
                 Add(e, "Card", id, info.Name, info.Description, info, SafeBool(() => e.IsOnSale));

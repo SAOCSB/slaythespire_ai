@@ -95,7 +95,7 @@ internal static class CardGridSelection
         for (int i = 0; i < cards.Count; i++)
         {
             var ci = RoomUtil.CardInfo(cards[i], "c" + i, inCombat);
-            if (upgrade) ci.UpgradedDescription = ModelText.UpgradePreview(cards[i], ci.Description, inCombat);
+            if (upgrade) ci.UpgradedDescription = ModelText.UpgradePreview(cards[i], ci.Description);
             infos.Add(ci);
             sel.Candidates.Add(ci);
             if (selected != null && selected.Contains(cards[i])) sel.SelectedKeys.Add(ci.Key);
