@@ -50,7 +50,7 @@ public static class L10n
 
     public static bool Has(string key) => Strings.ContainsKey(key);
 
-    private static readonly Dictionary<string, (string zh, string en)> Strings = new()
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string zh, string en)> Strings = new()
     {
         // ---- action labels (shown to the LLM and in the UI) ----
         ["act.play"] = ("打出 {0}", "Play {0}"),

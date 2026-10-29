@@ -107,7 +107,8 @@ internal static class ScreenResolver
             case NCombatRoom: return Make(ScreenKind.Combat);
             case NCharacterSelectScreen: return Make(ScreenKind.CharacterSelect);
             case NMultiplayerLoadGameScreen: return Make(ScreenKind.Unknown, "multiplayer load screen");
-            case NTimelineScreen: return Make(ScreenKind.MainMenu);
+            case NTimelineScreen or NEpochInspectScreen or NTimelineTutorial: return Make(ScreenKind.MainMenu);
+            case NEarlyAccessDisclaimer: return Make(ScreenKind.Popup);
             case NMainMenu or NSubmenu or NLogoAnimation: return Make(ScreenKind.MainMenu);
         }
         return Make(ScreenKind.Unknown);
