@@ -23,6 +23,7 @@ namespace SpirePilot.Api;
 ///   POST /mode   {"mode":"FullAuto"|"CombatOnly"|"OutOfCombatOnly"|"Advisor"|"Off"}
 ///   POST /instruction {"text":"..."}                     one-shot instruction for the built-in pilot
 ///   GET  /chat                recent team chat;  POST /chat {"text":"...","to":"all","kind":"chat"}
+///   GET  /compendium?kind=cards|relics|potions|powers|characters   every game model with localized text
 /// With a token configured, every request needs "Authorization: Bearer &lt;token&gt;".
 /// </summary>
 internal sealed class LocalHttpApi : IDisposable
@@ -103,7 +104,7 @@ internal sealed class LocalHttpApi : IDisposable
             switch ((method, path))
             {
                 case ("GET", ""):
-                    await Send(res, 200, new { mod = PilotRuntime.ModId, version = PilotRuntime.Version, endpoints = new[] { "/status", "/state", "/prompt", "/act", "/mode", "/instruction", "/chat" } });
+                    await Send(res, 200, new { mod = PilotRuntime.ModId, version = PilotRuntime.Version, endpoints = new[] { "/status", "/state", "/prompt", "/act", "/mode", "/instruction", "/chat", "/compendium" } });
                     break;
                 case ("GET", "/status"):
                     await Send(res, 200, StatusObject());
@@ -128,6 +129,13 @@ internal sealed class LocalHttpApi : IDisposable
                         user = PromptBuilder.BuildUser(snap, ctxObj, formatter),
                         schema = JsonNode.Parse(DecisionParser.Schema),
                     });
+                    break;
+                }
+                case ("GET", "/compendium"):
+                {
+                    var kind = (ctx.Request.QueryString["kind"] ?? "cards").ToLowerInvariant();
+                    var list = await MainThread.Run(() => Compendium(kind));
+                    await Send(res, list == null ? 400 : 200, (object?)list ?? new { error = "kind must be cards, relics, potions, powers or characters" });
                     break;
                 }
                 case ("POST", "/act"):
@@ -205,6 +213,30 @@ internal sealed class LocalHttpApi : IDisposable
         if (action == null) { await Send(res, 404, new { error = "no such legal action", legal = snap.Actions.Select(a => new { a.Id, a.Label }) }); return; }
         var result = await PilotRuntime.Bridge.ExecuteAsync(action, CancellationToken.None);
         await Send(res, result.Success ? 200 : 422, new { result.Success, result.Message, action = new { action.Id, action.Kind, action.Label } });
+    }
+
+    /// <summary>All models of one kind with localized text (main thread).</summary>
+    private static object? Compendium(string kind)
+    {
+        object Safe<T>(IEnumerable<T> models, Func<T, object> map) where T : class
+        {
+            var list = new List<object>();
+            foreach (var m in models)
+            {
+                try { list.Add(map(m)); }
+                catch (Exception) { /* skip models that cannot render outside a run */ }
+            }
+            return list;
+        }
+        return kind switch
+        {
+            "cards" => Safe(MegaCrit.Sts2.Core.Models.ModelDb.AllCards, c => Game.ModelText.Card(c, "", inCombat: false)),
+            "relics" => Safe(MegaCrit.Sts2.Core.Models.ModelDb.AllRelics, r => Game.ModelText.Relic(r)),
+            "potions" => Safe(MegaCrit.Sts2.Core.Models.ModelDb.AllPotions, p => (object?)Game.ModelText.Potion(p, -1, inCombat: false) ?? new { }),
+            "powers" => Safe(MegaCrit.Sts2.Core.Models.ModelDb.AllPowers, p => Game.ModelText.Power(p)),
+            "characters" => Safe(MegaCrit.Sts2.Core.Models.ModelDb.AllCharacters, c => new { id = Game.ModelText.SafeId(c), name = Game.ModelText.Loc(c.Title) }),
+            _ => null,
+        };
     }
 
     private static object StatusObject()

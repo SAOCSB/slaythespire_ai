@@ -19,7 +19,20 @@ internal static class SnapshotBuilder
             LocalPlayerId = ctx.LocalNetId,
         };
         var sink = new ActionSink(sequence);
+        Glossary.Begin(snap.Glossary);
+        try
+        {
+            BuildInto(ctx, snap, sink);
+        }
+        finally
+        {
+            Glossary.End();
+        }
+        return (snap, sink);
+    }
 
+    private static void BuildInto(GameContext ctx, GameSnapshot snap, ActionSink sink)
+    {
         Section(snap, "run", () => PlayerReader.FillRun(ctx, snap));
         Section(snap, "players", () => PlayerReader.FillPlayers(ctx, snap));
         if (ctx.Combat != null) Section(snap, "combat", () => CombatReader.FillState(ctx, snap));
@@ -60,7 +73,6 @@ internal static class SnapshotBuilder
         snap.CanAct = canAct && sink.Count > 0;
         snap.WaitReason = canAct ? (sink.Count == 0 ? "no actions" : null) : reason;
         snap.Actions = sink.Options.ToList();
-        return (snap, sink);
     }
 
     private static (bool, string?) SafeReadiness(GameContext ctx, ScreenProbe probe, GameSnapshot snap)
