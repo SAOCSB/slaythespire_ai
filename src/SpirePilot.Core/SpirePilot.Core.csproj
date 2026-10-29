@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Game-independent logic (LLM clients, decision protocol, team chat protocol, route planner, settings).
+    It has no reference to the game. The mod project compiles these same source files directly into
+    SpirePilot.dll (the game's mod loader loads a single assembly per mod), and the test project
+    references this library to unit-test them without the game.
+  -->
+  <PropertyGroup>
+    <RootNamespace>SpirePilot.Core</RootNamespace>
+    <AssemblyName>SpirePilot.Core</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="SpirePilot.Core.Tests" />
+  </ItemGroup>
+</Project>

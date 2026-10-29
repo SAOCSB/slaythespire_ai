@@ -1,0 +1,11 @@
+bin/
+obj/
+*.user
+*.suo
+.vs/
+.idea/
+*.swp
+local.props
+dist/
+TestResults/
+*.log
