@@ -121,10 +121,12 @@ dotnet run --project tools/SpirePilot.Bench -- --settings deepseek.json --repeat
 
 1. **从游戏里拿真实快照（推荐）**：在模组“日志”页开启本地 HTTP 接口，停在想要的决策点（可以把 AI 设为顾问模式），然后
    ```bash
-   curl -s http://127.0.0.1:17654/state  -H "Authorization: Bearer <token>" > snap.json   # 没设 token 可省略 -H
-   curl -s http://127.0.0.1:17654/prompt -H "Authorization: Bearer <token>"               # 看 AI 实际看到的提示词
+   curl -s http://localhost:17654/state  -H "Authorization: Bearer <token>" > snap.json   # 没设 token 可省略 -H
+   curl -s http://localhost:17654/prompt -H "Authorization: Bearer <token>"               # 内置 AI 此刻会发送的完整提示词
    ```
+   请用 `localhost`：Windows 上非管理员运行的游戏只注册了 `localhost`，`127.0.0.1` 会被拒绝。
    把 `snap.json` 的内容整体放进 `"snapshot"`（多出来的 `localPlayer`、`teammates` 会被忽略）。
+   `/state` 的菜单已经按你的规则（角色、进阶、不给队友用药水）过滤过，评测引擎会再按 fixture 的 `settings` 过滤一遍。
 2. **从决策记录找题目**：`mod_configs/SpirePilot/traces/trace-日期.jsonl` 记录了每一步给出的选项、AI 的选择和思路。
    用它找到 AI 犯错的地方，再在游戏里重现并用 `/state` 截取（trace 本身不含完整快照）。
 3. 写好 `expect_any` / `forbid` 和一句 `rationale`。只把**明确**的错误放进 `forbid`；有多种合理答案时都放进 `expect_any`。
@@ -260,9 +262,11 @@ case does not matter, and comments and trailing commas are allowed.
 ### Adding fixtures
 
 1. **Capture a real snapshot.** Enable the local HTTP API in the overlay's log tab. Stop at the decision you want
-   (Advisor mode helps). Then run `curl -s http://127.0.0.1:17654/state -H "Authorization: Bearer <token>"` and paste
-   the output as `"snapshot"`. Extra computed fields such as `localPlayer` and `teammates` are ignored. `GET /prompt`
-   shows what the model saw.
+   (Advisor mode helps). Then run `curl -s http://localhost:17654/state -H "Authorization: Bearer <token>"` and paste
+   the output as `"snapshot"` (use `localhost`: on Windows a game that is not run as administrator registers only
+   `localhost`). Extra computed fields such as `localPlayer` and `teammates` are ignored. The menu is already filtered
+   by the owner's rules; the bench engine applies the fixture's `settings` on top. `GET /prompt` returns exactly the
+   prompt the built-in pilot would send at that moment.
 2. **Mine the traces.** `mod_configs/SpirePilot/traces/trace-<date>.jsonl` lists the options offered at every step, the
    choice and the thought. Use the traces to find mistakes, then reproduce the situation and capture it with `/state`.
    Traces do not hold full snapshots.

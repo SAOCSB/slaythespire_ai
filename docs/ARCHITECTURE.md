@@ -9,8 +9,9 @@ src/SpirePilot.Core/   game-independent logic (compiled into the mod DLL and uni
   Model/               GameSnapshot (plain data), ActionOption/ActionKind, PlanSafety
   Config/              PilotSettings (+ SettingsStore JSON), LlmProfile, provider presets
   Llm/                 ILlmClient: OpenAiCompatibleClient, AnthropicClient (raw HTTP), retries, adaptation
-  Agent/               PilotLoop (main loop), DecisionEngine, PromptBuilder, StateFormatter, DecisionParser,
-                       FallbackPolicy/CharacterPicker, AgentMemory/PlanGuard, CharacterGuide, IGameBridge
+  Agent/               PilotLoop (main loop), DecisionEngine, OwnerRules, PromptBuilder, StateFormatter,
+                       DecisionParser, FallbackPolicy/CharacterPicker, AgentMemory/PlanGuard, CharacterGuide,
+                       IGameBridge
   Team/                TeamMessage, TeamWire (binary envelope), TeamChatHub (log, inbox, rate limits)
   Route/               RoutePlanner (k-best paths on the act map with preset/custom weights)
   Text/                L10n (zh/en strings of the mod itself)
@@ -19,11 +20,11 @@ src/SpirePilot/        the mod (references sts2.dll, GodotSharp.dll, 0Harmony.dl
   PilotRuntime.cs      owns and wires every service; the API surface used by UI and HTTP API
   Infra/               MainThread (ProcessFrame dispatcher), ModLog, SceneUtil, Reflect
   Game/                GameContext, ScreenResolver, SnapshotBuilder, ActionSink, GameBridge, UiActions,
-                       ModelText, PlayerReader, Readiness, Readers/* (one per screen family)
+                       ModelText, PlayerReader, Readiness, Reactions (vanilla emotes), Readers/* (one per screen family)
   Team/                TeamLink (raw-packet transport + discovery + relay), TeamNet (every game call of the link),
                        TeamPatches (Harmony hooks), SpeechBubbles
-  Ui/                  Overlay (in-game control panel)
-  Api/                 LocalHttpApi (optional, loopback only: localhost / 127.0.0.1)
+  Ui/                  Overlay (in-game control panel; team message toasts and unread counts)
+  Api/                 LocalHttpApi (optional, loopback only: localhost, plus 127.0.0.1 where the OS allows it)
 tests/SpirePilot.Core.Tests/   xUnit tests for the core (no game needed)
 tools/SpirePilot.Bench/        offline decision benchmark: fixtures (GET /state snapshots + expectations) → real LLM
 tests/SpirePilot.Bench.Tests/  fixture validity and scoring tests (no API calls)
@@ -39,7 +40,8 @@ PilotLoop (worker thread)
   │                                 ScreenResolver.Resolve → one Reader → snapshot fields + ActionSink entries
   │                                 Readiness.Check → CanAct / WaitReason
   ├─ (cannot act, but a teammate asked something) → DecisionEngine.ReplyOnlyAsync → team messages only
-  ├─ DecisionEngine.DecideAsync (worker): plan step? → owner rules → trivial? → LLM (+repair) → fallback
+  ├─ DecisionEngine.DecideAsync (worker, on its own copy of the menu: GameSnapshot.WithOwnMenu):
+  │     plan step? → owner rules → trivial? → LLM (+repair) → fallback
   │     (cancelled when the user pauses or switches mode while the model thinks)
   ├─ re-capture (waits out transient "animating"/"settling"), re-validate the chosen action by SemanticKey,
   │     re-check pause / mode / a freshly pinned route
@@ -60,7 +62,8 @@ Rules that keep this robust:
   synchronizers, real buttons). Never mutate game state directly, never cancel running actions in co-op,
   never declare INetMessage types in this assembly.
 - **Owner rules are menu filters, not prompt text.** Character allow-list and ascension, "no potions for
-  teammates", saved runs of disallowed characters: the engine removes the actions before any model sees the menu.
+  teammates" (in and out of combat), saved runs of disallowed characters: `OwnerRules` removes the actions before
+  any model sees the menu — the built-in one or an external agent (see "Owner rules and external agents").
 - **Things the human opened are the human's.** Popups over the pause menu / settings / viewers, abandon / quit /
   disconnect confirmations, and anything outside a run when menus are not the AI's to handle get no actions.
 - **No progress means stop.** The same state + action three times within the last eight steps pauses the pilot
@@ -72,6 +75,11 @@ Steam main branch is v0.107.1, public beta is v0.111.0; they are not API compati
 either (`-p:Sts2GameVersion=0.107|0.111`), with `#if STS2_V0107` / `#if STS2_V0111` where APIs differ
 (reference: `api-diff-0107-to-0111.txt` from the research). Each build ships its own manifest
 (`manifest/mod_manifest.<version>.json`) with the matching `min_game_version`.
+
+Version guard: on the first frame where the game's version can be read, the runtime compares its major.minor with
+the branch the DLL was compiled for (`Diagnostics.CompiledFor`). On a mismatch (e.g. the 0.107 build on game 0.111) it
+logs an error, forces mode Off, never starts the pilot, and the overlay / status names the build to install;
+`POST /mode` answers 409 `version_mismatch`.
 
 ## Snapshot conventions
 
@@ -106,13 +114,20 @@ either (`-p:Sts2GameVersion=0.107|0.111`), with `#if STS2_V0107` / `#if STS2_V01
   `~v<hash>` for base values that grew during the fight (never the description, whose numbers follow Strength).
   Two actions with the same key must be interchangeable (identical cards).
 - `unpredictable: true` for anything whose outcome cannot be foreseen (draw / random / choices / screen changes).
+- Potions outside combat (map, rewards, shop, rest site, event, treasure) are offered where the game allows the potion
+  there, with the same `potion:` keys as in combat; at rewards with a full belt, using a potion sits next to
+  discarding one so a potion reward can be taken without wasting one. Teammate targets, where the game allows them,
+  carry `@P:<netId>`, so "no potions for teammates" and fulfilled-request tracking work as in combat. The rule-based
+  fallback never drinks potions outside combat.
 - Executors: re-check `GodotObject.IsInstanceValid` for every node they captured, perform the action through the
   game's own path, then wait for an observable effect (`UiActions.Expect`) and `UiActions.WaitSettled`. Return
   `ActionResult.Fail(reason)` instead of throwing; never report success when nothing happened.
 
 ## Threading helpers
 
-- `MainThread.Run / RunAsync / Post / NextFrame / WaitUntil / Delay` (Infra/MainThread.cs).
+- `MainThread.Run / RunAsync / Post / NextFrame / WaitUntil / Delay` (Infra/MainThread.cs). Waits count time only
+  while frames advance (capped per frame), so a hidden or minimized window that stops processing frames does not turn
+  pending actions into "timed out".
 - `UiActions.Press(NClickableControl)` (checks enabled + visible, then `ForceClick`), `ClickHolder(NCardHolder)`
   (emits `Pressed`), `Expect`, `WaitSettled`, `GameBusy`.
 - `SceneUtil.Descendants<T>`, `VisibleInTree`, `Usable`, `ByScreenPosition` (Infra/SceneUtil.cs).
@@ -123,21 +138,67 @@ either (`-p:Sts2GameVersion=0.107|0.111`), with `#if STS2_V0107` / `#if STS2_V01
 The overlay is built in code (no scenes, no Node subclasses — Godot only calls overrides on script classes registered
 by its source generators). It hangs a `CanvasLayer` (layer 128) under the scene root, uses signals
 (`Pressed`, `TextSubmitted`, ...) and the per-frame `MainThread.Frame` event, and the game's CJK fonts.
+Incoming team messages show as speech bubbles over the sender during a fight (`SpeechBubbles`) and as a short toast
+on the overlay otherwise, with an unread count on the "AI" button and the Team tab (cleared when the Team tab is seen).
+
+## Owner rules and external agents
+
+`OwnerRules` (Core) is the one filter for the owner's hard rules: allowed characters, the owner's ascension, no
+continuing a saved run of a disallowed character, no potions for teammates when giving is off.
+- The engine applies it in `RuleDecision`, before the trivial-action check and before any model call. `PilotLoop`
+  hands the engine its own copy of the menu (`GameSnapshot.WithOwnMenu`) and takes the chosen action from it, so the
+  UI and the HTTP API never see a capture mutated under them.
+- The HTTP API serves `OwnerRules.Filtered(snapshot, settings)`: `GET /state` (JSON and text) and `GET /prompt` show
+  the filtered menu, and `POST /act` answers 403 `{"error": ..., "code": "owner_rule"}` for an action that is in the
+  raw menu but was filtered out. `/state?format=text` (and `include=text`) also carries the route planner's
+  `[ROUTES]` lines and the pinned route, built by the same `PromptBuilder` code as the prompt.
+- `DecisionEngine.PreviewPrompt(snapshot, liveInstruction)` builds exactly the prompt the engine would send now
+  (system, owner block, user with the team inbox, open requests, routes, pin and live instruction) without side
+  effects: nothing is marked read, no request is closed. `GET /prompt` returns it.
+- The pinned route is a soft rule: the engine follows it without the model unless a live instruction or a teammate's
+  request needs the model, which then sees the pinned next node. For an external agent the pin is advice in the text.
+
+## LLM failures
+
+- Retries (`LlmHttp.WithRetries`, two at most): 408 / 409 / 425 / 429 / 5xx / 529 and network errors, with backoff
+  (`Retry-After` honoured up to 60 s). A timeout is retried once at most: a model that needed longer will need it
+  again, and every resend may be billed. Presets for reasoning and local models (Anthropic, OpenAI, Gemini, GLM,
+  OpenRouter, Ollama, LM Studio) use a 300 s timeout, the others 120 s.
+- Config errors (`LlmException.IsConfigError`: 401 / 402 / 403 / 404, and 400 / 422 whose message names a wrong
+  model, a bad key or an empty balance in the common providers' wordings) become `PilotConfigException`: the pilot
+  pauses with a "fix your settings" message and never falls back to the rule-based player.
+- Circuit breaker (`DecisionEngine`): after 3 failed decisions in a row the model is not called for 60 s, doubling up
+  to 10 min; meanwhile the rule-based fallback plays when enabled, otherwise the pilot pauses. After a cooldown the
+  breaker is half-open: the first failure trips it again, a success closes it. Resume, a mode change and changed LLM
+  settings reset it.
+- Anthropic effort: a rejected value is remembered and the next configured one (the general effort) is used; effort
+  is dropped only when that is rejected too. The UI offers only low / medium / high / xhigh / max for Anthropic.
 
 ## Team link
 
 Raw packets over the game's transport (client→host `NetClient.SendMessageToHost`, host→client
 `NetHost.SendMessageToClient`), received by Harmony prefixes on `NetHostGameService.OnPacketReceived` /
-`NetClientGameService.OnPacketReceived` that consume packets starting with the `TeamWire` magic. Packets are only
-sent to peers known to run SpirePilot (mod list from the handshake / hello), the host relays client↔client
-messages, and every message also carries readable text so human teammates can read it. Clients find each other
-through the host: it forwards each newly linked client's Hello to the other linked clients, whose answers come back
-the same way; a client sends to any teammate through its linked host, which checks who can receive. Inbound packets
-are rate-limited per sender before decoding (and per original sender after relay); session events have their own
-queue that is never dropped. Every game call of the link sits in a small non-inlined method (`TeamNet`) wrapped at
-the call site, so a member removed by a game update disables one feature, not the link. Without the mod on the
-other side, the AI still sees teammates' full state (co-op simulates everyone locally) and can use vanilla map pings
-and reaction emotes (`IGameBridge.TrySignal` → `ReactionSynchronizer.SendLocalReaction`).
+`NetClientGameService.OnPacketReceived` that consume packets starting with the `TeamWire` magic. Packets are only sent
+to peers known to run SpirePilot (mod list from the handshake / hello), the host relays client↔client messages, and
+every message also carries readable text so human teammates can read it. Clients find each other through the host: it
+forwards each newly linked client's Hello to the other linked clients, addressed to each of them so it is answered
+(also after a client leaves and rejoins), and the answers come back the same way; a client sends to any teammate
+through its linked host, which checks who can receive. Inbound packets are rate-limited per sender before decoding
+(and per original sender after relay); session events have their own queue that is never dropped. Every game call of
+the link sits in a small non-inlined method (`TeamNet`) wrapped at the call site, so a member removed by a game update
+disables one feature, not the link. Without the mod on the other side, the AI still sees teammates' full state (co-op
+simulates everyone locally) and can use vanilla map pings and reaction emotes (`IGameBridge.TrySignal` →
+`ReactionSynchronizer.SendLocalReaction`).
+
+Emotes (`Game/Reactions.cs`), both ways:
+- Out: requests → "!", ask / offer potion → "?", accept → thumbs up, decline → thumbs down; chat and route
+  suggestions have none. A message none of whose addressees runs SpirePilot is not sent as text (Team tab, AI
+  messages, `POST /chat`): the emote is shown instead, and `/chat` answers
+  `{"delivered": false, "emote": <name>|null, "reason": "no_reader"}`.
+- In: a guarded Harmony postfix on the game's reaction handler (`ReactionSynchronizer.HandleReactionMessage`) turns
+  a teammate's thumbs up / down into Accept / Decline replying to the AI's newest open request to that teammate (or
+  to everyone), and "!" / "?" into a short human chat line. They go through `TeamChatHub.Receive`, so dedupe and
+  inbox caps apply; the local player's own reactions are ignored.
 
 ## Co-op end of turn
 
@@ -152,6 +213,7 @@ Conversation rules (Core, `DecisionEngine` / `PilotLoop` / `AgentMemory`):
   requests until fulfilled (a potion used on that player) or until their round / fight ends.
 - While it cannot act (turn ended, enemy turn) a teammate's request still gets an answer (reply-only call); with
   only "undo end turn" on the menu the model may take the turn back to help, never on its own.
-- Teammates without SpirePilot are marked in the state; messages to them become a vanilla reaction emote.
+- Teammates without SpirePilot are marked in the state; messages to them become a vanilla reaction emote, and
+  their emotes come back as accept / decline / chat (see "Team link").
 - Inbox is bounded (5 unread per sender, 20 total, newest 8 in a prompt) and expires on the local clock; teammate
   text is one line inside a fence it cannot close, and cannot forge section headers.
