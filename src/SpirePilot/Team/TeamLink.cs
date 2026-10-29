@@ -766,9 +766,12 @@ internal static class TeamLink
 
     /// <summary>
     /// Emotes are all a teammate without SpirePilot can say to the AI: they go to the inbox as messages (see
-    /// <see cref="TeamEmotes"/>). Our own are skipped, and so are those of a linked peer whose AI is active: its AI
-    /// signals to players who cannot read it, and taken as an answer to us that would fake one. A linked peer who
-    /// plays by hand chose the emote, so it counts like anyone's.
+    /// <see cref="TeamEmotes"/>). Our own are skipped, and so are those of a linked peer whose AI is active (its AI
+    /// signals to players who cannot read it). A linked peer who plays by hand, or whose player is an external agent,
+    /// can answer us in text: in a party with a teammate without the mod its emotes are most likely aimed at that one
+    /// (the Team tab's and POST /chat's fallback does exactly that), so they are context only, never an answer or a
+    /// reason to wake the AI. With everyone linked they can only be meant for the linked players, and a thumbs up
+    /// answers our newest open request it read.
     /// </summary>
     private static void HandleReaction(INetGameService? service, ulong senderId, string reaction)
     {
@@ -778,10 +781,21 @@ internal static class TeamLink
         try { local = TeamNet.LocalIdentity(service); }
         catch (Exception ex) { local = Broken("local identity", ex, (0UL, PlatformType.None)); }
         if (senderId == local.id || senderId == _localId || senderId == hub.LocalNetId) return;
+        // The party as last captured, read outside the roster lock (the capture takes its own); unknown counts as mixed.
+        var mates = PilotRuntime.Bridge?.Latest?.Teammates.Select(p => p.NetId).ToList();
+        bool linked, forOthers = false;
         lock (RosterLock)
-            if (Peers.TryGetValue(senderId, out var peer) && peer.Confirmed && peer.IsAi) return;
+        {
+            linked = Peers.TryGetValue(senderId, out var peer) && peer.Confirmed;
+            if (linked && peer!.IsAi) return;
+            if (linked)
+                forOthers = mates is not { Count: > 0 } ||
+                            mates.Any(id => id != senderId && !(Peers.TryGetValue(id, out var mate) && mate.Confirmed));
+        }
         var name = PlayerName(local.platform, senderId);
-        hub.Receive(TeamEmotes.ToMessage(reaction, senderId, name, hub.LocalNetId, PilotRuntime.Engine.Memory.OutgoingRequests));
+        var memory = PilotRuntime.Engine.Memory;
+        var asked = forOthers ? null : linked ? memory.LastOpenTo(senderId) : memory.LastSignalTo(senderId);
+        hub.Receive(TeamEmotes.ToMessage(reaction, senderId, name, hub.LocalNetId, asked, fromLinkedPeer: forOthers));
     }
 
     private static bool WithinInboundBudget(ulong sender, long now)

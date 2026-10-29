@@ -414,8 +414,8 @@ internal static class Overlay
     private static bool TeamTabInView => _visible && _tab >= 0 && _tab < Pages.Count && Pages[_tab] is TeamPage;
 
     /// <summary>
-    /// Teammates' messages count as unread until the Team tab is seen. Outside a fight (speech bubbles only show in
-    /// combat) the newest one also shows as a toast.
+    /// Teammates' messages count as unread until the Team tab is seen. The newest one also shows as a toast, unless the
+    /// fight shows it already: the game shows emotes itself, and speech bubbles show text above a sender on screen.
     /// </summary>
     private static void NotifyTeamMessages()
     {
@@ -426,7 +426,7 @@ internal static class Overlay
         arrived.Clear();
         if (TeamTabInView) return;
         _unread += count;
-        if (SpeechBubbles.FightRunning()) return;
+        if (SpeechBubbles.FightRunning() && (latest.IsEmote || SpeechBubbles.WillShow(latest.From))) return;
         var who = string.IsNullOrEmpty(latest.FromName) ? "?" : latest.FromName;
         ShowToast(latest.IsEmote ? latest.Text : $"{who}: {latest.Text}", UiTheme.Info);
     }

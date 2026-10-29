@@ -136,7 +136,9 @@ public static class PromptBuilder
             if (ctx.OutgoingRequests.Concat(ctx.AnsweredOutgoing).FirstOrDefault(o => o.Id == m.ReplyTo) is { } mine)
                 sb.Append(" (answers your ").Append(DecisionParser.KindToWire(mine.Kind)).Append(')');
         }
-        if (needsAnswer && m.Kind == TeamMessageKind.Accept) sb.Append(" (yes to your offer — act on it)");
+        // An actionable "yes" answers our potion offer or question; outside a fight no potion can reach a teammate.
+        if (needsAnswer && m.Kind == TeamMessageKind.Accept)
+            sb.Append(s.Combat == null ? " (yes to your offer — potions reach teammates only in a fight: give it in the next one)" : " (yes to your offer — act on it)");
         else if (!needsAnswer && header) sb.Append(" (no reply needed)");
         sb.Append(": ").AppendLine(Safe(m.Text));
     }
@@ -276,6 +278,8 @@ public static class PromptBuilder
     - Events: never choose an option that would kill you. Read the cost before the reward; Max HP loss is permanent, gold
       usually isn't; a curse "reward" is a cost. Leaving is a valid choice.
     - Act-start Ancient choices: prefer consistency over big drawbacks before you have seen the map.
+    - Potions outside combat: Fruit Juice any time, Entropic Brew to fill empty slots, a heal only when HP is low and no
+      rest site is next; otherwise keep them for fights. Drink one to free a slot only for a clearly better potion.
     Co-op:
     - Map travel is a vote: the party moves once everyone has voted; a split is settled at random. Follow an existing
       vote unless yours is clearly better.
@@ -283,7 +287,8 @@ public static class PromptBuilder
       threats; the hurt player defends.
     - Potions can't be handed over, but player-target potions (block, heal, energy, draw, Strength...) can be used on a
       teammate via the MENU's "potion → teammate" options. Protect the lowest-HP teammate; buff whoever has the big turn.
-      Before ending your turn, look at teammates' HP and the intents aimed at them.
+      Before ending your turn, look at teammates' HP and the intents aimed at them. Outside combat a potion only affects
+      you: keep a potion promised to a teammate for the next fight.
     - To fulfil a debuff request, play cards that apply that debuff to the named enemy if you reasonably can.
     - Don't spend a big resource the teammate already spent on the same threat. Ending your turn marks you ready; enemies
       act once every living player is ready. Don't stall.

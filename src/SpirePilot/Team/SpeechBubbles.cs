@@ -1,4 +1,5 @@
 using MegaCrit.Sts2.Core.Combat;
+using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Vfx;
@@ -60,21 +61,36 @@ internal static class SpeechBubbles
         }
     }
 
+    /// <summary>
+    /// Main thread. Whether a teammate's message from <paramref name="playerNetId"/> shows as a bubble right now: the
+    /// setting is on, a fight runs and the sender is on screen. Otherwise only a toast can show it.
+    /// </summary>
+    public static bool WillShow(ulong playerNetId)
+    {
+        try { return PilotRuntime.Settings.Team.SpeechBubbles && Anchor(playerNetId) != null; }
+        catch (Exception) { return false; }
+    }
+
+    /// <summary>The player's creature and the combat room to put its bubble in, or null when it is not on screen.</summary>
+    private static (Creature Creature, NCombatRoom Room)? Anchor(ulong playerNetId)
+    {
+        // Creature nodes only exist in combat.
+        if (!FightRunning()) return null;
+        var creature = CombatManager.Instance?.DebugOnlyGetState()?.GetPlayer(playerNetId)?.Creature;
+        if (creature == null) return null;
+        var room = NCombatRoom.Instance;
+        if (!SceneUtil.Alive(room) || !SceneUtil.Alive(room!.GetCreatureNode(creature))) return null;
+        // Vanilla adds creature dialogue VFX to the combat VFX container (as NCardPlay does for thought bubbles).
+        return SceneUtil.Alive(room.CombatVfxContainer) ? (creature, room) : null;
+    }
+
     private static void ShowCore(ulong playerNetId, string text)
     {
         var clean = Prepare(text);
         if (clean.Length == 0) return;
-
-        // Creature nodes only exist in combat.
-        if (!FightRunning()) return;
-        var creature = CombatManager.Instance?.DebugOnlyGetState()?.GetPlayer(playerNetId)?.Creature;
-        if (creature == null) return;
-        var room = NCombatRoom.Instance;
-        if (!SceneUtil.Alive(room)) return;
-        if (!SceneUtil.Alive(room!.GetCreatureNode(creature))) return;
-        // Vanilla adds creature dialogue VFX to the combat VFX container (as NCardPlay does for thought bubbles).
+        if (Anchor(playerNetId) is not { } anchor) return;
+        var (creature, room) = anchor;
         var container = room.CombatVfxContainer;
-        if (!SceneUtil.Alive(container)) return;
 
         Dismiss(playerNetId);
         var seconds = Math.Clamp(MinSeconds + clean.Length * 0.05, MinSeconds, MaxSeconds);

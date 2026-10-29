@@ -420,8 +420,11 @@ internal sealed class LocalHttpApi : IDisposable
             if (aiNode is JsonValue v && v.TryGetValue<bool>(out var b)) fromAi = b;
             else { await Send(res, 400, Error("\"from_ai\" must be true or false", "bad_request")); return; }
         }
-        var snap = PilotRuntime.Bridge.Latest ?? await PilotRuntime.Bridge.CaptureAsync(CancellationToken.None);
+        // A fresh capture, as /state and /act take: the newest one may be from before this co-op run.
+        var snap = await PilotRuntime.Bridge.CaptureAsync(CancellationToken.None) ?? PilotRuntime.Bridge.Latest;
         var toText = body?["to"]?.ToString();
+        var replyTo = body?["reply_to"]?.ToString();
+        var kind = DecisionParser.ParseKind(body?["kind"]?.ToString());
         ulong to = 0;
         if (!IsEveryone(toText))
         {
@@ -433,19 +436,10 @@ internal sealed class LocalHttpApi : IDisposable
                 return;
             }
         }
-        var kind = DecisionParser.ParseKind(body?["kind"]?.ToString());
-        // Who reads it comes from the live roster: a teammate who linked after the last capture can.
-        if (snap is { IsMultiplayer: true } && !TeamLink.HasReader(to))
+        // An answer without a named recipient goes where the question came from, as the AI's own answers do.
+        else if (PilotRuntime.Team.FindReceived(replyTo) is { } asked)
         {
-            // Nobody addressed runs SpirePilot: they would never see the text (and on a client the host drops it).
-            // The kind's vanilla emote is all they can see; with the AI's budget spent (or the same emote just shown)
-            // there is none, and the answer stays the same.
-            string? emote = null;
-            if (Reactions.Has(kind) && (!fromAi || PilotRuntime.Team.TryUseAiBudget($"emote|{kind}|{to}")) &&
-                PilotRuntime.Bridge.TrySignal(kind))
-                emote = Reactions.Name(kind);
-            await Send(res, 200, new JsonObject { ["delivered"] = false, ["emote"] = emote, ["reason"] = "no_reader" });
-            return;
+            to = TeamDelivery.ReplyRecipient(asked, kind);
         }
         var target = body?["target"]?.ToString();
         var msg = new TeamMessage
@@ -457,11 +451,18 @@ internal sealed class LocalHttpApi : IDisposable
             Debuff = body?["debuff"]?.ToString(),
             // "e0" means this client's enemy; teammates resolve the shared combat id ("Cultist (cid:12)").
             Target = snap == null ? target : PilotLoop.NormalizeTarget(target, snap),
-            ReplyTo = body?["reply_to"]?.ToString(),
+            ReplyTo = replyTo,
         };
-        var entry = PilotRuntime.Team.Send(msg, fromAi);
-        if (entry == null) await Send(res, 429, Error("rate limited", "rate_limited"));
-        else await Send(res, 200, new { delivered = entry.Delivered, id = entry.Message.Id });
+        // The same rule as the AI's and the Team tab's messages: text to teammates who run SpirePilot (by the live
+        // roster: one who linked after the capture can read it), the kind's vanilla emote to the others. With the AI's
+        // budget spent (or the same emote just shown) there is no emote.
+        var sent = PilotRuntime.Loop.SendForPlayer(msg, snap, fromAi, TeamLink.HasReader);
+        if (sent.RateLimited)
+            await Send(res, 429, Error("rate limited", "rate_limited"));
+        else if (sent.NoReader)
+            await Send(res, 200, new JsonObject { ["delivered"] = false, ["emote"] = sent.Emote, ["reason"] = "no_reader" });
+        else
+            await Send(res, 200, new JsonObject { ["delivered"] = sent.Entry?.Delivered ?? false, ["id"] = sent.Message.Id, ["emote"] = sent.Emote });
     }
 
     /// <summary>Recipients that mean everyone (same words as <see cref="PilotLoop.ResolveRecipient"/>).</summary>

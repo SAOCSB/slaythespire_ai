@@ -117,6 +117,20 @@ public sealed class TeamChatHub
         lock (_lock) return _aiInbox.ToList();
     }
 
+    /// <summary>The unread messages <see cref="ExpireInbox"/> with <paramref name="maxAge"/> would keep; changes nothing.</summary>
+    public List<TeamMessage> PeekAiInbox(TimeSpan maxAge)
+    {
+        var cutoff = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - (long)maxAge.TotalMilliseconds;
+        lock (_lock) return _aiInbox.Where(m => m.Time == 0 || m.Time >= cutoff).ToList();
+    }
+
+    /// <summary>A message received from a teammate that is still in the log, by id (null when unknown or gone).</summary>
+    public TeamMessage? FindReceived(string? id)
+    {
+        if (string.IsNullOrEmpty(id)) return null;
+        lock (_lock) return _log.LastOrDefault(e => e.Incoming && e.Delivered && e.Message.Id == id)?.Message;
+    }
+
     public void MarkRead(IEnumerable<string> ids)
     {
         var set = ids.ToHashSet();
@@ -153,11 +167,12 @@ public sealed class TeamChatHub
     /// Budget for AI actions that are not chat messages (vanilla emotes for teammates without the mod): the same
     /// per-minute limit and a 3-minute dedupe on <paramref name="key"/>. Returns false when it must not happen.
     /// </summary>
-    public bool TryUseAiBudget(string key)
+    /// <param name="textPaid">The same message also went out as text, which paid for it: only the dedupe applies.</param>
+    public bool TryUseAiBudget(string key, bool textPaid = false)
     {
         lock (_lock)
         {
-            if (IsRecentAiDuplicate(key) || !TryConsumeAiBudget()) return false;
+            if (IsRecentAiDuplicate(key) || !textPaid && !TryConsumeAiBudget()) return false;
             _recentAiTexts.Enqueue((_clock(), key));
             return true;
         }

@@ -170,7 +170,7 @@ internal sealed class GameBridge : IGameBridge
     /// </summary>
     public bool TrySignal(TeamMessageKind kind)
     {
-        if (!Reactions.Has(kind)) return false;
+        if (TeamEmotes.ReactionFor(kind) == null) return false;
         if (MainThread.IsMainThread) return SignalOnMainThread(kind);
         // 0 = pending, 1 = claimed by the main thread, 2 = abandoned by us (a late frame then sends nothing).
         int state = 0;
