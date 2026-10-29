@@ -1,8 +1,9 @@
 """Tests for the SpirePilot MCP server against a fake of the mod's HTTP API (stdlib http.server in a thread).
 
 fixtures/*.json were serialized by the mod's own model classes with LocalHttpApi's JSON options, and
-fixtures/*.txt are the C# StateFormatter's output for them (sections.json combines every screen section at once,
-for formatter coverage only). Tool functions are called directly, not over stdio.
+fixtures/*.txt are the C# StateFormatter's output for them as it was before mods sent their own text (the reference
+for the format_state fallback; sections.json combines every screen section at once, for formatter coverage only).
+Tool functions are called directly, not over stdio.
 """
 
 import asyncio
@@ -32,6 +33,17 @@ def run(coro):
 
 
 MIKA = 76561198000000002
+# TeamEmotes.ReactionFor: the emote a teammate without SpirePilot sees instead of the text.
+REACTIONS = {
+    "request_potion": "Exclamation",
+    "request_block": "Exclamation",
+    "request_debuff": "Exclamation",
+    "request_focus": "Exclamation",
+    "ask_need_potion": "QuestionMark",
+    "offer_potion": "QuestionMark",
+    "accept": "ThumbUp",
+    "decline": "ThumbDown",
+}
 
 
 class FakeMod:
@@ -51,8 +63,11 @@ class FakeMod:
         self.posts: list[tuple[str, dict | None]] = []
         self.owner_forbids: set[str] = set()  # semantic keys an owner rule removes from every menu the API serves
         self.version_mismatch: str | None = None  # PilotRuntime.VersionProblemEnglish
+        self.version_warning: str | None = None  # PilotRuntime.VersionWarningEnglish
+        self.save_error: str | None = None  # POST /mode could not write settings.json
         self.rate_limited = False
         self.delivered = True
+        self.teammates = {"Mika": True}  # name -> runs SpirePilot (the live roster)
         self.chat_answer: dict | None = None  # replaces the POST /chat answer when set
         self.chat = [
             {
@@ -153,6 +168,7 @@ class FakeMod:
             "cachedTokens": 8000,
             "profile": "Claude",
             "versionMismatch": self.version_mismatch,
+            "versionWarning": self.version_warning,
         }
 
     def filtered(self, snap: dict) -> dict:
@@ -169,6 +185,29 @@ class FakeMod:
         if self.busy and self.busy.pop(0):
             snap["canAct"], snap["waitReason"] = False, "enemy turn"
         return snap
+
+    def post_chat(self, body: dict):
+        """LocalHttpApi.Chat with TeamDelivery: text to teammates who run SpirePilot, the kind's emote to the others."""
+        if not body.get("text", "").strip():
+            return 400, {"error": "text required", "code": "bad_request"}
+        if self.rate_limited:
+            return 429, {"error": "rate limited", "code": "rate_limited"}
+        if self.chat_answer:
+            return 200, self.chat_answer
+        to = str(body.get("to") or "all").strip()
+        addressed = (
+            list(self.teammates)
+            if to.lower() in ("all", "everyone")
+            else [n for n in self.teammates if n.lower().startswith(to.lower())][:1]
+        )
+        if not addressed:
+            error = f"unknown recipient '{to}'; use \"all\" or one of the teammates"
+            return 400, {"error": error, "code": "unknown_recipient", "teammates": list(self.teammates)}
+        readers = [n for n in addressed if self.teammates[n]]
+        emote = REACTIONS.get(body.get("kind", "chat")) if len(readers) < len(addressed) else None
+        if not readers:
+            return 200, {"delivered": False, "emote": emote, "reason": "no_reader"}
+        return 200, {"delivered": self.delivered, "id": "5b5b5b5b5b5b", "emote": emote}
 
     def handle(self, method: str, path: str, query: dict, body, auth: str | None):
         """Mirrors LocalHttpApi.HandleAsync; returns (status, payload)."""
@@ -196,6 +235,8 @@ class FakeMod:
                 return 400, {"error": "kind must be cards, relics, potions, powers or characters"}
             return 200, self.compendium[kind]
         if (method, path) == ("POST", "/act"):
+            if self.version_mismatch:
+                return 409, {"error": self.version_mismatch, "code": "version_mismatch"}
             if self.mode not in ("Off", "Advisor") and not self.paused:
                 return 409, {
                     "error": "the built-in pilot is in control; set mode Off or Advisor first (POST /mode)",
@@ -240,17 +281,13 @@ class FakeMod:
             if self.version_mismatch and modes[body["mode"].lower()] != "Off":
                 return 409, {"error": self.version_mismatch, "code": "version_mismatch"}
             self.mode = modes[body["mode"].lower()]
-            return 200, self.status()
+            return 200, {**self.status(), **({"saveError": self.save_error} if self.save_error else {})}
         if (method, path) == ("POST", "/instruction"):
             return 200, {"ok": True}
         if (method, path) == ("GET", "/chat"):
             return 200, self.chat
         if (method, path) == ("POST", "/chat"):
-            if not (body or {}).get("text", "").strip():
-                return 400, {"error": "text required"}
-            if self.rate_limited:
-                return 429, {"error": "rate limited"}
-            return 200, self.chat_answer or {"delivered": self.delivered, "id": "5b5b5b5b5b5b"}
+            return self.post_chat(body or {})
         return 404, {"error": "unknown endpoint"}
 
 
@@ -305,7 +342,7 @@ def act_posts(mod: FakeMod) -> list:
 
 
 @pytest.mark.parametrize("name", ["combat", "map", "sections"])
-def test_format_state_matches_csharp_state_formatter(name):
+def test_format_state_fallback_renders_its_reference_text(name):
     expected = (FIXTURES / f"{name}.txt").read_text(encoding="utf-8")
     assert srv.format_state(load(name)) == expected
 
@@ -477,6 +514,18 @@ def test_set_mode(fake):
     text = run(srv.set_mode("Advisor"))
     assert fake.mode == "Advisor" and "mode Advisor" in text and "You can act" in text
     assert fake.posts[-1] == ("/mode", {"mode": "Advisor"})
+    assert "Warning" not in text
+
+
+def test_set_mode_warns_when_the_settings_file_was_not_written(fake):
+    fake.save_error = "settings file not written: Access to the path is denied"
+    text = run(srv.set_mode("FullAuto"))
+    assert fake.mode == "FullAuto" and "mode FullAuto" in text
+    assert text.endswith(
+        "Warning: settings file not written: Access to the path is denied. The mode applies now but is not saved, so "
+        "the next game start uses the old mode; tell the user to check that mod_configs/SpirePilot/settings.json is "
+        "writable."
+    )
 
 
 def test_give_instruction(fake):
@@ -558,6 +607,37 @@ def test_send_chat_answers_a_request_with_reply_to(fake):
     assert {"accept", "decline"} <= set(params["kind"]["enum"]) and "reply_to" in params
 
 
+def test_send_chat_in_a_mixed_team_reports_the_emote_the_others_saw(fake):
+    fake.teammates = {"Mika": True, "Bob": False}
+    text = run(srv.send_chat("Potion please", kind="request_potion"))
+    assert text == (
+        "Sent to all (request_potion): Potion please\n"
+        "Teammates without SpirePilot saw the game's Exclamation emote instead."
+    )
+    assert run(srv.send_chat("Nice run so far")) == "Sent to all (chat): Nice run so far"  # chat has no emote
+    assert "emote" not in run(srv.send_chat("Potion please", kind="request_potion", recipient="Mika"))
+    text = run(srv.send_chat("Potion please", kind="request_potion", recipient="Bob"))
+    assert text.endswith("no teammate you addressed runs SpirePilot; they see the game's Exclamation emote instead.")
+
+
+def test_send_chat_answer_without_recipient_goes_to_the_asker(fake):
+    text = run(srv.send_chat("Sure, here it comes.", kind="accept", reply_to="#4f2a9c01d2e3"))
+    assert fake.posts[-1][1]["to"] == "all"
+    assert text == "Sent in answer to #4f2a9c01d2e3 (accept): Sure, here it comes."
+
+
+def test_send_chat_unknown_recipient_lists_the_teammates(fake):
+    fake.teammates = {"Mika": True, "Bob": False}
+    with pytest.raises(srv.SpirePilotError) as err:
+        run(srv.send_chat("Need block", kind="request_block", recipient="Zed"))
+    assert str(err.value) == (
+        "No teammate matches 'Zed'. Teammates: Mika, Bob; use one of these names (or a prefix or character) or \"all\"."
+    )
+    fake.teammates = {}
+    with pytest.raises(srv.SpirePilotError, match=r"No teammates are known \(not in a co-op run\?\); use \"all\""):
+        run(srv.send_chat("Need block", kind="request_block", recipient="Zed"))
+
+
 def test_send_chat_to_teammates_without_the_mod_reports_the_emote(fake):
     not_sent = "Text not sent: no teammate you addressed runs SpirePilot; "
     fake.chat_answer = {"delivered": False, "emote": "ThumbUp", "reason": "no_reader"}
@@ -591,10 +671,12 @@ def test_act_403_when_an_owner_rule_forbids_the_action(fake):
 
 def test_wrong_build_for_the_game_version(fake):
     fake.version_mismatch = (
-        "this SpirePilot build is for game 0.107, but the game is 0.111.0: the AI stays off; install the 0.111 build"
+        "this SpirePilot build is for game 0.107, but the game is 0.111.0: the AI stays off; install the 0.111 build "
+        "('Run anyway' on the SpirePilot panel's Control tab overrides this, at your own risk)"
     )
     text = run(srv.status())
-    assert "Wrong SpirePilot build for this game (this SpirePilot build is for game 0.107" in text
+    # The mod's own message is relayed: it names the fix that exists (a build, an update, or "Run anyway").
+    assert f"Wrong SpirePilot build for this game: {fake.version_mismatch}. Until that is resolved" in text
     assert "You can act" not in text
     with pytest.raises(srv.SpirePilotError, match="Wrong SpirePilot build.*The mode stays Off"):
         run(srv.set_mode("FullAuto"))
@@ -605,10 +687,34 @@ def test_wrong_build_for_the_game_version(fake):
     assert act_posts(fake) == []
 
 
+def test_act_refused_by_the_mods_version_guard(fake, monkeypatch):
+    run(srv.get_state())
+    status = fake.status()
+    monkeypatch.setattr(fake, "status", lambda: status)  # /status read before the guard blocked
+    fake.version_mismatch = "this SpirePilot build is for game 0.107, but the game is 0.112.0: the AI stays off"
+    with pytest.raises(srv.SpirePilotError, match="Wrong SpirePilot build.*0.112.0.*Nothing was done"):
+        run(srv.act(id="a0"))
+    assert act_posts(fake) == [{"semantic_key": "play:BASH@E:NIBBIT#0"}] and fake.executed == []
+
+
+def test_untested_game_version_warns_without_blocking(fake):
+    fake.version_warning = (
+        "this SpirePilot build is for game 0.111; game 0.112.0 is newer and untested: the AI runs, but parts may not "
+        "work; check for a SpirePilot update"
+    )
+    text = run(srv.status())
+    assert f"Game version warning (play goes on): {fake.version_warning}" in text
+    assert "Wrong SpirePilot build" not in text and "You can act" in text
+    run(srv.get_state())
+    run(srv.act(id="a0"))
+    assert len(fake.executed) == 1
+    assert "mode FullAuto" in run(srv.set_mode("FullAuto"))
+
+
 def test_get_prompt(fake):
     assert run(srv.get_prompt(part="system")) == "You are SpirePilot.\n\n## OWNER SETTINGS\n- Route style: balanced"
     user = run(srv.get_prompt(part="user"))
-    assert user.startswith("[DECISION] combat_turn") and "call act" in user
+    assert user.startswith("[DECISION] combat_turn") and "call get_state, then call act" in user
     both = run(srv.get_prompt())
     assert both.startswith("You are SpirePilot.") and "[MENU]" in both
     fake.state = None
