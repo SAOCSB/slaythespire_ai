@@ -191,7 +191,9 @@ public sealed class DecisionEngine
     public bool NeedsAttention(TeamMessage m) => NeedsAttention(m, Memory.FindOutgoing);
 
     private bool NeedsAttention(TeamMessage m, Func<string?, TeamMessage?> ours) =>
-        IsActionable(m) && !EmoteCoolingDown(m) ||
+        IsActionable(m) && !EmoteCoolingDown(m) || IsYesToOurOffer(m, ours);
+
+    private static bool IsYesToOurOffer(TeamMessage m, Func<string?, TeamMessage?> ours) =>
         m.Kind == TeamMessageKind.Accept && ours(m.ReplyTo) is { Kind: TeamMessageKind.OfferPotion or TeamMessageKind.AskNeedPotion };
 
     /// <summary>
@@ -233,7 +235,10 @@ public sealed class DecisionEngine
 
         TeamMessage? Ours(string? id) => id == null ? null : outgoing.FirstOrDefault(m => m.Id == id);
         var ignored = unread.Where(m => !Readable(m, settings, Ours)).Select(m => m.Id).ToList();
-        unread = unread.Where(m => Readable(m, settings, Ours)).ToList();
+        // A "yes" to our offer asks for an action: a capture without one (a reply-only call) leaves it unread and its
+        // offer open for the first that has one (taking the end of turn back counts), where it is shown as one to act on.
+        bool cannotAct = !snapshot.CanAct || snapshot.Actions.Count == 0;
+        unread = unread.Where(m => Readable(m, settings, Ours) && !(cannotAct && IsYesToOurOffer(m, Ours))).ToList();
         // A teammate's "yes" to a question they already answered (a second tap) asks nothing new.
         var repeats = new HashSet<TeamMessage>();
         var yeses = new HashSet<(string, ulong)>();
@@ -310,15 +315,7 @@ public sealed class DecisionEngine
     }
 
     /// <summary>True when unread team messages ask this AI for a reaction it can give now (used to wake it while it cannot act).</summary>
-    public bool HasActionableInbox(GameSnapshot snapshot) => Wakes(PlanInbox(snapshot, _settings()), snapshot);
-
-    /// <summary>
-    /// Something in <paramref name="inbox"/> is worth a call on <paramref name="s"/>: a "yes" to our offer asks for an
-    /// action, so alone it waits for a capture that has one (taking the end of turn back counts), where it is shown as
-    /// one to act on.
-    /// </summary>
-    private static bool Wakes(Inbox inbox, GameSnapshot s) =>
-        inbox.Actionable.Any(m => m.Kind != TeamMessageKind.Accept || s.CanAct && s.Actions.Count > 0);
+    public bool HasActionableInbox(GameSnapshot snapshot) => PlanInbox(snapshot, _settings()).Actionable.Count > 0;
 
     /// <summary>
     /// The owner's team switches applied to what the model wants to say: replies need auto-reply, the AI's own
@@ -356,10 +353,10 @@ public sealed class DecisionEngine
     {
         var settings = _settings();
         Memory.MaxHistory = settings.Strategy.HistoryLength;
-        // Nothing is read unless the call is made: reading closes the offer a "yes" answers and makes it a promise, and
-        // the yes would then never be shown as one to act on.
+        // Nothing is read unless the call is made: reading closes what the answers in it answer, and an answer left
+        // unread would lose its question.
         var plan = PlanInbox(snapshot, settings);
-        if (!Wakes(plan, snapshot) || CoolingDown(settings)) return null;
+        if (plan.Actionable.Count == 0 || CoolingDown(settings)) return null;
         var inbox = Read(plan, snapshot);
         // The menu as GET /prompt shows it: owner rules applied, on a copy (the caller's capture stays as it was).
         var s = OwnerRules.Filtered(snapshot, settings);

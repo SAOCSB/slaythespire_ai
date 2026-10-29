@@ -69,6 +69,7 @@ class FakeMod:
         self.delivered = True
         self.teammates = {"Mika": True}  # name -> runs SpirePilot (the live roster); empty: solo
         self.ai_emotes: set[tuple[str, str]] = set()  # (kind, recipient) an AI sender showed as an emote lately
+        self.emote_fails = False  # IGameBridge.TrySignal: the game cannot show an emote right now
         self.chat_answer: dict | None = None  # replaces the POST /chat answer when set
         self.chat = [
             {
@@ -204,21 +205,27 @@ class FakeMod:
         if not everyone and not addressed:
             error = f"unknown recipient '{to}'; use \"all\" or one of the teammates"
             return 400, {"error": error, "code": "unknown_recipient", "teammates": list(self.teammates)}
+        kind = body.get("kind", "chat")
+        asked = next((m for m in self.chat if m["id"] == body.get("reply_to")), None)
+        if asked and asked["kind"] == "RequestPotion" and kind in ("offer_potion", "ask_need_potion"):
+            kind = "accept"  # TeamDelivery.AnswerKind: an offer answering a potion request is the yes
+        flags = {"kind": kind, "emoteLimited": False, "emoteFailed": False}
         if not addressed:
             # Solo: everyone is never refused; the text is only logged.
-            return 200, {"delivered": False, "id": "5b5b5b5b5b5b", "emote": None, "emoteLimited": False}
+            return 200, {"delivered": False, "id": "5b5b5b5b5b5b", "emote": None, **flags}
         readers = [n for n in addressed if self.teammates[n]]
-        emote = REACTIONS.get(body.get("kind", "chat")) if len(readers) < len(addressed) else None
-        limited = False
+        emote = REACTIONS.get(kind) if len(readers) < len(addressed) else None
         if emote and body.get("from_ai", True):
             # TeamChatHub.TryUseAiBudget: an AI sender shows the same kind to the same recipient once per 3 minutes.
-            key = (body.get("kind", "chat"), "all" if everyone else addressed[0])
-            limited = key in self.ai_emotes
-            emote = None if limited else emote
+            key = (kind, "all" if everyone else addressed[0])
+            flags["emoteLimited"] = key in self.ai_emotes
             self.ai_emotes.add(key)
+        flags["emoteFailed"] = bool(emote) and not flags["emoteLimited"] and self.emote_fails
+        if flags["emoteLimited"] or flags["emoteFailed"]:
+            emote = None
         if not readers:
-            return 200, {"delivered": False, "emote": emote, "emoteLimited": limited, "reason": "no_reader"}
-        return 200, {"delivered": self.delivered, "id": "5b5b5b5b5b5b", "emote": emote, "emoteLimited": limited}
+            return 200, {"delivered": False, "emote": emote, **flags, "reason": "no_reader"}
+        return 200, {"delivered": self.delivered, "id": "5b5b5b5b5b5b", "emote": emote, **flags}
 
     def handle(self, method: str, path: str, query: dict, body, auth: str | None):
         """Mirrors LocalHttpApi.HandleAsync; returns (status, payload)."""
@@ -638,9 +645,17 @@ def test_send_chat_in_a_mixed_team_reports_the_emote_the_others_saw(fake):
         "Sent to 所有人 (request_potion): Still need a potion\n"
         "Teammates without SpirePilot saw no emote: the same kind was shown to them in the last 3 minutes."
     )
+    # The game could not show the emote right now.
+    fake.emote_fails = True
+    text = run(srv.send_chat("Cover me", kind="request_block"))
+    assert text == (
+        "Sent to all (request_block): Cover me\n"
+        "Teammates without SpirePilot saw no emote: the game could not show one right now."
+    )
+    fake.emote_fails = False
     # The mod says whether an emote was due: nothing is claimed when none was.
     assert "ThumbUp" in run(srv.send_chat("Sure", kind="accept", reply_to="4f2a9c01d2e3"))
-    fake.chat_answer = {"delivered": True, "id": "5b5b5b5b5b5b", "emote": None, "emoteLimited": False}
+    fake.chat_answer = {"delivered": True, "id": "5b5b5b5b5b5b", "kind": "accept", "emote": None, "emoteLimited": False}
     text = run(srv.send_chat("Yes, coming", kind="accept", reply_to="4f2a9c01d2e3"))
     assert text == "Sent in answer to #4f2a9c01d2e3 (accept): Yes, coming"
 
@@ -650,6 +665,20 @@ def test_send_chat_answer_without_recipient_posts_all_with_reply_to(fake):
     text = run(srv.send_chat("Sure, here it comes.", kind="accept", reply_to="#4f2a9c01d2e3"))
     assert fake.posts[-1][1]["to"] == "all" and fake.posts[-1][1]["reply_to"] == "4f2a9c01d2e3"
     assert text == "Sent in answer to #4f2a9c01d2e3 (accept): Sure, here it comes."
+
+
+def test_send_chat_offer_answering_a_potion_request_goes_out_as_the_yes(fake):
+    offer = srv.send_chat("Want my Block Potion?", kind="offer_potion", potion="BLOCK_POTION", reply_to="4f2a9c01d2e3")
+    text = run(offer)
+    assert fake.posts[-1][1]["kind"] == "offer_potion"
+    assert text == (
+        "Sent in answer to #4f2a9c01d2e3 (accept): Want my Block Potion?\n"
+        "It went out as accept, not offer_potion: an offer answering a potion request is the yes, so you promised to "
+        "use the potion on them."
+    )
+    # An offer answering anything else (here a "yes") stays an offer.
+    text = run(srv.send_chat("Block Potion?", kind="offer_potion", reply_to="9e8d7c6b5a40"))
+    assert text == "Sent in answer to #9e8d7c6b5a40 (offer_potion): Block Potion?"
 
 
 def test_send_chat_to_everyone_solo_is_logged_not_refused(fake):
@@ -678,7 +707,11 @@ def test_send_chat_to_teammates_without_the_mod_reports_the_emote(fake):
     assert text == not_sent + "they see the game's ThumbUp emote instead."
     fake.chat_answer = {"delivered": False, "emote": None, "emoteLimited": False, "reason": "no_reader"}
     assert run(srv.send_chat("Nice run so far")) == not_sent + "chat has no emote, so they see nothing."
-    # A kind with an emote that was not shown: the mod says whether a repeat or the budget stopped it.
+    # A kind with an emote that was not shown: the mod says whether a repeat or the budget stopped it, or the game
+    # could not show it.
+    text = run(srv.send_chat("Potion please", kind="request_potion"))
+    assert text == not_sent + "no emote was shown either, so nothing reached them."
+    fake.chat_answer = {"delivered": False, "emote": None, "emoteFailed": True, "reason": "no_reader"}
     text = run(srv.send_chat("Potion please", kind="request_potion"))
     assert text == not_sent + (
         "no emote was shown either (the game could not show one right now), so nothing reached them."

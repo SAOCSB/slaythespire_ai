@@ -124,7 +124,7 @@ AI 思考时你点暂停或切换模式，这一步会立即取消，不会在�
 - “给药水”的实际做法是：把可以对玩家使用的药水（治疗、格挡、能量、力量……）**用在队友身上**（游戏不支持直接转交药水）。
 - 敌人按游戏的战斗 id 传递，所以即使两边游戏语言不同、敌人编号不同，“给 X 上易伤”也能对上同一个敌人。
 - AI 结束回合后仍会回复队友；只剩“撤销结束回合”时，只有为了帮队友（例如给药水）才会撤销。
-  队友只是对 AI 的提议说“好”时，敌人回合里不会为此调用模型，轮到 AI 时再照做。
+  队友对 AI 的提议说“好”时，敌人回合里不会为此调用模型（为别的队友消息调用时也先留着这个“好”），轮到 AI 时再照做。
 - 即使队友没装 Mod，AI 也能看到所有队友的状态（联机时每台机器都会模拟所有玩家）和他们的药水、卡组，会据此做决策；状态里会标出谁没装 Mod，
   对这些队友不发文字，改用游戏自带的表情和地图 ping：请求 → “!”，询问 / 提议给药水 → “?”，接受 → 点赞，拒绝 → 点踩（聊天和路线建议没有对应表情）。
   发给“所有人”而队伍里有人装了、有人没装时，文字发给装了的队友，表情发给没装的；AI、队友页和 HTTP 接口 / MCP 都按这个规则发送。
@@ -181,11 +181,13 @@ AI 思考时你点暂停或切换模式，这一步会立即取消，不会在�
 `POST /chat`：`kind` 可选 `chat`、`request_potion`、`offer_potion`、`ask_need_potion`、`request_debuff`、`request_focus`、
 `request_block`、`accept`、`decline`，可带 `potion`、`debuff`、`target`；回答某条消息时带 `reply_to`（`GET /chat` 里那条消息的 `id`），
 这时 `to` 不写或写 `all` 就发给提问的人（问题是发给所有人的则发给所有人；提议 / 询问药水只发给提问的人），
-回答要药水的请求时 `offer_potion` / `ask_need_potion` 按 `accept` 发出（这就是答应）；
+回答要药水的请求时 `offer_potion` / `ask_need_potion` 按 `accept` 发出（这就是答应，所以和其他回答一样，请求是发给所有人的就发给所有人）；
 `to` 写错会返回 400 和队友名单；`from_ai` 默认 true。和 AI、队友页同一个规则：文字发给装了 SpirePilot 的队友，没装的看到对应的游戏表情。
-有人能收到文字时返回 `{"delivered":true,"id":"...","emote":<表情名或 null>,"emoteLimited":<true/false>}`（`emote` 是没装 Mod 的队友看到的表情）；
-联机时收件的队友都没装 SpirePilot：不发文字，返回 `{"delivered":false,"emote":<表情名或 null>,"emoteLimited":<true/false>,"reason":"no_reader"}`。
-`emote` 为 null 表示没有显示表情（收件人都装了 Mod；聊天没有对应表情；AI 3 分钟内刚对同一对象发过同类表情或消息额度已用完，这时 `emoteLimited` 为 true；或游戏暂时显示不了）。
+有人能收到文字时返回 `{"delivered":true,"id":"...","kind":"...","emote":<表情名或 null>,"emoteLimited":<true/false>,"emoteFailed":<true/false>}`
+（`kind` 是实际发出的类型，`emote` 是没装 Mod 的队友看到的表情）；
+联机时收件的队友都没装 SpirePilot：不发文字，返回 `{"delivered":false,"kind":"...","emote":<表情名或 null>,"emoteLimited":<true/false>,"emoteFailed":<true/false>,"reason":"no_reader"}`。
+`emote` 为 null 表示没有显示表情（收件人都装了 Mod；聊天没有对应表情；AI 3 分钟内刚对同一对象发过同类表情或消息额度已用完，这时 `emoteLimited` 为 true；
+或游戏暂时显示不了，这时 `emoteFailed` 为 true）。
 `from_ai` 为 true 时，要发的文字因消息额度用完或 3 分钟内发过同样的消息被拒，会返回 429 `rate_limited`（什么都不发）。发出的请求、提议和回答会记进内置 AI 的历史（见“多人模式与队友交流”）。
 
 ```bash
@@ -233,16 +235,17 @@ are refused; POST bodies must be `application/json` (else 415), at most 64 KB, e
 message answered, from `GET /chat`) and an optional `from_ai` (default true); it rejects an unknown recipient with 400
 and the teammates' names. With `reply_to` and no recipient (or `"all"`) the answer goes to the asker, or to everyone
 when the question was for everyone; a potion offer or question goes to the asker only. A potion offer or question
-answering a potion request goes out as `accept` (it is the yes). It follows the pilot's rule: in co-op the text goes
-to teammates who run SpirePilot and the kind's vanilla emote to the others, also for "all" in a mixed team; the answer
-is `{"delivered": true, "id": ..., "emote": <name or null>, "emoteLimited": <bool>}`. When no addressed teammate runs
-SpirePilot no text is sent and the answer is
-`{"delivered": false, "emote": <name or null>, "emoteLimited": <bool>, "reason": "no_reader"}`. `emote` is null when
-nothing was shown (nobody needed one, chat has no emote, an AI sender showed the same kind to them in the last 3
-minutes or spent its budget, which sets `emoteLimited`, or the game could not show one); text an AI sender may not
-send (budget spent, or a repeat) gets 429 `rate_limited`. Requests, offers and answers sent this way enter the
-built-in pilot's history (requests also its open requests), and the message answered is not answered by the pilot
-again (also when the pilot was deciding on it).
+answering a potion request goes out as `accept` (it is the yes), so like any answer it goes to everyone when the
+request was for everyone. It follows the pilot's rule: in co-op the text goes to teammates who run SpirePilot and the
+kind's vanilla emote to the others, also for "all" in a mixed team; the answer is `{"delivered": true, "id": ...,
+"kind": ..., "emote": <name or null>, "emoteLimited": <bool>, "emoteFailed": <bool>}` (`kind`: the kind sent). When
+no addressed teammate runs SpirePilot no text is sent and the answer is `{"delivered": false, "kind": ..., "emote":
+<name or null>, "emoteLimited": <bool>, "emoteFailed": <bool>, "reason": "no_reader"}`. `emote` is null when nothing
+was shown (nobody needed one, chat has no emote, an AI sender showed the same kind to them in the last 3 minutes or
+spent its budget, which sets `emoteLimited`, or the game could not show one, which sets `emoteFailed`); text an AI
+sender may not send (budget spent, or a repeat) gets 429 `rate_limited`. Requests, offers and answers sent this way
+enter the built-in pilot's history (requests also its open requests), and the message answered is not answered by the
+pilot again (also when the pilot was deciding on it).
 
 ## 5. 文件位置
 

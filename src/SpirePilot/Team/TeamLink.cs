@@ -793,13 +793,11 @@ internal static class TeamLink
                 forOthers = mates is not { Count: > 0 } ||
                             mates.Any(id => id != senderId && !(Peers.TryGetValue(id, out var mate) && mate.Confirmed));
         }
-        var memory = PilotRuntime.Engine.Memory;
         // Outside the roster lock: the memory takes its own.
-        if (linked && TeamEmotes.Asks(reaction)) memory.NoteSignal(TeamMessage.NewId(), 0);
+        var asked = PilotRuntime.Engine.Memory.SeeEmote(senderId, reaction, linked);
         if (ai) return;
         var name = PlayerName(local.platform, senderId);
-        var asked = forOthers ? null : linked ? memory.LastOpenTo(senderId) : memory.LastSignalTo(senderId);
-        hub.Receive(TeamEmotes.ToMessage(reaction, senderId, name, hub.LocalNetId, asked, fromLinkedPeer: forOthers));
+        hub.Receive(TeamEmotes.ToMessage(reaction, senderId, name, hub.LocalNetId, forOthers ? null : asked, fromLinkedPeer: forOthers));
     }
 
     private static bool WithinInboundBudget(ulong sender, long now)

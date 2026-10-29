@@ -38,14 +38,16 @@ namespace SpirePilot.Api;
 ///   POST /instruction {"text":"..."}                     one-shot instruction for the built-in pilot
 ///   GET  /chat                recent team chat
 ///   POST /chat   {"text":"...","to":"all","kind":"chat","potion":..,"debuff":..,"target":..,"reply_to":..,"from_ai":true}
-///                             → {"delivered", "id", "emote", "emoteLimited"}: text to teammates who run SpirePilot,
-///                             the kind's vanilla emote to the others (also for "all" in a mixed team); when nobody
-///                             addressed runs it, no text: {"delivered": false, "emote", "emoteLimited", "reason":
-///                             "no_reader"}. "emoteLimited": an emote was due, but an AI sender showed the same kind to
-///                             them lately or spent its budget. A reply_to without a recipient goes to the asker, or to
-///                             everyone when the question was for everyone (a potion offer or question: the asker only);
-///                             a potion offer or question answering a potion request goes out as accept (the "yes");
-///                             429 "rate_limited" when the AI's budget refused it
+///                             → {"delivered", "id", "kind", "emote", "emoteLimited", "emoteFailed"}: text to teammates
+///                             who run SpirePilot, the kind's vanilla emote to the others (also for "all" in a mixed
+///                             team); when nobody addressed runs it, no text: {"delivered": false, "kind", "emote",
+///                             "emoteLimited", "emoteFailed", "reason": "no_reader"}. "kind": the kind sent. An emote was
+///                             due but not shown: "emoteLimited" when an AI sender showed the same kind to them lately or
+///                             spent its budget, "emoteFailed" when the game could not show it. A reply_to without a
+///                             recipient goes to the asker, or to everyone when the question was for everyone (a potion
+///                             offer or question: the asker only). A potion offer or question answering a potion request
+///                             goes out as accept (the "yes"), which like any answer goes to everyone when the request
+///                             was for everyone; 429 "rate_limited" when the AI's budget refused it
 ///   GET  /compendium?kind=cards|relics|potions|powers|characters   every game model with localized text
 ///   GET  /diagnostics         writes a diagnostics-*.md report (as the panel's button does) and returns it (markdown;
 ///                             no secrets); header X-Diagnostics-File: its path (non-ASCII percent-encoded as UTF-8)
@@ -471,21 +473,25 @@ internal sealed class LocalHttpApi : IDisposable
         };
         // The same rule as the AI's and the Team tab's messages: text to teammates who run SpirePilot (by the live
         // roster: one who linked after the capture can read it), the kind's vanilla emote to the others. With the AI's
-        // budget spent (or the same emote just shown) there is no emote, and "emoteLimited" says so.
+        // budget spent (or the same emote just shown) there is no emote, and "emoteLimited" says so; "emoteFailed" when
+        // the game could not show it.
         var sent = PilotRuntime.Loop.SendForPlayer(msg, snap, fromAi, TeamLink.HasReader);
         if (sent.RateLimited)
+        {
             await Send(res, 429, Error("rate limited", "rate_limited"));
-        else if (sent.NoReader)
-            await Send(res, 200, new JsonObject
-            {
-                ["delivered"] = false, ["emote"] = sent.Emote, ["emoteLimited"] = sent.EmoteLimited, ["reason"] = "no_reader",
-            });
-        else
-            await Send(res, 200, new JsonObject
-            {
-                ["delivered"] = sent.Entry?.Delivered ?? false, ["id"] = sent.Message.Id, ["emote"] = sent.Emote,
-                ["emoteLimited"] = sent.EmoteLimited,
-            });
+            return;
+        }
+        var answer = new JsonObject
+        {
+            ["delivered"] = sent.Entry?.Delivered ?? false,
+            ["kind"] = DecisionParser.KindToWire(sent.Message.Kind),
+            ["emote"] = sent.Emote,
+            ["emoteLimited"] = sent.EmoteLimited,
+            ["emoteFailed"] = sent.EmoteFailed,
+        };
+        if (sent.NoReader) answer["reason"] = "no_reader";
+        else answer["id"] = sent.Message.Id;
+        await Send(res, 200, answer);
     }
 
     /// <summary>Recipients that mean everyone (same words as <see cref="PilotLoop.ResolveRecipient"/>).</summary>

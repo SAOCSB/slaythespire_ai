@@ -192,9 +192,9 @@ continuing a saved run of a disallowed character, no potions for teammates when 
   fights, answers) and gives the same `[NO ACTION NEEDED]` reason (`ReplyOnlyReason`). `GET /prompt` returns it.
 - Messages the player sends (Team tab, `POST /chat`) go through `PilotLoop.SendForPlayer`: the AI's delivery rule, and
   the AI remembers them like its own. A request stays open for the fight and round of the capture it was sent in, a
-  "yes" to a teammate's request becomes a promise the AI keeps, the answered message is marked read (a reply the AI's
-  decision in flight makes to it is not sent: one answer per question), and every kind but chat leaves a history line
-  ("(owner → X)", "(sent via the API → X)").
+  "yes" to a teammate's request becomes a promise the AI keeps, the answered message is marked read (a reply to it from
+  an AI decision that read it unanswered is not sent: one answer per question; a later decision may still follow up,
+  e.g. take the yes back), and every kind but chat leaves a history line ("(owner → X)", "(sent via the API → X)").
 - The pinned route is a soft rule: the engine follows it without the model unless a live instruction or a teammate's
   request needs the model, which then sees the pinned next node. For an external agent the pin is advice in the text.
 
@@ -236,14 +236,17 @@ Emotes (`Core/Team/TeamEmotes`, `Game/Reactions.cs`), both ways:
   decline thumbs down; chat and route suggestions have none), also for "all" in a mixed team. No text goes out when
   nobody addressed reads it (for the Team tab and `/chat`, a capture that lists none of the addressees leaves that to
   the live roster). A mixed-team message costs an AI sender one budget unit. `/chat` answers
-  `{"delivered", "id", "emote", "emoteLimited"}`, or `{"delivered": false, "emote", "emoteLimited", "reason":
-  "no_reader"}` without a reader; `emote` is null when nobody needed one, the kind has none, an AI sender (`from_ai`,
-  the default) has spent its budget or showed the same kind to the same recipient in the last 3 minutes
-  (`emoteLimited` true), or the game could not show it (not in a run, no reaction synchronizer, no frame within 2 s). A
-  reply without a recipient goes to the asker (`TeamDelivery.ReplyRecipient`: an answer to a question for everyone
-  goes to everyone, a potion offer or question only to the asker). A potion offer or question in answer to a potion
-  request goes out as accept (`TeamDelivery.AnswerKind`, for the AI and `/chat`): it is the yes, and the asker's AI
-  would read an offer from an AI as a counter-request needing no answer.
+  `{"delivered", "id", "kind", "emote", "emoteLimited", "emoteFailed"}`, or `{"delivered": false, "kind", "emote",
+  "emoteLimited", "emoteFailed", "reason": "no_reader"}` without a reader (`kind`: the kind sent); `emote` is null when
+  nobody needed one, the kind has none, an AI sender (`from_ai`, the default) has spent its budget or showed the same
+  kind to the same recipient in the last 3 minutes (`emoteLimited`), or the game could not show it (`emoteFailed`: not
+  in a run, no reaction synchronizer, no frame within 2 s). A reply without a recipient goes to the asker
+  (`TeamDelivery.ReplyRecipient`: an answer to a question for everyone goes to everyone, a potion offer or question
+  only to the asker). A potion offer or question in answer to a potion request goes out as accept
+  (`TeamDelivery.AnswerKind`, for the AI and `/chat`; so to everyone when the request was): it is the yes, its potion
+  the one promised, and the asker's AI would read an offer from an AI as a counter-request needing no answer. An AI's
+  offer or question in answer to anything else, sent to a teammate whose AI plays, is not kept as an open request for
+  the same reason: no yes would come.
 - In: a guarded Harmony postfix on the game's reaction handler (`ReactionSynchronizer.HandleReactionMessage`) turns a
   teammate's emote into a message through `TeamChatHub.Receive` (dedupe, inbox caps):
   - from a teammate without the mod, thumbs up / down are Accept / Decline of the newest request this player showed
@@ -256,7 +259,8 @@ Emotes (`Core/Team/TeamEmotes`, `Game/Reactions.cs`), both ways:
     answering our newest open request to them (`LastOpenTo`). A linked AI's emotes and the local player's own never
     reach the inbox.
   - a linked teammate's "!" or "?" (its AI's too) asks a teammate without the mod something: it is noted as the newest
-    question shown to everyone (`NoteSignal` with an untracked id), so a thumbs up after it answers none of ours.
+    question shown to everyone (`AgentMemory.SeeEmote`: `NoteSignal` with an untracked id), so a thumbs up after it
+    answers none of ours.
 
 ## Co-op end of turn
 
@@ -272,8 +276,9 @@ Conversation rules (Core, `DecisionEngine` / `PilotLoop` / `AgentMemory`):
   decision is a promise: still unread (the decision was advice, dropped or a fallback) it is listed once, as
   "accepted earlier" with its potion.
 - While it cannot act (turn ended, enemy turn) a teammate's request still gets an answer (reply-only call); a "yes" to
-  its offer alone does not wake it then (it can only act on it, at its turn, where the yes asks for that); with
-  only "undo end turn" on the menu the model may take the turn back to help, never on its own.
+  its offer neither wakes it then nor goes into that call: it stays unread, its offer open, for the first capture that
+  can act (`PlanInbox`), where the yes asks for that; with only "undo end turn" on the menu the model may take the turn
+  back to help, never on its own.
 - Teammates without SpirePilot are marked in the state; messages to them become a vanilla reaction emote, and
   their emotes come back as accept / decline / chat (see "Team link").
 - After the model reacted to a teammate's "!" or "?" (once that decision ran: `MarkHandled`), the same emote from them

@@ -9,9 +9,10 @@ namespace SpirePilot.Core.Tests;
 
 /// <summary>
 /// Co-op findings of the third review round: a "yes" stays a visible promise and waits for a capture that can act on
-/// it, an offer in answer to a potion request is the yes, the player's answer is the only one, requests end with a
-/// fight the AI did not play, another player's question is what a thumbs up answers, and the preview leaves out what a
-/// reply-only call leaves out.
+/// it, an offer in answer to a potion request is the yes (and an AI's offer to another AI waits for none), the
+/// player's answer is the only one, requests end with a fight the AI did not play, another player's question is what a
+/// thumbs up answers, an emote the game could not show is reported, and the preview leaves out what a reply-only call
+/// leaves out.
 /// </summary>
 public class CoopRound3Tests
 {
@@ -185,6 +186,34 @@ public class CoopRound3Tests
     }
 
     [Fact]
+    public async Task A_yes_stays_for_the_AIs_turn_when_another_message_wakes_it()
+    {
+        var settings = Settings();
+        var hub = new TeamChatHub { LocalNetId = 1 };
+        var client = new Client { Answer = (_, _) => "{\"thought\":\"t\",\"actions\":[]}" };
+        var engine = new DecisionEngine(() => settings, hub, new NullLog(), _ => client);
+        engine.Memory.TrackOutgoing(Request("off", TeamMessageKind.OfferPotion, 3, "BLOCK_POTION"), signalled: true);
+        var thumb = TeamEmotes.ToMessage("ThumbUp", 3, "Cara", 1, engine.Memory.LastSignalTo(3));
+        hub.Receive(thumb);
+        hub.Receive(new TeamMessage { Id = "rq", From = 2, To = 1, FromName = "Bob", Kind = TeamMessageKind.RequestBlock, Text = "cover me" });
+
+        // Enemy turn: Bob's request gets its answer; Cara's yes is left for the AI's turn, unread, its offer open.
+        var waiting = Waiting(Bob(), Cara());
+        var preview = engine.PreviewPrompt(waiting, null).User;
+        var reply = await engine.ReplyOnlyAsync(waiting, DecisionEngine.ReplyOnlyReason(waiting)!, CancellationToken.None);
+        Assert.Equal(preview, client.Prompt(0));
+        Assert.DoesNotContain(thumb.Id, client.Prompt(0));
+        Assert.Equal(new[] { "rq" }, reply!.HandledInboxIds);
+        engine.MarkHandled(reply.HandledInboxIds);
+        Assert.Single(engine.Memory.OutgoingRequests);
+        Assert.Empty(engine.Memory.OpenRequests);
+
+        client.Answer = (_, _) => "{\"thought\":\"t\",\"actions\":[\"a0\"]}";
+        await engine.DecideAsync(Coop(Bob(), Cara()), null, CancellationToken.None);
+        Assert.Contains($"[{thumb.Id}] Cara → you | accept reply_to=off (answers your offer_potion) (yes to your offer — act on it)", client.Prompt(1));
+    }
+
+    [Fact]
     public async Task A_reply_only_call_the_breaker_skips_reads_nothing()
     {
         var settings = Settings();
@@ -224,7 +253,11 @@ public class CoopRound3Tests
         var engine = new DecisionEngine(() => settings, hub, new NullLog(), _ => client);
         var loop = new PilotLoop(bridge, engine, hub, () => settings, new NullLog()) { IdleDelay = TimeSpan.FromMilliseconds(10), TransientWait = TimeSpan.Zero };
         bridge.Set(Coop(Bob(ai: true)));
-        hub.Receive(new TeamMessage { Id = "rp", From = 2, To = 1, FromName = "Bob", FromAi = true, Kind = TeamMessageKind.RequestPotion, Text = "potion please" });
+        hub.Receive(new TeamMessage
+        {
+            Id = "rp", From = 2, To = 1, FromName = "Bob", FromAi = true, Kind = TeamMessageKind.RequestPotion, Potion = "FIRE_POTION",
+            Text = "potion please",
+        });
         loop.Start();
         await Until(() => bridge.Executed.Count > 0);
         loop.Stop();
@@ -234,7 +267,8 @@ public class CoopRound3Tests
         Assert.Equal(TeamMessageKind.Accept, sent.Kind);
         Assert.Equal("rp", sent.ReplyTo);
         Assert.Equal("BLOCK_POTION", sent.Potion);
-        // A promise the AI keeps, not an offer waiting for a yes Bob's AI is told it need not give.
+        // A promise the AI keeps, not an offer waiting for a yes Bob's AI is told it need not give: of the potion it
+        // offered, not the one Bob asked for.
         var promise = Assert.Single(engine.Memory.OpenRequests);
         Assert.Equal(("rp", "BLOCK_POTION"), (promise.Id, promise.Potion));
         Assert.Empty(engine.Memory.OutgoingRequests);
@@ -242,6 +276,40 @@ public class CoopRound3Tests
         Assert.Equal(TeamMessageKind.OfferPotion,
             TeamDelivery.AnswerKind(new TeamMessage { Kind = TeamMessageKind.RequestBlock }, TeamMessageKind.OfferPotion));
         Assert.Equal(TeamMessageKind.OfferPotion, TeamDelivery.AnswerKind(null, TeamMessageKind.OfferPotion));
+    }
+
+    [Fact]
+    public async Task An_AI_offer_in_answer_to_another_AI_waits_for_no_yes()
+    {
+        var settings = Settings();
+        var bridge = new Bridge();
+        var transport = new Transport();
+        var hub = new TeamChatHub { LocalNetId = 1, LocalName = "Me", Transport = transport };
+        var client = new Client
+        {
+            Answer = (_, n) => n == 1
+                ? "{\"thought\":\"t\",\"actions\":[\"a0\"],\"messages\":[{\"to\":\"Bob\",\"type\":\"offer_potion\",\"potion\":\"BLOCK_POTION\",\"text\":\"cannot block you, want my Block Potion?\",\"reply_to\":\"rb\"}]}"
+                : "{\"thought\":\"t\",\"actions\":[\"a0\"]}",
+        };
+        var engine = new DecisionEngine(() => settings, hub, new NullLog(), _ => client);
+        var loop = new PilotLoop(bridge, engine, hub, () => settings, new NullLog()) { IdleDelay = TimeSpan.FromMilliseconds(10), TransientWait = TimeSpan.Zero };
+        bridge.Set(Coop(Bob(ai: true)));
+        hub.Receive(new TeamMessage { Id = "rb", From = 2, To = 1, FromName = "Bob", FromAi = true, Kind = TeamMessageKind.RequestBlock, Text = "cover me" });
+        loop.Start();
+        await Until(() => bridge.Executed.Count > 0);
+        loop.Stop();
+
+        // Bob's AI takes an AI's offer with reply_to for a counter-request it need not answer: no yes will come.
+        lock (transport.Sent) Assert.Equal(TeamMessageKind.OfferPotion, Assert.Single(transport.Sent).Kind);
+        Assert.Empty(engine.Memory.OutgoingRequests);
+        Assert.False(engine.Memory.HasOpenOutgoing(TeamMessageKind.OfferPotion, 2));
+
+        // Bob playing by hand can answer it, and so can Bob's AI when the owner wrote it: then it waits for the yes.
+        hub.Receive(new TeamMessage { Id = "rb2", From = 2, To = 1, FromName = "Bob", Kind = TeamMessageKind.RequestBlock, Text = "cover me" });
+        loop.SendForPlayer(new TeamMessage { Kind = TeamMessageKind.OfferPotion, To = 2, ReplyTo = "rb2", Potion = "BLOCK_POTION", Text = "potion?" }, Coop(Bob()), fromAi: true);
+        hub.Receive(new TeamMessage { Id = "rb3", From = 2, To = 1, FromName = "Bob", FromAi = true, Kind = TeamMessageKind.RequestBlock, Text = "cover me" });
+        loop.SendForPlayer(new TeamMessage { Kind = TeamMessageKind.OfferPotion, To = 2, ReplyTo = "rb3", Potion = "BLOCK_POTION", Text = "potion!" }, Coop(Bob(ai: true)), fromAi: false);
+        Assert.Equal(2, engine.Memory.OutgoingRequests.Count);
     }
 
     // ---------------------------------------------------------------- one answer per question (C3)
@@ -277,6 +345,34 @@ public class CoopRound3Tests
             Assert.Equal(TeamMessageKind.Decline, Assert.Single(transport.Sent, m => m.ReplyTo == "rq").Kind);
         Assert.Contains("(reply not sent: that message was already answered for you) sure, blocking", engine.Memory.History);
         Assert.Empty(engine.Memory.OpenRequests);
+    }
+
+    [Fact]
+    public async Task A_later_word_on_an_answer_the_player_gave_still_goes_out()
+    {
+        var settings = Settings();
+        var bridge = new Bridge();
+        var transport = new Transport();
+        var hub = new TeamChatHub { LocalNetId = 1, LocalName = "Me", Transport = transport };
+        var client = new Client
+        {
+            Answer = (_, n) => n == 1
+                ? "{\"thought\":\"t\",\"actions\":[\"a0\"],\"messages\":[{\"to\":\"Bob\",\"type\":\"decline\",\"text\":\"sorry, I drank it myself\",\"reply_to\":\"rp\"}]}"
+                : "{\"thought\":\"t\",\"actions\":[\"a0\"]}",
+        };
+        var engine = new DecisionEngine(() => settings, hub, new NullLog(), _ => client);
+        var loop = new PilotLoop(bridge, engine, hub, () => settings, new NullLog()) { IdleDelay = TimeSpan.FromMilliseconds(10), TransientWait = TimeSpan.Zero };
+        hub.Receive(new TeamMessage { Id = "rp", From = 2, To = 1, FromName = "Bob", Kind = TeamMessageKind.RequestPotion, Potion = "BLOCK_POTION", Text = "potion please" });
+        // The player said yes through POST /chat before the AI's decision: the AI takes it back.
+        Assert.True(loop.SendForPlayer(new TeamMessage { Kind = TeamMessageKind.Accept, To = 2, ReplyTo = "rp", Text = "sure" }, Coop(Bob()), fromAi: true).Reached);
+        bridge.Set(Coop(Bob()));
+        loop.Start();
+        await Until(() => bridge.Executed.Count > 0);
+        loop.Stop();
+
+        Assert.Contains("accepted earlier", client.Prompt(0));
+        lock (transport.Sent)
+            Assert.Equal(new[] { TeamMessageKind.Accept, TeamMessageKind.Decline }, transport.Sent.Where(m => m.ReplyTo == "rp").Select(m => m.Kind));
     }
 
     // ---------------------------------------------------------------- a fight the AI did not play (C4)
@@ -330,15 +426,33 @@ public class CoopRound3Tests
         var settings = Settings();
         var hub = new TeamChatHub { LocalNetId = 1 };
         var engine = new DecisionEngine(() => settings, hub, new NullLog());
-        engine.Memory.TrackOutgoing(Request("off", TeamMessageKind.OfferPotion, 0, "BLOCK_POTION"), signalled: true);
-        // Bob's AI shows Cara a "?": what TeamLink notes for a linked player's "!" or "?".
-        engine.Memory.NoteSignal(TeamMessage.NewId(), 0);
-        var thumb = TeamEmotes.ToMessage("ThumbUp", 3, "Cara", 1, engine.Memory.LastSignalTo(3));
+        var memory = engine.Memory;
+        memory.TrackOutgoing(Request("off", TeamMessageKind.OfferPotion, 0, "BLOCK_POTION"), signalled: true);
+        // Every client sees every emote (TeamLink.HandleReaction): a linked player's heart asks nothing.
+        memory.SeeEmote(2, "Heart", linked: true);
+        Assert.Equal(("off", true), memory.SeeEmote(3, "ThumbUp", linked: false));
+        // Bob's AI shows Cara a "?": her thumbs up after it is for Bob.
+        memory.SeeEmote(2, "QuestionMark", linked: true);
+        var thumb = TeamEmotes.ToMessage("ThumbUp", 3, "Cara", 1, memory.SeeEmote(3, "ThumbUp", linked: false));
         Assert.Null(thumb.ReplyTo);
         hub.Receive(thumb);
         var party = Coop(Bob(ai: true), Cara());
         Assert.False(engine.HasActionableInbox(party));
         Assert.DoesNotContain("act on it", engine.PreviewPrompt(party, null).User);
+    }
+
+    [Fact]
+    public void An_emote_the_game_could_not_show_is_reported()
+    {
+        var hub = new TeamChatHub { LocalNetId = 1, LocalName = "Me", Transport = new Transport() };
+        var party = Coop(Bob(), Cara());
+        var sent = TeamDelivery.Send(hub, party, new TeamMessage { Kind = TeamMessageKind.RequestBlock, Text = "cover me" }, fromAi: false, _ => false);
+        Assert.True(sent.Entry is { Delivered: true });
+        Assert.Null(sent.Emote);
+        Assert.True(sent.EmoteFailed);
+        Assert.False(sent.EmoteLimited);
+        sent = TeamDelivery.Send(hub, party, new TeamMessage { Kind = TeamMessageKind.RequestBlock, Text = "cover me now" }, fromAi: false, _ => true);
+        Assert.Equal(("Exclamation", false), (sent.Emote, sent.EmoteFailed));
     }
 
     // ---------------------------------------------------------------- the preview is the prompt (C6)

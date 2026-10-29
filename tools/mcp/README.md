@@ -65,7 +65,7 @@ Claude Desktop / Cursor 里把 `"command"` 设为 `.venv` 里的 `spirepilot-mcp
 | `get_prompt(part)` | 内置 AI 此刻会发送的完整提示词（含队友消息、未答复的请求、路线和钉住的路线、一次性指令；和内置 AI 一样不含 3 分钟前的队友消息和 5 分钟前的请求，不能操作时不含一次性指令；只读，不会把消息标为已读）；`part="system"` 适合当外部模型的系统提示 / 简报。操作时仍先 `get_state`，再用它菜单里的 id 调 `act` |
 | `compendium(kind, query)` | 查卡牌 / 遗物 / 药水 / 能力 / 角色（支持关键词过滤） |
 | `give_instruction(text)` | 给内置 AI 一次性指令（它在玩或在顾问模式时才有用） |
-| `read_chat` / `send_chat` | 多人模式的队友消息（聊天、要药水、给药水、问要不要药水、要减益、集火、求保护、接受 / 拒绝）。`read_chat` 显示每条消息的 id（`#4f2a9c01d2e3`，回答别的消息时还有 `re #…`）；回答请求用 `send_chat(kind="accept" 或 "decline", reply_to="4f2a9c01d2e3")`，对方的 AI 才会照做。带 `reply_to` 且收件人为默认的 `all` 时，回答发给提问的人（问题是发给所有人的则发给所有人；提议 / 询问药水只发给提问的人）；回答要药水的请求时“给药水”/“问要不要药水”按“接受”发出；没装 Mod 的队友没看到表情时说明原因；收件人写错时返回队友名单 |
+| `read_chat` / `send_chat` | 多人模式的队友消息（聊天、要药水、给药水、问要不要药水、要减益、集火、求保护、接受 / 拒绝）。`read_chat` 显示每条消息的 id（`#4f2a9c01d2e3`，回答别的消息时还有 `re #…`）；回答请求用 `send_chat(kind="accept" 或 "decline", reply_to="4f2a9c01d2e3")`，对方的 AI 才会照做。带 `reply_to` 且收件人为默认的 `all` 时，回答发给提问的人（问题是发给所有人的则发给所有人；提议 / 询问药水只发给提问的人）；回答要药水的请求时“给药水”/“问要不要药水”按“接受”发出（结果里会说明；请求是发给所有人的就发给所有人）；没装 Mod 的队友没看到表情时说明原因（同类表情 3 分钟内发过或消息额度用完，或游戏暂时显示不了）；收件人写错时返回队友名单 |
 
 使用要点：
 
@@ -152,8 +152,8 @@ model; to act, still call `get_state` and `act` with an id from its menu), `comp
 `send_chat` (chat, request_potion, offer_potion, ask_need_potion, request_debuff, request_focus, request_block, and
 accept / decline with `reply_to` = the id of the message answered, e.g. `"4f2a9c01d2e3"`, so a teammate's AI acts on the
 answer; with `reply_to` and the default recipient `"all"` the answer goes to the asker, or to everyone when the question
-was for everyone, a potion offer or question to the asker only; an unknown recipient is refused with the teammates'
-names).
+was for everyone, a potion offer or question to the asker only unless it answers a `request_potion`, which makes it an
+`accept`; an unknown recipient is refused with the teammates' names).
 
 **How to play.** Take control first with `set_mode("Off")` (or `"Advisor"`); `act` is refused (HTTP 409) while the
 built-in pilot plays. Then loop `get_state` → pick one menu id → `act(id)`; `act` returns the new state and menu. Ids
@@ -172,19 +172,21 @@ newest build (untested) `status` adds a warning line and nothing is blocked. On 
 planner's paths and the owner's pinned route: advice for the external model, which the built-in pilot follows on its
 own. Teammates without SpirePilot cannot read text and see the kind's game emote instead: in a mixed team, also for
 "all", the text goes to the teammates with the mod and the emote to the others, and `send_chat` names the emote (the
-same kind is not shown to them again within 3 minutes). When nobody addressed runs the mod, no text is sent, and
-`send_chat` says which emote they saw or that they saw nothing, and why (chat has no emote; the mod reports
-`emoteLimited` when the same kind went to them in the last 3 minutes or the AI message budget is spent; otherwise the
-game could not show one right now). An `offer_potion` or `ask_need_potion` answering a `request_potion` goes out as
-`accept`: it is the yes. Their thumbs up and down show up in `read_chat` as accept and decline of the newest request
-shown to them as an emote while it is still open, "!" and "?" as a short chat line. Requests, offers and answers sent
-with `send_chat` enter the built-in pilot's history (requests also its open requests), and a message answered with
-`reply_to` is not answered by the built-in pilot again.
+same kind is not shown to them again within 3 minutes) or says why none was shown: the mod reports `emoteLimited` when
+the same kind went to them in the last 3 minutes or the AI message budget is spent, and `emoteFailed` when the game
+could not show one right now. When nobody addressed runs the mod, no text is sent, and `send_chat` says which emote
+they saw or that they saw nothing, and why (chat has no emote, or one of those). An `offer_potion` or `ask_need_potion`
+answering a `request_potion` goes out as `accept`: it is the yes, so like any answer it goes to everyone when the
+request was for everyone, and `send_chat` says it went out as accept (you promised to use the potion on them). Their
+thumbs up and down show up in `read_chat` as accept and decline of the newest request shown to them as an emote while
+it is still open, "!" and "?" as a short chat line. Requests, offers and answers sent with `send_chat` enter the
+built-in pilot's history (requests also its open requests), and a message answered with `reply_to` is not answered by
+the built-in pilot again.
 
 **Tests.** `python -m pytest tools/mcp/tests -q` (after `pip install -e "./tools/mcp[test]"`) runs every tool against a
 fake of the mod's API, including the 403 `owner_rule`, 409, incompatible and untested game versions, mixed-team emotes
-and their 3-minute repeat check, "all" in solo, unknown recipients, an unwritable settings file, undelivered chat and
-connection-refused paths. The state text comes
+and their 3-minute repeat check, an emote the game could not show, an offer sent as the yes, "all" in solo, unknown
+recipients, an unwritable settings file, undelivered chat and connection-refused paths. The state text comes
 from the mod itself (`GET /state?include=text`, rendered by the pilot's own `StateFormatter`). The Python
 `format_state()` is only a fallback for mod builds without `include=text`: the JSON fixtures were serialized by the mod's
 own model classes and the `.txt` files are the C# `StateFormatter` output of that time, so the fallback matches that

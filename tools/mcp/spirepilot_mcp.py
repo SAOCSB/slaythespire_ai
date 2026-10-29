@@ -855,7 +855,8 @@ async def send_chat(
     (requests "!", potion offers / questions "?", accept / decline thumbs up / down; chat has none). In a mixed team,
     also for "all", the text goes to the teammates with the mod and the emote to the others (not again within 3
     minutes for the same kind and recipient); the result names the emote they saw, or says why none was shown. An
-    offer_potion or ask_need_potion answering a request_potion goes out as accept: it is the yes.
+    offer_potion or ask_need_potion answering a request_potion goes out as accept (it is the yes, and like any answer
+    goes to everyone when the request was for everyone); the result then says so.
 
     Args:
         text: the human-readable message (required; human teammates only read this).
@@ -866,7 +867,8 @@ async def send_chat(
             accept / decline (answer a teammate's request or question; reply_to is required).
         recipient: "all" (default), or a teammate's name, name prefix or character. An unknown name is refused with the
             list of teammates. With reply_to and "all", the answer goes to the asker, or to everyone when the
-            question was for everyone; a potion offer or question goes to the asker only.
+            question was for everyone; a potion offer or question goes to the asker only, unless it answers a
+            request_potion (then it is an accept).
         potion: potion id or name, for potion kinds.
         debuff: debuff / power name, for request_debuff.
         target: enemy name or key ("e0"), for request_debuff / request_focus.
@@ -902,29 +904,44 @@ async def send_chat(
         )
     data = _expect(status_code, data, "Sending the message")
     emote = data.get("emote")
+    sent = data.get("kind") or kind
+    promised = (
+        f"\nIt went out as accept, not {kind}: an offer answering a potion request is the yes, so you promised to "
+        "use the potion on them."
+        if sent != kind
+        else ""
+    )
     if data.get("reason") == "no_reader":
         if emote:
             shown = f"they see the game's {emote} emote instead"
-        elif kind == "chat":
+        elif sent == "chat":
             shown = "chat has no emote, so they see nothing"
         elif data.get("emoteLimited"):
             shown = (
                 "no emote was shown either (the same kind went to them in the last 3 minutes, or the AI message "
                 "budget is spent), so nothing reached them"
             )
-        else:
+        elif data.get("emoteFailed"):
             shown = "no emote was shown either (the game could not show one right now), so nothing reached them"
-        return f"Text not sent: no teammate you addressed runs SpirePilot; {shown}."
+        else:
+            shown = "no emote was shown either, so nothing reached them"
+        return f"Text not sent: no teammate you addressed runs SpirePilot; {shown}.{promised}"
     # A mixed team: the text went to the teammates with the mod, the emote to the others (the text paid for it, so
     # only a repeat stops it).
     others = f"\nTeammates without SpirePilot saw the game's {emote} emote instead." if emote else ""
     if data.get("emoteLimited"):
         others = "\nTeammates without SpirePilot saw no emote: the same kind was shown to them in the last 3 minutes."
+    elif data.get("emoteFailed"):
+        others = "\nTeammates without SpirePilot saw no emote: the game could not show one right now."
     everyone = body["to"].lower() in _EVERYONE
     if data.get("delivered"):
         to = f"in answer to #{reply_to}" if reply_to and everyone else f"to {body['to']}"
-        return f"Sent {to} ({kind}): {text.strip()}{others}"
-    return "Logged locally but not delivered: no teammate runs SpirePilot (or you are not in a co-op game)." + others
+        return f"Sent {to} ({sent}): {text.strip()}{others}{promised}"
+    return (
+        "Logged locally but not delivered: no teammate runs SpirePilot (or you are not in a co-op game)."
+        + others
+        + promised
+    )
 
 
 @mcp.tool(annotations=READ_ONLY, structured_output=False)

@@ -102,6 +102,7 @@ public class CoopRound2Tests
         var s = new GameSnapshot { Screen = ScreenKind.Map, InRun = true, CanAct = true, IsMultiplayer = true, LocalPlayerId = 1, Map = TestData.Map(), Run = new RunInfo { Act = 1, Floor = 4 } };
         s.Players.Add(new PlayerInfo { NetId = 1, Name = "Me", IsLocal = true, Hp = 50, MaxHp = 80 });
         s.Players.AddRange(mates);
+        s.Actions.Add(new ActionOption { Id = "a0", Kind = ActionKind.ChooseMapNode, Label = "0,0", SemanticKey = "map:0,0", Args = { [ActionArgs.Node] = "0,0" } });
         return s;
     }
 

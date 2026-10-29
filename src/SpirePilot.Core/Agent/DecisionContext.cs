@@ -275,6 +275,18 @@ public sealed class AgentMemory
                 : null;
     }
 
+    /// <summary>
+    /// A teammate's emote, seen here. A linked player's "!" or "?" (its AI's too) asks a teammate without the mod
+    /// something and is from now on the newest question (<see cref="NoteSignal"/>): a thumbs up after it answers none of
+    /// ours. Returns the request a thumbs up from <paramref name="from"/> answers: for a linked teammate the newest open
+    /// one it read (<see cref="LastOpenTo"/>), else the newest one shown to them as an emote (<see cref="LastSignalTo"/>).
+    /// </summary>
+    public (string Id, bool Open)? SeeEmote(ulong from, string reaction, bool linked)
+    {
+        if (linked && TeamEmotes.Asks(reaction)) NoteSignal(TeamMessage.NewId(), 0);
+        return linked ? LastOpenTo(from) : LastSignalTo(from);
+    }
+
     public Team.TeamMessage? FindOutgoing(string? id)
     {
         if (string.IsNullOrEmpty(id)) return null;
