@@ -123,7 +123,9 @@ def _expect(status: int, data: Any, what: str) -> Any:
 
 
 async def _fetch_state() -> dict:
-    status, data = await _api("GET", "/state")
+    # include=text: the mod renders the state with its own StateFormatter (the same text its pilot sees), built from
+    # the same capture as the JSON. Older mods ignore the parameter and format_state() below is used instead.
+    status, data = await _api("GET", "/state?include=text")
     if status == 503:
         raise SpirePilotError(
             "The game has no state yet (still starting or loading). Wait a few seconds and call get_state again."
@@ -149,7 +151,8 @@ def _identity(action: dict) -> str:
 
 
 # --------------------------------------------------------------------------------------------- text rendering
-# format_state() is a line-for-line port of src/SpirePilot.Core/Agent/StateFormatter.cs (default options).
+# format_state() is a line-for-line port of src/SpirePilot.Core/Agent/StateFormatter.cs (default options), kept as
+# the fallback for mods without GET /state?include=text. Newer mods render the text themselves.
 
 
 def _clean(text: str | None) -> str:
@@ -508,6 +511,14 @@ def _waiting(snap: dict) -> str:
 
 
 def _render_state(snap: dict) -> str:
+    text = snap.get("text")
+    if isinstance(text, str) and text.strip():
+        lines = text.splitlines()
+        if lines and lines[0].startswith("WAITING:"):
+            lines = lines[1:]
+        body = "\n".join(lines).rstrip() + "\n"
+        # The mod's text ends with its own "Menu:" section; keep it and add the id rule.
+        return _waiting(snap) + body + "(act with ONE id; ids are renumbered after every action)\n"
     return (
         _waiting(snap)
         + format_state(snap)
@@ -574,7 +585,7 @@ async def get_state(format: Literal["text", "json"] = "text", wait_seconds: floa
         snap = await _fetch_state()
     _remember(snap)
     if format == "json":
-        return json.dumps(snap, ensure_ascii=False)
+        return json.dumps({k: v for k, v in snap.items() if k != "text"}, ensure_ascii=False)
     return _render_state(snap)
 
 

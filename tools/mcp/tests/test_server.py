@@ -599,3 +599,12 @@ def test_timeout_is_reported(monkeypatch):
         monkeypatch.setattr(srv, "TIMEOUT", 0.2)
         with pytest.raises(srv.SpirePilotError, match="did not answer GET /status within 0.2s"):
             run(srv.status())
+
+
+def test_get_state_prefers_the_mods_own_text(fake):
+    fake.state["text"] = "WAITING: animating\nScreen: Combat | from the mod\nMenu:\na0 | Play Strike\n"
+    out = run(srv.get_state())
+    assert out.startswith("Screen: Combat | from the mod")
+    assert "a0 | Play Strike" in out
+    raw = json.loads(run(srv.get_state(format="json")))
+    assert "text" not in raw
