@@ -186,6 +186,47 @@ public class CoopTests
         Assert.Contains("[YOUR OPEN REQUESTS]", client.Requests[^1].Messages[0].Content);
     }
 
+    private sealed class BlinkingBridge : IGameBridge
+    {
+        private readonly GameSnapshot _ready;
+        private int _captures;
+        public List<ActionOption> Executed { get; } = new();
+        public BlinkingBridge(GameSnapshot ready) => _ready = ready;
+        public Task<GameSnapshot?> CaptureAsync(CancellationToken ct)
+        {
+            int n = Interlocked.Increment(ref _captures);
+            if (Executed.Count > 0) return Task.FromResult<GameSnapshot?>(new GameSnapshot { Screen = ScreenKind.Combat, CanAct = false, WaitReason = "enemy turn" });
+            // Capture 2 and 3 (right after the decision) see a teammate's card animating.
+            if (n is 2 or 3) return Task.FromResult<GameSnapshot?>(new GameSnapshot { Screen = ScreenKind.Combat, CanAct = false, WaitReason = "animating", Sequence = n });
+            _ready.Sequence = n;
+            return Task.FromResult<GameSnapshot?>(_ready);
+        }
+        public Task<ActionResult> ExecuteAsync(ActionOption action, CancellationToken ct) { Executed.Add(action); return Task.FromResult(ActionResult.Ok()); }
+        public void ShowSpeech(ulong playerNetId, string text) { }
+        public void PingMapNode(string nodeKey) { }
+    }
+
+    [Fact]
+    public async Task A_teammates_animation_does_not_throw_away_a_finished_decision()
+    {
+        var settings = new PilotSettings();
+        settings.Profiles[0].ApiKey = "k";
+        settings.Control.Mode = PilotMode.FullAuto;
+        settings.Control.ActionDelayMs = 0;
+        settings.Normalize();
+        var client = new Client { Answer = _ => "{\"thought\":\"t\",\"actions\":[\"a0\"]}" };
+        var snap = TestData.Combat();
+        snap.IsMultiplayer = true;
+        var bridge = new BlinkingBridge(snap);
+        var hub = new TeamChatHub { LocalNetId = 1 };
+        var engine = new DecisionEngine(() => settings, hub, new NullLog(), _ => client);
+        var loop = new PilotLoop(bridge, engine, hub, () => settings, new NullLog()) { IdleDelay = TimeSpan.FromMilliseconds(10) };
+        loop.Start();
+        await Until(() => bridge.Executed.Count == 1);
+        loop.Stop();
+        Assert.Single(client.Requests); // decided once, executed after the animation
+    }
+
     [Fact]
     public void Enemy_targets_travel_by_combat_id_and_map_back_to_local_keys()
     {

@@ -36,7 +36,11 @@ public sealed class StateFormatter
             AppendPlayer(sb, mate, detailed: false);
         }
 
-        if (s.Combat is { } c) AppendCombat(sb, c);
+        if (s.Combat is { } c)
+        {
+            AppendCombat(sb, c);
+            AppendPowerNotes(sb, s, c);
+        }
         if (s.Map is { } map) AppendMap(sb, map);
         if (s.Rewards is { } r) AppendRewards(sb, r);
         if (s.Shop is { } shop) AppendShop(sb, shop);
@@ -299,7 +303,27 @@ public sealed class StateFormatter
         var s = i.Type;
         if (i.Damage is { } d) s += $" {d}" + (i.Hits is > 1 ? $"x{i.Hits}" : "");
         if (!string.IsNullOrEmpty(i.TargetName)) s += $" → {i.TargetName}";
+        // Non-attack moves are often new in StS2: say what they do.
+        if (i.Damage == null && Clean(i.Description ?? "") is { Length: > 0 } what) s += " (" + Short(what, 110) + ")";
         return s;
+    }
+
+    private static string Short(string s, int max) => s.Length <= max ? s : s[..(max - 1)] + "…";
+
+    private const int MaxPowerNotes = 14;
+
+    /// <summary>One line per distinct power in the fight (players and enemies): StS2 has many powers models don't know.</summary>
+    private static void AppendPowerNotes(StringBuilder sb, GameSnapshot s, CombatInfo c)
+    {
+        var all = s.Players.SelectMany(p => p.Powers.Concat(p.Companions.SelectMany(x => x.Powers)))
+            .Concat(c.Enemies.Where(e => e.IsAlive).SelectMany(e => e.Powers))
+            .Where(p => !string.IsNullOrWhiteSpace(p.Description))
+            .GroupBy(p => p.Id.Length > 0 ? p.Id : p.Name)
+            .Select(g => g.First())
+            .Take(MaxPowerNotes)
+            .ToList();
+        if (all.Count == 0) return;
+        sb.Append("Power effects: ").AppendLine(string.Join(" | ", all.Select(p => p.Name + ": " + Short(Clean(p.Description), 140))));
     }
 
     private static string Abbrev(MapNodeType t) => t switch

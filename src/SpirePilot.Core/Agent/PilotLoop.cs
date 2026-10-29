@@ -343,8 +343,15 @@ public sealed class PilotLoop : IDisposable
             }
         }
 
-        // The LLM may have taken a while: make sure the action still applies to the current state.
+        // The LLM may have taken a while: make sure the action still applies to the current state. A teammate's
+        // animation or a settling screen is a short pause, not a reason to throw the decision away.
         var fresh = await _bridge.CaptureAsync(ct).ConfigureAwait(false);
+        var settleUntil = DateTime.UtcNow + TransientWait;
+        while (fresh is { CanAct: false } && IsTransient(fresh.WaitReason) && DateTime.UtcNow < settleUntil && !Interrupted(mode))
+        {
+            await SafeDelay(TimeSpan.FromMilliseconds(150), ct).ConfigureAwait(false);
+            fresh = await _bridge.CaptureAsync(ct).ConfigureAwait(false);
+        }
         var target = fresh is { CanAct: true } ? Revalidate(action, snap, fresh) : null;
         if (fresh == null || target == null)
         {
@@ -459,6 +466,14 @@ public sealed class PilotLoop : IDisposable
         var digits = new string(a.SemanticKey[(at + 3)..].TakeWhile(char.IsDigit).ToArray());
         return ulong.TryParse(digits, out var id) ? id : null;
     }
+
+    /// <summary>How long a finished decision waits for a transient busy state (animations, settling) to pass.</summary>
+    public TimeSpan TransientWait { get; set; } = TimeSpan.FromSeconds(3);
+
+    private static readonly string[] TransientReasons = { "settling", "animating", "card in play", "busy", "transition", "hand busy" };
+
+    private static bool IsTransient(string? reason) =>
+        reason != null && TransientReasons.Any(r => reason.StartsWith(r, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>True when the user paused the pilot or changed the mode since <paramref name="mode"/> was read.</summary>
     private bool Interrupted(PilotMode mode) => Paused || _settings().Control.Mode != mode;

@@ -216,6 +216,7 @@ public static class PromptBuilder
     - actions: one or more MENU ids in execution order. actions[0] is executed now. Later ids are a tentative plan for the
       SAME screen and turn; the mod re-checks each step and asks you again if anything changed.
       - Copy ids exactly from the current MENU. Never invent ids or reuse ids from HISTORY or MEMO.
+      - "Card ×N" means N identical copies: one id plays ONE copy; repeat the id to play several.
       - Stop the plan right after any action whose result you cannot foresee (marked [unpredictable]: draws, random
         effects, choices, X costs) and after any potion.
       - In combat, plan the whole turn when you can, ending with the end-turn id if you intend to end it.

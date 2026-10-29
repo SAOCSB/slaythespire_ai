@@ -38,7 +38,12 @@ public static class FallbackPolicy
                 if ((min == 0 || sel?.CanCancel == true) && Of(ActionKind.CancelSelection) is { } cancel &&
                     sel?.Purpose is "Remove" or "Transform" or "DeckSelect" or "Enchant")
                     return cancel;
-                return Of(ActionKind.SelectCard) ?? Of(ActionKind.ChooseOption) ?? Of(ActionKind.ConfirmSelection) ?? actions[0];
+                // Nothing required: confirm right away rather than giving up a card.
+                if (min == 0 && Of(ActionKind.ConfirmSelection) is { } done) return done;
+                // Otherwise give up the least useful cards first (statuses and curses).
+                var junk = actions.FirstOrDefault(a => a.Kind == ActionKind.SelectCard &&
+                    sel?.Candidates.FirstOrDefault(c => c.Key == a.Arg(ActionArgs.Card)) is { Type: "Status" or "Curse" });
+                return junk ?? Of(ActionKind.SelectCard) ?? Of(ActionKind.ChooseOption) ?? Of(ActionKind.ConfirmSelection) ?? actions[0];
             }
 
             case ScreenKind.Map:
