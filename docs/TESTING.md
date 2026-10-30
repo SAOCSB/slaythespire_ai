@@ -16,7 +16,7 @@ Windows 上请用 `curl.exe`（PowerShell 里的 `curl` 是别名）；POST 的 
 | --- | --- | --- |
 | 0.1 | 按 README 安装，启动游戏 | 游戏正常进入主菜单；Mod 列表里有 SpirePilot |
 | 0.2 | 打开 `mod_configs/SpirePilot/spirepilot.log` | 有 `SpirePilot ready`，没有 `failed to initialize` |
-| 0.3 | 按 F8 / 点右上角 AI 按钮 | 面板出现，中文正常显示（没有方块字），可拖动 |
+| 0.3 | 进入游戏后看左上方；按 F8 / 点屏幕右侧边缘的 AI 按钮收起，再按一次打开 | 面板默认已显示，F8 和 AI 按钮能收起 / 打开，中文正常显示（没有方块字），可拖动 |
 | 0.4 | 在面板输入框里打字（含字母 E、数字键、空格） | 游戏本身没有响应这些按键（不会结束回合、不会打牌） |
 
 ## 1. AI 接口
